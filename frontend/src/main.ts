@@ -9,3 +9,8 @@ const pinia = createPinia()
 pinia.use(piniaPersist)
 
 createApp(App).use(pinia).use(router).mount("#app")
+
+if (import.meta.env.DEV) {
+  const m = await import("@/repo")
+  Object.assign(window, { $repo: m })
+}
