@@ -1,0 +1,1583 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>青简 · 品牌板 QINGJIAN Brand Guidelines</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --paper: #F5F0E6;
+    --paper-2: #EDE5D5;
+    --ink: #2E2C28;
+    --ink-2: #1C1B18;
+    --bamboo: #5A7A6B;
+    --moss: #6B8E5A;
+    --cinnabar: #A64B3C;
+    --line: rgba(46, 44, 40, .16);
+    --line-soft: rgba(46, 44, 40, .09);
+    --paper-line: rgba(245, 240, 230, .18);
+    --serif: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "SimSun", serif;
+    --sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --kai: "Kaiti SC", "STKaiti", "KaiTi", serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  html { scroll-behavior: smooth; }
+  body {
+    background: #211F1B;
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    letter-spacing: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  img, svg { display: block; }
+  .wrap { width: min(1240px, calc(100% - 44px)); margin: 0 auto; }
+
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(28, 27, 24, .92);
+    backdrop-filter: blur(12px);
+    color: var(--paper);
+    border-bottom: 1px solid var(--paper-line);
+  }
+  .nav .wrap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    min-height: 58px;
+  }
+  .nav .brand { display: flex; align-items: center; gap: 10px; font-family: var(--serif); font-weight: 600; font-size: 15px; }
+  .nav .brand svg { width: 22px; height: 22px; }
+  .nav .links { display: flex; gap: 20px; font-size: 12px; color: rgba(245, 240, 230, .72); }
+  .nav .links a:hover { color: #fff; }
+
+  .cover { color: var(--paper); position: relative; overflow: hidden; padding: 84px 0 0; }
+  .cover .bg {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(1100px 520px at 80% -12%, rgba(90, 122, 107, .30), transparent 62%),
+      linear-gradient(180deg, #26241F 0%, #1C1B18 100%);
+  }
+  .cover .bg::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(245, 240, 230, .05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(245, 240, 230, .05) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: linear-gradient(180deg, rgba(0, 0, 0, .72), transparent 78%);
+  }
+  .cover-grid {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1.08fr .92fr;
+    gap: 52px;
+    align-items: center;
+    padding: 58px 0 84px;
+  }
+  .cover-left .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 11px;
+    letter-spacing: .18em;
+    color: rgba(245, 240, 230, .6);
+    margin-bottom: 26px;
+  }
+  .eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cinnabar); }
+  .cover h1 { font-family: var(--serif); font-weight: 700; font-size: 96px; line-height: 1.04; letter-spacing: .06em; }
+  .cover h1 .en {
+    display: block;
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: 15px;
+    letter-spacing: .34em;
+    color: rgba(245, 240, 230, .62);
+    margin-top: 16px;
+  }
+  .cover .slogan { font-family: var(--serif); font-size: 30px; color: #CFD8CF; margin-top: 24px; }
+  .cover .lead { max-width: 520px; margin-top: 18px; font-size: 14px; color: rgba(245, 240, 230, .68); }
+  .cover-meta { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 30px; }
+  .cover-meta span {
+    border: 1px solid rgba(245, 240, 230, .24);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-size: 11px;
+    color: rgba(245, 240, 230, .78);
+  }
+  .cover-right { display: flex; justify-content: center; }
+  .hero-mark {
+    width: min(360px, 100%);
+    aspect-ratio: 1;
+    border: 1px solid rgba(245, 240, 230, .16);
+    background: rgba(245, 240, 230, .045);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .hero-mark svg { width: 52%; }
+  .hero-mark::before, .hero-mark::after {
+    content: "";
+    position: absolute;
+    border: 1px dashed rgba(245, 240, 230, .2);
+    border-radius: 50%;
+    inset: 11%;
+  }
+  .hero-mark::after { inset: 23%; }
+  .cover-foot {
+    position: relative;
+    border-top: 1px solid var(--paper-line);
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 18px 0 22px;
+    font-size: 10px;
+    letter-spacing: .14em;
+    color: rgba(245, 240, 230, .46);
+  }
+
+  .board { background: var(--paper); color: var(--ink); }
+  .board-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 24px;
+    flex-wrap: wrap;
+    padding: 66px 0 28px;
+  }
+  .board-head h2 { font-family: var(--serif); font-size: 34px; font-weight: 700; }
+  .board-head p { max-width: 560px; font-size: 13px; color: rgba(46, 44, 40, .66); }
+  .overview {
+    border: 1px solid var(--ink);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 72px;
+  }
+  .ov-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .ov-cell {
+    min-height: 292px;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+  }
+  .ov-cell:nth-child(3n) { border-right: 0; }
+  .ov-cell:nth-last-child(-n+3) { border-bottom: 0; }
+  .ov-tag {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+    letter-spacing: .16em;
+    color: var(--bamboo);
+    margin-bottom: 12px;
+  }
+  .ov-tag::before { content: ""; width: 14px; height: 1px; background: var(--bamboo); }
+  .ov-body { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; min-height: 0; }
+
+  .ov-logo { text-align: center; }
+  .ov-logo svg { width: 92px; height: 92px; margin: 0 auto 10px; }
+  .ov-logo b { display: block; font-family: var(--serif); font-size: 24px; font-weight: 700; letter-spacing: .12em; }
+  .ov-logo span { display: block; margin-top: 4px; font-size: 10px; letter-spacing: .3em; color: rgba(46, 44, 40, .5); }
+
+  .ov-construction { width: 100%; max-width: 250px; }
+  .ov-construction svg { width: 100%; height: auto; }
+  .ov-caption { text-align: center; font-size: 10px; color: rgba(46, 44, 40, .54); margin-top: 10px; }
+
+  .ov-quote { max-width: 320px; text-align: center; }
+  .ov-quote p { font-family: var(--serif); font-size: 20px; line-height: 1.75; }
+  .ov-quote span { display: block; margin-top: 12px; font-size: 10px; letter-spacing: .12em; color: rgba(46, 44, 40, .5); }
+
+  .ov-colors { display: flex; width: 100%; max-width: 320px; height: 208px; border-radius: 5px; overflow: hidden; border: 1px solid var(--line); }
+  .ov-colors i { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; padding: 9px 8px; color: #fff; font-style: normal; }
+  .ov-colors i.light { color: var(--ink); }
+  .ov-colors b { font-size: 11px; font-weight: 600; }
+  .ov-colors span { font-size: 9px; opacity: .82; margin-top: 2px; }
+
+  .ov-type { text-align: center; }
+  .ov-type .big { font-family: var(--serif); font-size: 68px; font-weight: 700; line-height: 1; }
+  .ov-type p { margin-top: 14px; font-family: var(--serif); font-size: 15px; color: var(--bamboo); }
+
+  .ov-system { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
+  .ov-chip { border-radius: 999px; padding: 6px 14px; font-size: 11px; border: 1px solid rgba(46, 44, 40, .26); color: rgba(46, 44, 40, .76); }
+  .ov-chip.green { background: rgba(90, 122, 107, .12); border-color: rgba(90, 122, 107, .44); color: var(--bamboo); }
+  .ov-chip.red { background: rgba(166, 75, 60, .08); border-color: rgba(166, 75, 60, .4); color: var(--cinnabar); }
+  .ov-btn { background: var(--bamboo); color: #fff; border-radius: 6px; padding: 9px 18px; font-size: 12px; font-weight: 600; }
+
+  .section { padding: 78px 0; }
+  .section.soft { background: var(--paper-2); }
+  .section.dark { background: #211F1B; color: var(--paper); }
+  .sec-head { display: grid; grid-template-columns: 150px 1fr; gap: 30px; margin-bottom: 48px; align-items: start; }
+  .sec-index { font-family: var(--serif); color: var(--bamboo); font-size: 13px; letter-spacing: .14em; padding-top: 7px; }
+  .sec-head h2 { font-family: var(--serif); font-size: 34px; font-weight: 700; line-height: 1.2; }
+  .sec-head p { margin-top: 12px; max-width: 680px; font-size: 13px; color: rgba(46, 44, 40, .68); }
+  .section.dark .sec-head p { color: rgba(245, 240, 230, .64); }
+  .section.dark .sec-index { color: #A9C1B3; }
+
+  .core-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 56px; align-items: center; }
+  .core-list { display: grid; gap: 20px; }
+  .core-item { display: grid; grid-template-columns: 74px 1fr; gap: 16px; border-top: 1px solid var(--line); padding-top: 16px; }
+  .core-item b { font-family: var(--serif); font-weight: 600; font-size: 14px; color: var(--bamboo); }
+  .core-item p { font-size: 13px; color: rgba(46, 44, 40, .78); }
+  .core-quote {
+    border: 1px solid var(--ink);
+    border-radius: 6px;
+    padding: 34px 30px;
+    background: var(--paper);
+    position: relative;
+  }
+  .core-quote .seal {
+    width: 44px;
+    height: 44px;
+    border-radius: 4px;
+    background: var(--cinnabar);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--serif);
+    font-size: 16px;
+    margin-bottom: 22px;
+  }
+  .core-quote blockquote { font-family: var(--serif); font-size: 23px; line-height: 1.7; }
+  .core-quote cite { display: block; margin-top: 18px; font-style: normal; font-size: 11px; color: rgba(46, 44, 40, .56); }
+  .slogan-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 46px; }
+  .slogan-card { border: 1px solid var(--line); border-radius: 6px; padding: 20px; background: var(--paper); }
+  .slogan-card b { font-family: var(--serif); font-size: 18px; display: block; margin-bottom: 8px; }
+  .slogan-card span { font-size: 12px; color: rgba(46, 44, 40, .64); }
+
+  .logo-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+  .logo-tile {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    min-height: 212px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    padding: 20px;
+    background: var(--paper);
+  }
+  .logo-tile.dark { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+  .logo-tile svg { width: 92px; height: 92px; }
+  .logo-tile span { font-size: 11px; color: rgba(46, 44, 40, .56); }
+  .logo-tile.dark span { color: rgba(245, 240, 230, .6); }
+
+  .construction-wrap { margin-top: 64px; display: grid; grid-template-columns: 1fr 1fr; gap: 46px; align-items: center; }
+  .construction-svg { border: 1px solid var(--line); border-radius: 6px; background: var(--paper); padding: 22px; }
+  .construction-svg svg { width: 100%; height: auto; }
+  .rules { display: grid; gap: 14px; }
+  .rule { display: grid; grid-template-columns: 96px 1fr; gap: 14px; border-top: 1px solid var(--line); padding-top: 12px; font-size: 12px; }
+  .rule b { color: var(--bamboo); font-weight: 600; font-size: 11px; letter-spacing: .06em; }
+  .rule p { color: rgba(46, 44, 40, .74); }
+
+  .clear-min { margin-top: 64px; display: grid; grid-template-columns: 1fr 1fr; gap: 46px; }
+  .clear-box { border: 1px dashed rgba(46, 44, 40, .45); border-radius: 6px; padding: 34px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; }
+  .clear-box .lbl { font-size: 10px; letter-spacing: .14em; color: rgba(46, 44, 40, .52); }
+  .clear-box svg { width: 64px; height: 64px; }
+  .min-row { display: flex; align-items: flex-end; justify-content: space-around; gap: 24px; min-height: 150px; }
+  .min-item { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .min-item span { font-size: 10px; color: rgba(46, 44, 40, .56); }
+
+  .dont-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 56px; }
+  .dont-tile {
+    position: relative;
+    border: 1px solid rgba(166, 75, 60, .5);
+    border-radius: 6px;
+    min-height: 150px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(166, 75, 60, .04);
+  }
+  .dont-tile svg { width: 62px; height: 62px; }
+  .dont-tile .x {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--cinnabar);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+  }
+  .dont-tile p { position: absolute; bottom: 10px; left: 12px; font-size: 10px; color: var(--cinnabar); }
+  .dont-tile svg.shadowed { filter: drop-shadow(3px 4px 5px rgba(0, 0, 0, .4)); }
+
+  .color-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+  .swatch {
+    border: 1px solid rgba(46, 44, 40, .14);
+    border-radius: 6px;
+    min-height: 196px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    color: #fff;
+  }
+  .swatch.light { color: var(--ink); }
+  .swatch b { font-size: 14px; font-weight: 600; }
+  .swatch span { font-size: 11px; opacity: .85; margin-top: 4px; }
+  .swatch .hex { font-family: var(--mono); font-size: 11px; margin-top: 14px; }
+  .ratio-bar { margin-top: 40px; display: flex; height: 46px; border-radius: 6px; overflow: hidden; border: 1px solid rgba(46, 44, 40, .16); }
+  .ratio-bar i { display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; font-style: normal; }
+  .ratio-bar i.light { color: var(--ink); }
+  .ratio-legend { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-top: 14px; }
+  .ratio-legend span { font-size: 11px; color: rgba(46, 44, 40, .66); }
+  .color-app { display: grid; grid-template-columns: 1fr 1fr; gap: 46px; margin-top: 56px; }
+  .app-tile { border: 1px solid var(--line); border-radius: 6px; min-height: 224px; padding: 26px; display: flex; flex-direction: column; justify-content: space-between; background: var(--paper); }
+  .app-tile h4 { font-family: var(--serif); font-size: 18px; }
+  .app-tile p { font-size: 12px; color: rgba(46, 44, 40, .66); margin-top: 10px; max-width: 440px; }
+  .mini-palette { display: flex; height: 40px; border-radius: 5px; overflow: hidden; margin-top: 18px; border: 1px solid var(--line); }
+  .mini-palette i { flex: 1; }
+  .do-dont { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 56px; }
+  .do-card, .dont-card { border-radius: 6px; padding: 22px; }
+  .do-card { border: 1px solid rgba(90, 122, 107, .5); background: rgba(90, 122, 107, .07); }
+  .dont-card { border: 1px solid rgba(166, 75, 60, .5); background: rgba(166, 75, 60, .05); }
+  .do-card b, .dont-card b { font-size: 13px; display: block; margin-bottom: 10px; }
+  .do-card ul, .dont-card ul { list-style: none; display: grid; gap: 7px; font-size: 12px; color: rgba(46, 44, 40, .74); }
+
+  .type-hero { display: grid; grid-template-columns: 1.2fr .8fr; gap: 56px; align-items: end; }
+  .type-hero .specimen { font-family: var(--serif); font-weight: 700; font-size: 132px; line-height: 1; }
+  .type-hero .specimen .en {
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: 15px;
+    letter-spacing: .3em;
+    color: var(--bamboo);
+    margin-top: 20px;
+  }
+  .type-pair { display: grid; gap: 18px; }
+  .pair { border-top: 1px solid var(--line); padding-top: 14px; }
+  .pair b { font-size: 14px; display: block; }
+  .pair .demo { margin-top: 8px; font-size: 17px; }
+  .pair .meta { margin-top: 6px; font-size: 11px; color: rgba(46, 44, 40, .56); }
+  .type-scale { margin-top: 64px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .scale-row { display: grid; grid-template-columns: 170px 1fr 130px; gap: 20px; align-items: baseline; padding: 18px 22px; border-bottom: 1px solid var(--line); }
+  .scale-row:last-child { border-bottom: 0; }
+  .scale-row .label { font-size: 11px; color: var(--bamboo); }
+  .scale-row .demo { font-family: var(--serif); }
+  .scale-row .px { font-size: 11px; color: rgba(46, 44, 40, .5); text-align: right; }
+  .kai-row { margin-top: 56px; display: grid; grid-template-columns: 1fr 1fr; gap: 46px; align-items: center; }
+  .kai-demo {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 34px;
+    font-family: var(--kai);
+    font-size: 28px;
+    text-align: center;
+    background: linear-gradient(180deg, rgba(90, 122, 107, .06), transparent);
+  }
+  .kai-note { font-size: 12px; color: rgba(46, 44, 40, .7); }
+
+  .app-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 18px; }
+  .app-item {
+    border: 1px solid rgba(245, 240, 230, .16);
+    border-radius: 6px;
+    background: rgba(245, 240, 230, .045);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .app-item h4 { font-family: var(--serif); font-size: 15px; color: var(--paper); }
+  .app-item .meta { font-size: 10px; letter-spacing: .12em; color: rgba(245, 240, 230, .48); }
+  .mock-stage { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 300px; position: relative; }
+  .app-item.wide { grid-column: span 6; }
+  .app-item.narrow { grid-column: span 3; }
+
+  .phone {
+    --phw: 214px;
+    --phh: 420px;
+    width: var(--phw);
+    height: var(--phh);
+    font-size: 12px;
+    border-radius: 26px;
+    background: var(--paper);
+    border: 1px solid rgba(245, 240, 230, .24);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .phone.compact {
+    --phw: 172px;
+    --phh: 288px;
+    font-size: 10px;
+    border-radius: 20px;
+  }
+  .phone-status {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 1.1em 1.2em .7em;
+    font-size: .92em;
+    color: rgba(46, 44, 40, .68);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .phone-status b { font-family: var(--serif); color: var(--ink); }
+  .phone-list { flex: 1; display: flex; flex-direction: column; gap: .8em; padding: .95em 1.1em; overflow: hidden; }
+  .entry { display: grid; grid-template-columns: 2.6em 1fr; gap: .75em; align-items: start; border-bottom: 1px solid var(--line-soft); padding-bottom: .8em; }
+  .entry .date { font-size: .85em; color: var(--bamboo); font-weight: 600; padding-top: .15em; }
+  .entry p { font-size: .9em; color: rgba(46, 44, 40, .78); line-height: 1.5; }
+  .entry .k { display: inline-block; width: .7em; height: .7em; border-radius: 50%; background: var(--moss); margin-right: .35em; }
+  .phone-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: .8em 1.1em 1em;
+    border-top: 1px solid var(--line-soft);
+  }
+  .nav-mini { display: flex; gap: 1.1em; font-size: .82em; color: rgba(46, 44, 40, .6); }
+  .nav-mini .on { color: var(--bamboo); font-weight: 600; }
+  .fab {
+    width: 2.5em;
+    height: 2.5em;
+    border-radius: 50%;
+    background: var(--bamboo);
+    color: #fff;
+    font-size: 1.1em;
+    font-family: var(--serif);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 8px 20px rgba(90, 122, 107, .4);
+  }
+
+  .book {
+    --bw: 176px;
+    --bh: 240px;
+    --bs: 28px;
+    display: flex;
+    align-items: stretch;
+    filter: drop-shadow(0 22px 34px rgba(0, 0, 0, .28));
+  }
+  .book.compact { --bw: 122px; --bh: 170px; --bs: 20px; }
+  .book-spine { width: 13px; background: var(--ink); border-radius: 4px 0 0 4px; }
+  .book-cover {
+    width: var(--bw);
+    height: var(--bh);
+    background: var(--paper);
+    padding: calc(var(--bs) * .72);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border-radius: 0 4px 4px 0;
+    border: 1px solid var(--line);
+    border-left: 0;
+  }
+  .book-cover svg { width: calc(var(--bs) * 1.5); }
+  .book-cover h4 { font-family: var(--serif); font-size: calc(var(--bs) * 1); font-weight: 700; }
+  .book-cover .sub { font-size: calc(var(--bs) * .36); color: rgba(46, 44, 40, .62); margin-top: calc(var(--bs) * .18); }
+  .book-seal {
+    width: calc(var(--bs) * 1.4);
+    height: calc(var(--bs) * 1.4);
+    background: var(--cinnabar);
+    color: #fff;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--serif);
+    font-size: calc(var(--bs) * .52);
+  }
+  .book-pages {
+    width: 30px;
+    background: repeating-linear-gradient(180deg, #F1EADC 0 5px, #E7DECC 5px 6px);
+    border-radius: 0 3px 3px 0;
+    border: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .poster {
+    --pw: 200px;
+    --ph: 260px;
+    width: var(--pw);
+    height: var(--ph);
+    background: var(--paper);
+    border: 1px solid var(--line);
+    padding: calc(var(--pw) * .09);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, .28);
+  }
+  .poster.compact { --pw: 150px; --ph: 196px; }
+  .poster.large { --pw: 230px; --ph: 310px; }
+  .poster .top { font-size: calc(var(--pw) * .045); letter-spacing: .2em; color: var(--bamboo); }
+  .poster .main {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100%;
+    padding: 0 calc(var(--pw) * .09);
+    text-align: center;
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: calc(var(--pw) * .13);
+    line-height: 1.35;
+  }
+  .poster .main span { display: block; }
+  .poster .pat { position: absolute; right: calc(var(--pw) * .07); bottom: calc(var(--pw) * .08); width: calc(var(--pw) * .38); height: calc(var(--pw) * .27); }
+  .poster .seal {
+    position: absolute;
+    left: calc(var(--pw) * .08);
+    bottom: calc(var(--pw) * .08);
+    width: calc(var(--pw) * .17);
+    height: calc(var(--pw) * .17);
+    background: var(--cinnabar);
+    color: #fff;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--serif);
+    font-size: calc(var(--pw) * .065);
+  }
+
+  .icon-tile {
+    width: 150px;
+    height: 150px;
+    border-radius: 32px;
+    background: var(--bamboo);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, .3);
+  }
+  .icon-tile svg { width: 58px; height: 58px; }
+  .icon-tile span { color: rgba(255, 255, 255, .9); font-size: 12px; letter-spacing: .1em; }
+  .icon-tile.small { width: 118px; height: 118px; border-radius: 26px; }
+  .icon-tile.small svg { width: 46px; height: 46px; }
+  .seal-standalone {
+    width: 108px;
+    height: 108px;
+    border-radius: 6px;
+    background: var(--cinnabar);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--serif);
+    font-size: 30px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, .3);
+  }
+
+  .stationery { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+  .bcard {
+    width: 220px;
+    height: 128px;
+    border-radius: 6px;
+    background: var(--paper);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border: 1px solid var(--line);
+  }
+  .bcard.back { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .bcard svg { width: 34px; height: 34px; }
+  .bcard .name { font-family: var(--serif); font-size: 20px; font-weight: 700; }
+  .bcard .role { font-size: 9px; letter-spacing: .12em; color: rgba(46, 44, 40, .58); }
+  .bcard.back .role { color: rgba(245, 240, 230, .55); }
+  .bcard.back .en { font-size: 10px; letter-spacing: .26em; }
+
+  .pattern-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 46px; align-items: center; }
+  .pattern-stage { border: 1px solid var(--line); border-radius: 6px; padding: 24px; background: var(--paper); }
+  .pattern-stage svg { width: 100%; height: auto; }
+  .pattern-stage.dark { background: var(--ink); border-color: var(--ink); }
+  .pattern-uses { display: grid; gap: 14px; }
+  .pattern-use { display: grid; grid-template-columns: 108px 1fr; gap: 14px; border-top: 1px solid var(--line); padding-top: 12px; font-size: 12px; }
+  .pattern-use b { color: var(--bamboo); font-weight: 600; font-size: 11px; letter-spacing: .06em; }
+  .pattern-use p { color: rgba(46, 44, 40, .74); }
+
+  .comp-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 18px; }
+  .comp-card { border: 1px solid var(--line); border-radius: 6px; padding: 20px; grid-column: span 4; background: var(--paper); }
+  .comp-wide { grid-column: span 6; }
+  .comp-card h4 { font-family: var(--serif); font-size: 14px; margin-bottom: 16px; }
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn { border-radius: 6px; padding: 9px 16px; font-size: 12px; font-weight: 600; border: 1px solid transparent; cursor: default; }
+  .btn.primary { background: var(--bamboo); color: #fff; }
+  .btn.ghost { background: transparent; border-color: rgba(46, 44, 40, .32); color: var(--ink); }
+  .btn.danger { background: var(--cinnabar); color: #fff; }
+  .chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { border-radius: 999px; padding: 5px 12px; font-size: 11px; border: 1px solid rgba(46, 44, 40, .24); color: rgba(46, 44, 40, .78); }
+  .chip.green { background: rgba(90, 122, 107, .12); border-color: rgba(90, 122, 107, .4); color: var(--bamboo); }
+  .chip.moss { background: rgba(107, 142, 90, .12); border-color: rgba(107, 142, 90, .42); color: #54734A; }
+  .chip.red { background: rgba(166, 75, 60, .09); border-color: rgba(166, 75, 60, .38); color: var(--cinnabar); }
+  .field { display: grid; gap: 8px; }
+  .field label { font-size: 10px; letter-spacing: .1em; color: rgba(46, 44, 40, .56); }
+  .input {
+    width: 100%;
+    border: 1px solid rgba(46, 44, 40, .32);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 12px;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+  }
+  .toast { display: inline-flex; align-items: center; gap: 10px; background: var(--ink); color: var(--paper); border-radius: 6px; padding: 10px 16px; font-size: 12px; }
+  .toast .seal-dot { width: 8px; height: 8px; background: var(--moss); border-radius: 50%; }
+  .glossary { display: grid; gap: 10px; }
+  .gloss-item { display: grid; grid-template-columns: 118px 1fr; gap: 12px; border-top: 1px solid var(--line); padding-top: 10px; font-size: 12px; }
+  .gloss-item b { font-family: var(--serif); font-weight: 600; color: var(--bamboo); }
+  .gloss-item span { color: rgba(46, 44, 40, .7); }
+
+  .footer { color: var(--paper); padding: 40px 0 48px; }
+  .footer .wrap { display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; font-size: 10px; letter-spacing: .14em; color: rgba(245, 240, 230, .5); }
+  .footer .mark { display: flex; gap: 10px; align-items: center; font-family: var(--serif); font-size: 12px; letter-spacing: .08em; color: rgba(245, 240, 230, .8); }
+  .footer svg { width: 20px; height: 20px; }
+
+  @media (max-width: 1024px) {
+    .ov-grid { grid-template-columns: repeat(2, 1fr); }
+    .ov-cell:nth-child(3n) { border-right: 1px solid var(--line); }
+    .ov-cell:nth-child(2n) { border-right: 0; }
+    .ov-cell:nth-last-child(-n+3) { border-bottom: 1px solid var(--line); }
+    .ov-cell:nth-last-child(-n+2) { border-bottom: 0; }
+    .cover-grid, .core-grid, .construction-wrap, .clear-min, .color-app, .type-hero, .kai-row, .pattern-grid { grid-template-columns: 1fr; }
+    .app-item.wide, .app-item.narrow { grid-column: span 6; }
+    .comp-card, .comp-wide { grid-column: span 6; }
+    .logo-grid { grid-template-columns: repeat(2, 1fr); }
+    .dont-grid { grid-template-columns: repeat(2, 1fr); }
+    .color-grid { grid-template-columns: repeat(3, 1fr); }
+    .ratio-legend { grid-template-columns: repeat(3, 1fr); }
+    .scale-row { grid-template-columns: 110px 1fr 80px; }
+  }
+  @media (max-width: 640px) {
+    .wrap { width: calc(100% - 28px); }
+    .cover { padding-top: 52px; }
+    .cover h1 { font-size: 64px; }
+    .cover-grid { gap: 40px; padding: 36px 0 56px; }
+    .hero-mark { width: 240px; }
+    .ov-grid { grid-template-columns: 1fr; }
+    .ov-cell { border-right: 0; border-bottom: 1px solid var(--line); }
+    .ov-cell:nth-last-child(-n+3) { border-bottom: 1px solid var(--line); }
+    .ov-cell:last-child { border-bottom: 0; }
+    .app-item.wide, .app-item.narrow, .comp-card, .comp-wide { grid-column: span 12; }
+    .logo-grid, .dont-grid { grid-template-columns: 1fr; }
+    .color-grid { grid-template-columns: repeat(2, 1fr); }
+    .slogan-row { grid-template-columns: 1fr; }
+    .sec-head { grid-template-columns: 1fr; gap: 10px; }
+    .scale-row { grid-template-columns: 1fr; gap: 4px; }
+    .stationery { flex-direction: column; align-items: flex-start; }
+    .nav .links { display: none; }
+    .type-hero .specimen { font-size: 84px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <line x1="32" y1="30" x2="32" y2="68" stroke="#9DB5A8" stroke-width="3.5" stroke-linecap="round"/>
+        <line x1="50" y1="24" x2="50" y2="72" stroke="#F5F0E6" stroke-width="3.5" stroke-linecap="round"/>
+        <line x1="68" y1="32" x2="68" y2="66" stroke="#9DB98A" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#9DB5A8" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="24" cy="53" r="3" fill="#9DB98A"/>
+        <circle cx="76" cy="51" r="3" fill="#9DB98A"/>
+        <circle cx="32" cy="24" r="2.4" fill="#F5F0E6"/>
+      </svg>
+      青简
+    </a>
+    <div class="links">
+      <a href="#overview">总览</a>
+      <a href="#core">核心</a>
+      <a href="#logo">标志</a>
+      <a href="#color">色彩</a>
+      <a href="#type">字体</a>
+      <a href="#app">应用</a>
+      <a href="#graphic">图形</a>
+      <a href="#detail">细节</a>
+    </div>
+  </div>
+</nav>
+
+<header class="cover" id="top">
+  <div class="bg"></div>
+  <div class="wrap">
+    <div class="cover-grid">
+      <div class="cover-left">
+        <p class="eyebrow"><span class="dot"></span>QINGJIAN BRAND GUIDELINES · V1.0 · 2026</p>
+        <h1>青简<span class="en">QINGJIAN · BAMBOO SLIPS</span></h1>
+        <p class="slogan">一编青简，半生浮沉</p>
+        <p class="lead">竹简日记 · 个人编年史。三片简、一道弧绳，把每一天编连成册：写下来，就不会被遗忘。</p>
+        <div class="cover-meta">
+          <span>核心隐喻 · 编</span>
+          <span>色彩 · 5</span>
+          <span>字体 · 3</span>
+          <span>应用场景 · 6</span>
+        </div>
+      </div>
+      <div class="cover-right">
+        <div class="hero-mark">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <line x1="32" y1="30" x2="32" y2="68" stroke="#9DB5A8" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="50" y1="24" x2="50" y2="72" stroke="#F5F0E6" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="68" y1="32" x2="68" y2="66" stroke="#9DB98A" stroke-width="3.5" stroke-linecap="round"/>
+            <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#9DB5A8" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="24" cy="53" r="3" fill="#9DB98A"/>
+            <circle cx="76" cy="51" r="3" fill="#9DB98A"/>
+            <circle cx="32" cy="24" r="2.4" fill="#F5F0E6"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+    <div class="cover-foot">
+      <span>标志基准 · qingjian-r3-02.svg</span>
+      <span>色彩依据 · 《青简-logo-方案》VII 色彩规范</span>
+      <span>PRINT · DIGITAL · MOTION</span>
+    </div>
+  </div>
+</header>
+
+<main id="overview">
+  <section class="board">
+    <div class="wrap">
+      <div class="board-head">
+        <h2>品牌板总览</h2>
+        <p>一张板看懂青简：标志、构造、数字与纸品应用、色彩、字体与系统细节，全部收敛在同一套竹青体系里。</p>
+      </div>
+      <div class="overview">
+        <div class="ov-grid">
+          <div class="ov-cell">
+            <div class="ov-tag">01 · LOGO</div>
+            <div class="ov-body">
+              <div class="ov-logo">
+                <svg viewBox="0 0 100 100" aria-hidden="true">
+                  <line x1="32" y1="30" x2="32" y2="68" stroke="#5A7A6B" stroke-width="3.5" stroke-linecap="round"/>
+                  <line x1="50" y1="24" x2="50" y2="72" stroke="#2E2C28" stroke-width="3.5" stroke-linecap="round"/>
+                  <line x1="68" y1="32" x2="68" y2="66" stroke="#6B8E5A" stroke-width="3.5" stroke-linecap="round"/>
+                  <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+                  <circle cx="24" cy="53" r="3" fill="#6B8E5A"/>
+                  <circle cx="76" cy="51" r="3" fill="#6B8E5A"/>
+                  <circle cx="32" cy="24" r="2.4" fill="#2E2C28"/>
+                </svg>
+                <b>青简</b>
+                <span>QINGJIAN</span>
+              </div>
+            </div>
+          </div>
+          <div class="ov-cell">
+            <div class="ov-tag">02 · CONSTRUCTION</div>
+            <div class="ov-body">
+              <div class="ov-construction">
+                <svg viewBox="0 0 100 100" aria-hidden="true">
+                  <g stroke="#5A7A6B" stroke-opacity=".55" stroke-dasharray="2.5 3.5" stroke-width=".8">
+                    <line x1="32" y1="8" x2="32" y2="92"/>
+                    <line x1="50" y1="8" x2="50" y2="92"/>
+                    <line x1="68" y1="8" x2="68" y2="92"/>
+                    <line x1="14" y1="53" x2="88" y2="53"/>
+                    <line x1="14" y1="24" x2="88" y2="24"/>
+                    <line x1="14" y1="72" x2="88" y2="72"/>
+                  </g>
+                  <circle cx="24" cy="53" r="6" fill="none" stroke="#6B8E5A" stroke-opacity=".6"/>
+                  <circle cx="76" cy="51" r="6" fill="none" stroke="#6B8E5A" stroke-opacity=".6"/>
+                  <g stroke-width="3.5" stroke-linecap="round">
+                    <line x1="32" y1="30" x2="32" y2="68" stroke="#5A7A6B"/>
+                    <line x1="50" y1="24" x2="50" y2="72" stroke="#2E2C28"/>
+                    <line x1="68" y1="32" x2="68" y2="66" stroke="#6B8E5A"/>
+                  </g>
+                  <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+                  <circle cx="24" cy="53" r="3" fill="#6B8E5A"/>
+                  <circle cx="76" cy="51" r="3" fill="#6B8E5A"/>
+                  <circle cx="32" cy="24" r="2.4" fill="#2E2C28"/>
+                  <text x="32" y="96" text-anchor="middle" font-size="6.5" fill="#5A7A6B" font-family="PingFang SC, sans-serif">32</text>
+                  <text x="50" y="96" text-anchor="middle" font-size="6.5" fill="#5A7A6B" font-family="PingFang SC, sans-serif">50</text>
+                  <text x="68" y="96" text-anchor="middle" font-size="6.5" fill="#5A7A6B" font-family="PingFang SC, sans-serif">68</text>
+                </svg>
+                <p class="ov-caption">三简一绳 · 32 / 50 / 68</p>
+              </div>
+            </div>
+          </div>
+          <div class="ov-cell">
+            <div class="ov-tag">03 · DIGITAL</div>
+            <div class="ov-body">
+              <div class="phone compact">
+                <div class="phone-status"><b>今简</b><span>八月十二</span></div>
+                <div class="phone-list">
+                  <div class="entry"><span class="date">08.12</span><p><i class="k"></i>晨风过窗，落笔三行。</p></div>
+                  <div class="entry"><span class="date">08.11</span><p>给旧信留了一页空白。</p></div>
+                  <div class="entry"><span class="date">08.10</span><p><i class="k"></i>入梅前的最后一场雨。</p></div>
+                </div>
+                <div class="phone-actions">
+                  <div class="nav-mini"><span class="on">今简</span><span>成编</span><span>汗青</span></div>
+                  <div class="fab">刻</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="ov-cell">
+            <div class="ov-tag">04 · ESSENCE</div>
+            <div class="ov-body">
+              <div class="ov-quote">
+                <p>谁看青简一编书<br>不遣花虫粉空蠹</p>
+                <span>唐 · 李贺《秋来》</span>
+              </div>
+            </div>
+          </div>
+          <div class="ov-cell">
+            <div class="ov-tag">05 · COLOR</div>
+            <div class="ov-body">
+              <div class="ov-colors">
+                <i style="background:#5A7A6B"><b>竹青</b><span>#5A7A6B</span></i>
+                <i style="background:#F5F0E6" class="light"><b>麻纸</b><span>#F5F0E6</span></i>
+                <i style="background:#2E2C28"><b>墨色</b><span>#2E2C28</span></i>
+                <i style="background:#6B8E5A"><b>苔绿</b><span>#6B8E5A</span></i>
+                <i style="background:#A64B3C"><b>酽红</b><span>#A64B3C</span></i>
+              </div>
+            </div>
+          </div>
+          <div class="ov-cell">
+            <div class="ov-tag">06 · TYPE</div>
+            <div class="ov-body">
+              <div class="ov-type">
+                <div class="big">青简</div>
+                <p>一日一简，编年成书</p>
+              </div>
+            </div>
+          </div>
+          <div class="ov-cell">
+            <div class="ov-tag">07 · PRINT</div>
+            <div class="ov-body">
+              <div class="book compact">
+                <div class="book-spine"></div>
+                <div class="book-cover">
+                  <svg viewBox="0 0 100 100" aria-hidden="true">
+                    <line x1="32" y1="30" x2="32" y2="68" stroke="#5A7A6B" stroke-width="3.5" stroke-linecap="round"/>
+                    <line x1="50" y1="24" x2="50" y2="72" stroke="#2E2C28" stroke-width="3.5" stroke-linecap="round"/>
+                    <line x1="68" y1="32" x2="68" y2="66" stroke="#6B8E5A" stroke-width="3.5" stroke-linecap="round"/>
+                    <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+                    <circle cx="24" cy="53" r="3" fill="#6B8E5A"/>
+                    <circle cx="76" cy="51" r="3" fill="#6B8E5A"/>
+                    <circle cx="32" cy="24" r="2.4" fill="#2E2C28"/>
+                  </svg>
+                  <div>
+                    <h4>岁编</h4>
+                    <p class="sub">二〇二六 · 一至八月</p>
+                  </div>
+                  <span class="book-seal">青简</span>
+                </div>
+                <div class="book-pages"></div>
+              </div>
+            </div>
+          </div>
+          <div class="ov-cell">
+            <div class="ov-tag">08 · IMAGE</div>
+            <div class="ov-body">
+              <div class="poster compact">
+                <div class="top">QINGJIAN · 青简</div>
+                <div class="main"><span>一编青简</span><span>半生浮沉</span></div>
+                <svg class="pat" viewBox="0 0 120 80" aria-hidden="true">
+                  <g stroke="#5A7A6B" stroke-width="2" stroke-linecap="round" opacity=".8">
+                    <line x1="20" y1="16" x2="20" y2="64"/>
+                    <line x1="60" y1="10" x2="60" y2="70"/>
+                    <line x1="100" y1="20" x2="100" y2="60"/>
+                  </g>
+                  <path d="M 10 44 Q 60 34, 110 42" fill="none" stroke="#6B8E5A" stroke-width="2.4" stroke-linecap="round"/>
+                  <circle cx="10" cy="44" r="2.6" fill="#6B8E5A"/>
+                  <circle cx="110" cy="42" r="2.6" fill="#6B8E5A"/>
+                </svg>
+                <span class="seal">青</span>
+              </div>
+            </div>
+          </div>
+          <div class="ov-cell">
+            <div class="ov-tag">09 · SYSTEM</div>
+            <div class="ov-body">
+              <div class="ov-system">
+                <div class="chip green">上名青简 · 签到</div>
+                <div class="chip">预简 · 提醒</div>
+                <div class="chip red">断简 · 回收</div>
+                <div class="ov-btn">刻一简</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section dark" id="app">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="sec-index">05 / APPLY</div>
+        <div>
+          <h2>应用场景</h2>
+          <p>数字、纸品、影像与印章：同一套标志在麻纸与墨色之间反复出现，克制而连贯。</p>
+        </div>
+      </div>
+      <div class="app-grid">
+        <div class="app-item narrow">
+          <div>
+            <h4>数字 · 今简首页</h4>
+            <p class="meta">DIGITAL / APP</p>
+          </div>
+          <div class="mock-stage">
+            <div class="phone">
+              <div class="phone-status"><b>今简</b><span>八月十二 · 立秋后</span></div>
+              <div class="phone-list">
+                <div class="entry"><span class="date">08.12</span><p><i class="k"></i>晨风过窗，落笔三行。</p></div>
+                <div class="entry"><span class="date">08.11</span><p>给旧信留了一页空白。</p></div>
+                <div class="entry"><span class="date">08.10</span><p><i class="k"></i>入梅前的最后一场雨。</p></div>
+                <div class="entry"><span class="date">08.09</span><p>夜读《秋来》，想到备份。</p></div>
+              </div>
+              <div class="phone-actions">
+                <div class="nav-mini"><span class="on">今简</span><span>成编</span><span>汗青</span></div>
+                <div class="fab">刻</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="app-item narrow">
+          <div>
+            <h4>纸品 · 岁编年度册</h4>
+            <p class="meta">PRINT / ANNUAL BOOK</p>
+          </div>
+          <div class="mock-stage">
+            <div class="book">
+              <div class="book-spine"></div>
+              <div class="book-cover">
+                <svg viewBox="0 0 100 100" aria-hidden="true">
+                  <line x1="32" y1="30" x2="32" y2="68" stroke="#5A7A6B" stroke-width="3.5" stroke-linecap="round"/>
+                  <line x1="50" y1="24" x2="50" y2="72" stroke="#2E2C28" stroke-width="3.5" stroke-linecap="round"/>
+                  <line x1="68" y1="32" x2="68" y2="66" stroke="#6B8E5A" stroke-width="3.5" stroke-linecap="round"/>
+                  <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+                  <circle cx="24" cy="53" r="3" fill="#6B8E5A"/>
+                  <circle cx="76" cy="51" r="3" fill="#6B8E5A"/>
+                  <circle cx="32" cy="24" r="2.4" fill="#2E2C28"/>
+                </svg>
+                <div>
+                  <h4>岁编</h4>
+                  <p class="sub">二〇二六 · 一至十二月</p>
+                </div>
+                <span class="book-seal">青简</span>
+              </div>
+              <div class="book-pages"></div>
+            </div>
+          </div>
+        </div>
+        <div class="app-item narrow">
+          <div>
+            <h4>影像 · 品牌海报</h4>
+            <p class="meta">IMAGE / POSTER</p>
+          </div>
+          <div class="mock-stage">
+            <div class="poster large">
+              <div class="top">QINGJIAN · 青简</div>
+              <div class="main"><span>一编青简</span><span>半生浮沉</span></div>
+              <svg class="pat" viewBox="0 0 120 80" aria-hidden="true">
+                <g stroke="#5A7A6B" stroke-width="2" stroke-linecap="round" opacity=".8">
+                  <line x1="20" y1="16" x2="20" y2="64"/>
+                  <line x1="60" y1="10" x2="60" y2="70"/>
+                  <line x1="100" y1="20" x2="100" y2="60"/>
+                </g>
+                <path d="M 10 44 Q 60 34, 110 42" fill="none" stroke="#6B8E5A" stroke-width="2.4" stroke-linecap="round"/>
+                <circle cx="10" cy="44" r="2.6" fill="#6B8E5A"/>
+                <circle cx="110" cy="42" r="2.6" fill="#6B8E5A"/>
+              </svg>
+              <span class="seal">青</span>
+            </div>
+          </div>
+        </div>
+        <div class="app-item narrow">
+          <div>
+            <h4>图标 · App Icon</h4>
+            <p class="meta">MARK / ICON</p>
+          </div>
+          <div class="mock-stage">
+            <div class="icon-tile">
+              <svg viewBox="0 0 100 100" aria-hidden="true">
+                <line x1="32" y1="30" x2="32" y2="68" stroke="#F5F0E6" stroke-width="3.5" stroke-linecap="round"/>
+                <line x1="50" y1="24" x2="50" y2="72" stroke="#F5F0E6" stroke-width="3.5" stroke-linecap="round"/>
+                <line x1="68" y1="32" x2="68" y2="66" stroke="#F5F0E6" stroke-width="3.5" stroke-linecap="round"/>
+                <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#F5F0E6" stroke-width="3" stroke-linecap="round"/>
+                <circle cx="24" cy="53" r="3" fill="#F5F0E6"/>
+                <circle cx="76" cy="51" r="3" fill="#F5F0E6"/>
+                <circle cx="32" cy="24" r="2.4" fill="#F5F0E6"/>
+              </svg>
+              <span>青简 · 日记</span>
+            </div>
+          </div>
+        </div>
+        <div class="app-item wide">
+          <div>
+            <h4>办公 · 名片与信笺</h4>
+            <p class="meta">STATIONERY</p>
+          </div>
+          <div class="mock-stage">
+            <div class="stationery">
+              <div class="bcard">
+                <svg viewBox="0 0 100 100" aria-hidden="true">
+                  <line x1="32" y1="30" x2="32" y2="68" stroke="#5A7A6B" stroke-width="3.5" stroke-linecap="round"/>
+                  <line x1="50" y1="24" x2="50" y2="72" stroke="#2E2C28" stroke-width="3.5" stroke-linecap="round"/>
+                  <line x1="68" y1="32" x2="68" y2="66" stroke="#6B8E5A" stroke-width="3.5" stroke-linecap="round"/>
+                  <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+                  <circle cx="24" cy="53" r="3" fill="#6B8E5A"/>
+                  <circle cx="76" cy="51" r="3" fill="#6B8E5A"/>
+                </svg>
+                <div class="name">青简</div>
+                <div class="role">竹简日记 · 个人编年史</div>
+              </div>
+              <div class="bcard back">
+                <div class="en">QINGJIAN</div>
+                <div>
+                  <div class="name" style="font-size:16px">一编青简，半生浮沉</div>
+                  <div class="role">BRAND · 2026</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="app-item wide">
+          <div>
+            <h4>印章 · 授权与纪念</h4>
+            <p class="meta">SEAL / BADGE</p>
+          </div>
+          <div class="mock-stage" style="gap:26px">
+            <div class="icon-tile small">
+              <svg viewBox="0 0 100 100" aria-hidden="true">
+                <line x1="32" y1="30" x2="32" y2="68" stroke="#F5F0E6" stroke-width="3.5" stroke-linecap="round"/>
+                <line x1="50" y1="24" x2="50" y2="72" stroke="#F5F0E6" stroke-width="3.5" stroke-linecap="round"/>
+                <line x1="68" y1="32" x2="68" y2="66" stroke="#F5F0E6" stroke-width="3.5" stroke-linecap="round"/>
+                <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#F5F0E6" stroke-width="3" stroke-linecap="round"/>
+                <circle cx="24" cy="53" r="3" fill="#F5F0E6"/>
+                <circle cx="76" cy="51" r="3" fill="#F5F0E6"/>
+              </svg>
+              <span>授权</span>
+            </div>
+            <div class="seal-standalone">青简</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="graphic">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="sec-index">06 / GRAPHIC</div>
+        <div>
+          <h2>辅助图形</h2>
+          <p>把标志还原成可重复的「简片纹」：竖线保持 32 / 50 / 68 的节奏，弧绳始终由左向右。</p>
+        </div>
+      </div>
+      <div class="pattern-grid">
+        <div class="pattern-stage">
+          <svg viewBox="0 0 400 140" aria-hidden="true">
+            <defs>
+              <pattern id="patLight" width="80" height="140" patternUnits="userSpaceOnUse">
+                <g stroke="#5A7A6B" stroke-opacity=".45" stroke-width="1.6" stroke-linecap="round">
+                  <line x1="22" y1="26" x2="22" y2="112"/>
+                  <line x1="40" y1="18" x2="40" y2="120"/>
+                  <line x1="58" y1="30" x2="58" y2="106"/>
+                </g>
+                <path d="M 8 72 Q 40 62, 72 70" fill="none" stroke="#6B8E5A" stroke-opacity=".75" stroke-width="2"/>
+                <circle cx="8" cy="72" r="2" fill="#6B8E5A" fill-opacity=".8"/>
+                <circle cx="72" cy="70" r="2" fill="#6B8E5A" fill-opacity=".8"/>
+              </pattern>
+            </defs>
+            <rect width="400" height="140" fill="url(#patLight)"/>
+          </svg>
+        </div>
+        <div class="pattern-stage dark">
+          <svg viewBox="0 0 400 140" aria-hidden="true">
+            <defs>
+              <pattern id="patDark" width="80" height="140" patternUnits="userSpaceOnUse">
+                <g stroke="#F5F0E6" stroke-opacity=".38" stroke-width="1.6" stroke-linecap="round">
+                  <line x1="22" y1="26" x2="22" y2="112"/>
+                  <line x1="40" y1="18" x2="40" y2="120"/>
+                  <line x1="58" y1="30" x2="58" y2="106"/>
+                </g>
+                <path d="M 8 72 Q 40 62, 72 70" fill="none" stroke="#9DB98A" stroke-opacity=".75" stroke-width="2"/>
+                <circle cx="8" cy="72" r="2" fill="#9DB98A" fill-opacity=".85"/>
+                <circle cx="72" cy="70" r="2" fill="#9DB98A" fill-opacity=".85"/>
+              </pattern>
+            </defs>
+            <rect width="400" height="140" fill="url(#patDark)"/>
+          </svg>
+        </div>
+      </div>
+      <div class="pattern-uses" style="margin-top:44px">
+        <div class="pattern-use"><b>简片纹 · 浅底</b><p>三线一绳的重复单元，用于册封底、海报底纹与 App 空状态。</p></div>
+        <div class="pattern-use"><b>弧绳 · 方向</b><p>弧线始终由左向右，保持手写流动感；不作反向或镜像。</p></div>
+        <div class="pattern-use"><b>绳点 · 标记</b><p>端点小点作为日期标记、签到留痕与进度强调，直径与线宽等量。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section soft" id="detail">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="sec-index">07 / DETAIL</div>
+        <div>
+          <h2>系统细节</h2>
+          <p>按钮、标签、输入与反馈统一收进 6px 圆角与竹青体系；仪式感词汇只在关键时刻出现。</p>
+        </div>
+      </div>
+      <div class="comp-grid">
+        <div class="comp-card">
+          <h4>按钮 · Button</h4>
+          <div class="btn-row">
+            <span class="btn primary">刻一简</span>
+            <span class="btn ghost">预简</span>
+            <span class="btn danger">断简</span>
+          </div>
+        </div>
+        <div class="comp-card">
+          <h4>标签 · Chip</h4>
+          <div class="chip-row">
+            <span class="chip green">上名青简</span>
+            <span class="chip moss">已签到</span>
+            <span class="chip">预简 · 明天</span>
+            <span class="chip red">断简 · 30 天</span>
+          </div>
+        </div>
+        <div class="comp-card">
+          <h4>输入与反馈</h4>
+          <div class="field">
+            <label>今日之事，可入青简</label>
+            <input class="input" placeholder="写下今天…" readonly>
+          </div>
+          <div style="margin-top:14px"><span class="toast"><span class="seal-dot"></span>此编已杀青</span></div>
+        </div>
+        <div class="comp-card comp-wide">
+          <h4>功能命名 · 仪式感词汇</h4>
+          <div class="glossary">
+            <div class="gloss-item"><b>今简</b><span>首页与今日记录</span></div>
+            <div class="gloss-item"><b>刻一简</b><span>新建日记</span></div>
+            <div class="gloss-item"><b>成编</b><span>列表与简册视图</span></div>
+            <div class="gloss-item"><b>上名青简</b><span>签到打卡</span></div>
+            <div class="gloss-item"><b>杀青</b><span>导出 PDF 成册</span></div>
+            <div class="gloss-item"><b>防蠹</b><span>JSON 全量备份</span></div>
+          </div>
+        </div>
+        <div class="comp-card comp-wide">
+          <h4>状态与语气</h4>
+          <div class="glossary">
+            <div class="gloss-item"><b>完成态</b><span>「此编已杀青」用于导出与装订完成</span></div>
+            <div class="gloss-item"><b>空状态</b><span>简片纹 + 「今日无事，也可留白」</span></div>
+            <div class="gloss-item"><b>年度回顾</b><span>「岁编」与「汗青」用于年度报告</span></div>
+            <div class="gloss-item"><b>提醒</b><span>「预简」用于未来日期占位</span></div>
+            <div class="gloss-item"><b>回收站</b><span>「断简」提示残简可复原</span></div>
+            <div class="gloss-item"><b>语气原则</b><span>克制、有仪式感，不堆砌古词</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="mark">
+        <svg viewBox="0 0 100 100" aria-hidden="true">
+          <line x1="32" y1="30" x2="32" y2="68" stroke="#9DB5A8" stroke-width="3.5" stroke-linecap="round"/>
+          <line x1="50" y1="24" x2="50" y2="72" stroke="#F5F0E6" stroke-width="3.5" stroke-linecap="round"/>
+          <line x1="68" y1="32" x2="68" y2="66" stroke="#9DB98A" stroke-width="3.5" stroke-linecap="round"/>
+          <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#9DB5A8" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="24" cy="53" r="3" fill="#9DB98A"/>
+          <circle cx="76" cy="51" r="3" fill="#9DB98A"/>
+        </svg>
+        青简 · BRAND GUIDELINES
+      </div>
+      <span>标志 qingjian-r3-02.svg · 色彩《青简-logo-方案》VII</span>
+      <span>PRINT · DIGITAL · MOTION · V1.0</span>
+    </div>
+  </footer>
+
+</main>
+</body>
+</html>
+
+  <section class="section" id="core">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="sec-index">01 / CORE</div>
+        <div>
+          <h2>品牌核心</h2>
+          <p>「青简」不是怀旧装饰，而是与产品功能同构：竹简要杀青防蠹，日记要备份成册；一片片简编连成书，一天天日记装订成年。</p>
+        </div>
+      </div>
+      <div class="core-grid">
+        <div class="core-list">
+          <div class="core-item"><b>定位</b><p>私密而郑重的个人编年史日记 App：今简、成编、汗青，一天一页。</p></div>
+          <div class="core-item"><b>受众</b><p>认真记录生活、愿意长期回看的城市成年人；重视数据可备份、可打印。</p></div>
+          <div class="core-item"><b>核心隐喻</b><p>「编」：三片竹简被一道弧绳连成一册，也是日历上的日期竖列。</p></div>
+          <div class="core-item"><b>情感承诺</b><p>你写下的东西，不会被遗忘，也不会烂在虫嘴里。</p></div>
+        </div>
+        <div class="core-quote">
+          <div class="seal">简</div>
+          <blockquote>一日一简，<br>编年成书。</blockquote>
+          <cite>品牌承诺 · 功能命名体系：今简 / 成编 / 汗青</cite>
+        </div>
+      </div>
+      <div class="slogan-row">
+        <div class="slogan-card"><b>一编青简，半生浮沉</b><span>主 Slogan · 化用李贺《秋来》</span></div>
+        <div class="slogan-card"><b>一日一简，编年成书</b><span>功能向 · 说清楚产品是什么</span></div>
+        <div class="slogan-card"><b>此编已杀青</b><span>导出完成态 · 仪式感收尾</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section soft" id="logo">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="sec-index">02 / LOGO</div>
+        <div>
+          <h2>标志系统</h2>
+          <p>以 qingjian-r3-02 单绳弧线为准：三根高低错落的竖线代表简片与日期，一道弧绳完成「编连」，端点小点为绳结与苔绿强调。</p>
+        </div>
+      </div>
+      <div class="logo-grid">
+        <div class="logo-tile">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <line x1="32" y1="30" x2="32" y2="68" stroke="#5A7A6B" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="50" y1="24" x2="50" y2="72" stroke="#2E2C28" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="68" y1="32" x2="68" y2="66" stroke="#6B8E5A" stroke-width="3.5" stroke-linecap="round"/>
+            <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="24" cy="53" r="3" fill="#6B8E5A"/>
+            <circle cx="76" cy="51" r="3" fill="#6B8E5A"/>
+            <circle cx="32" cy="24" r="2.4" fill="#2E2C28"/>
+          </svg>
+          <span>标准版 · 麻纸底</span>
+        </div>
+        <div class="logo-tile dark">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <line x1="32" y1="30" x2="32" y2="68" stroke="#9DB5A8" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="50" y1="24" x2="50" y2="72" stroke="#F5F0E6" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="68" y1="32" x2="68" y2="66" stroke="#9DB98A" stroke-width="3.5" stroke-linecap="round"/>
+            <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#9DB5A8" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="24" cy="53" r="3" fill="#9DB98A"/>
+            <circle cx="76" cy="51" r="3" fill="#9DB98A"/>
+            <circle cx="32" cy="24" r="2.4" fill="#F5F0E6"/>
+          </svg>
+          <span>深底版 · 墨色封面</span>
+        </div>
+        <div class="logo-tile">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <g stroke="#2E2C28" stroke-width="3.5" stroke-linecap="round">
+              <line x1="32" y1="30" x2="32" y2="68"/>
+              <line x1="50" y1="24" x2="50" y2="72"/>
+              <line x1="68" y1="32" x2="68" y2="66"/>
+            </g>
+            <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#2E2C28" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="24" cy="53" r="3" fill="#2E2C28"/>
+            <circle cx="76" cy="51" r="3" fill="#2E2C28"/>
+            <circle cx="32" cy="24" r="2.4" fill="#2E2C28"/>
+          </svg>
+          <span>单色墨版 · 印刷</span>
+        </div>
+        <div class="logo-tile dark">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <g stroke="#F5F0E6" stroke-width="3.5" stroke-linecap="round">
+              <line x1="32" y1="30" x2="32" y2="68"/>
+              <line x1="50" y1="24" x2="50" y2="72"/>
+              <line x1="68" y1="32" x2="68" y2="66"/>
+            </g>
+            <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#F5F0E6" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="24" cy="53" r="3" fill="#F5F0E6"/>
+            <circle cx="76" cy="51" r="3" fill="#F5F0E6"/>
+            <circle cx="32" cy="24" r="2.4" fill="#F5F0E6"/>
+          </svg>
+          <span>单色纸版 · 反白</span>
+        </div>
+      </div>
+
+      <div class="construction-wrap">
+        <div class="construction-svg">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <g stroke="#5A7A6B" stroke-opacity=".5" stroke-dasharray="2.5 3.5" stroke-width=".8">
+              <line x1="32" y1="6" x2="32" y2="94"/>
+              <line x1="50" y1="6" x2="50" y2="94"/>
+              <line x1="68" y1="6" x2="68" y2="94"/>
+              <line x1="10" y1="53" x2="90" y2="53"/>
+              <line x1="10" y1="24" x2="90" y2="24"/>
+              <line x1="10" y1="72" x2="90" y2="72"/>
+            </g>
+            <circle cx="24" cy="53" r="7" fill="none" stroke="#6B8E5A" stroke-opacity=".55"/>
+            <circle cx="76" cy="51" r="7" fill="none" stroke="#6B8E5A" stroke-opacity=".55"/>
+            <g stroke-width="3.5" stroke-linecap="round">
+              <line x1="32" y1="30" x2="32" y2="68" stroke="#5A7A6B"/>
+              <line x1="50" y1="24" x2="50" y2="72" stroke="#2E2C28"/>
+              <line x1="68" y1="32" x2="68" y2="66" stroke="#6B8E5A"/>
+            </g>
+            <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="24" cy="53" r="3" fill="#6B8E5A"/>
+            <circle cx="76" cy="51" r="3" fill="#6B8E5A"/>
+            <circle cx="32" cy="24" r="2.4" fill="#2E2C28"/>
+            <text x="32" y="98" text-anchor="middle" font-size="6.5" fill="#5A7A6B" font-family="PingFang SC, sans-serif">32</text>
+            <text x="50" y="98" text-anchor="middle" font-size="6.5" fill="#5A7A6B" font-family="PingFang SC, sans-serif">50</text>
+            <text x="68" y="98" text-anchor="middle" font-size="6.5" fill="#5A7A6B" font-family="PingFang SC, sans-serif">68</text>
+            <text x="82" y="47" font-size="6" fill="#6B8E5A" font-family="PingFang SC, sans-serif">弧绳</text>
+          </svg>
+        </div>
+        <div class="rules">
+          <div class="rule"><b>竖线 · 32 / 50 / 68</b><p>三简高低错落：中简最高、右简次之、左简最低，保持日期竖列的节奏。</p></div>
+          <div class="rule"><b>弧绳 · 24 → 76</b><p>弧线自左端点 Q(24,53)，经 Q(50,45) 收至 Q(76,51)，带手写流动感。</p></div>
+          <div class="rule"><b>绳点 · 苔绿</b><p>两端点与顶部墨点为绳结强调；小尺寸下保留两点即可。</p></div>
+          <div class="rule"><b>色彩 · 沿用 VI</b><p>竹青主构、墨色中简、苔绿点缀；深底统一使用反白版。</p></div>
+        </div>
+      </div>
+
+      <div class="clear-min">
+        <div class="clear-box">
+          <span class="lbl">SAFE AREA · 1.5×</span>
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <line x1="32" y1="30" x2="32" y2="68" stroke="#5A7A6B" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="50" y1="24" x2="50" y2="72" stroke="#2E2C28" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="68" y1="32" x2="68" y2="66" stroke="#6B8E5A" stroke-width="3.5" stroke-linecap="round"/>
+            <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="24" cy="53" r="3" fill="#6B8E5A"/>
+            <circle cx="76" cy="51" r="3" fill="#6B8E5A"/>
+            <circle cx="32" cy="24" r="2.4" fill="#2E2C28"/>
+          </svg>
+          <span class="lbl">四周留白 ≥ 1.5 个线距单元</span>
+        </div>
+        <div class="min-row">
+          <div class="min-item">
+            <svg viewBox="0 0 100 100" style="width:20px;height:20px" aria-hidden="true">
+              <line x1="32" y1="30" x2="32" y2="68" stroke="#5A7A6B" stroke-width="3.5" stroke-linecap="round"/>
+              <line x1="50" y1="24" x2="50" y2="72" stroke="#2E2C28" stroke-width="3.5" stroke-linecap="round"/>
+              <line x1="68" y1="32" x2="68" y2="66" stroke="#6B8E5A" stroke-width="3.5" stroke-linecap="round"/>
+              <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+            </svg>
+            <span>屏幕 20px</span>
+          </div>
+          <div class="min-item">
+            <svg viewBox="0 0 100 100" style="width:48px;height:48px" aria-hidden="true">
+              <line x1="32" y1="30" x2="32" y2="68" stroke="#5A7A6B" stroke-width="3.5" stroke-linecap="round"/>
+              <line x1="50" y1="24" x2="50" y2="72" stroke="#2E2C28" stroke-width="3.5" stroke-linecap="round"/>
+              <line x1="68" y1="32" x2="68" y2="66" stroke="#6B8E5A" stroke-width="3.5" stroke-linecap="round"/>
+              <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+              <circle cx="24" cy="53" r="3" fill="#6B8E5A"/>
+              <circle cx="76" cy="51" r="3" fill="#6B8E5A"/>
+            </svg>
+            <span>导航 48px</span>
+          </div>
+          <div class="min-item">
+            <svg viewBox="0 0 100 100" style="width:96px;height:96px" aria-hidden="true">
+              <line x1="32" y1="30" x2="32" y2="68" stroke="#5A7A6B" stroke-width="3.5" stroke-linecap="round"/>
+              <line x1="50" y1="24" x2="50" y2="72" stroke="#2E2C28" stroke-width="3.5" stroke-linecap="round"/>
+              <line x1="68" y1="32" x2="68" y2="66" stroke="#6B8E5A" stroke-width="3.5" stroke-linecap="round"/>
+              <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+              <circle cx="24" cy="53" r="3" fill="#6B8E5A"/>
+              <circle cx="76" cy="51" r="3" fill="#6B8E5A"/>
+              <circle cx="32" cy="24" r="2.4" fill="#2E2C28"/>
+            </svg>
+            <span>封面 96px</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="dont-grid">
+        <div class="dont-tile">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <g stroke="#5A7A6B" stroke-width="9" stroke-linecap="round">
+              <line x1="32" y1="30" x2="32" y2="68"/>
+              <line x1="50" y1="24" x2="50" y2="72"/>
+              <line x1="68" y1="32" x2="68" y2="66"/>
+            </g>
+            <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="8" stroke-linecap="round"/>
+          </svg>
+          <span class="x">×</span>
+          <p>勿加粗线宽</p>
+        </div>
+        <div class="dont-tile">
+          <svg viewBox="0 0 100 100" transform="rotate(12 50 50)" aria-hidden="true">
+            <g stroke="#5A7A6B" stroke-width="3.5" stroke-linecap="round">
+              <line x1="32" y1="30" x2="32" y2="68"/>
+              <line x1="50" y1="24" x2="50" y2="72"/>
+              <line x1="68" y1="32" x2="68" y2="66"/>
+            </g>
+            <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+          <span class="x">×</span>
+          <p>勿旋转变形</p>
+        </div>
+        <div class="dont-tile">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <g stroke="#A64B3C" stroke-width="3.5" stroke-linecap="round">
+              <line x1="32" y1="30" x2="32" y2="68"/>
+              <line x1="50" y1="24" x2="50" y2="72"/>
+              <line x1="68" y1="32" x2="68" y2="66"/>
+            </g>
+            <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#A64B3C" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+          <span class="x">×</span>
+          <p>勿换色</p>
+        </div>
+        <div class="dont-tile">
+          <svg class="shadowed" viewBox="0 0 100 100" aria-hidden="true">
+            <g stroke="#5A7A6B" stroke-width="3.5" stroke-linecap="round">
+              <line x1="32" y1="30" x2="32" y2="68"/>
+              <line x1="50" y1="24" x2="50" y2="72"/>
+              <line x1="68" y1="32" x2="68" y2="66"/>
+            </g>
+            <path d="M 24 53 Q 50 45, 76 51" fill="none" stroke="#5A7A6B" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+          <span class="x">×</span>
+          <p>勿加投影</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="color">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="sec-index">03 / COLOR</div>
+        <div>
+          <h2>色彩系统</h2>
+          <p>沿用方案第一轮的 VI 五色：竹青为主、麻纸为底、墨色为文、苔绿点缀、酽红收尾；比例克制，避免黄历感。</p>
+        </div>
+      </div>
+      <div class="color-grid">
+        <div class="swatch" style="background:#5A7A6B">
+          <b>竹青</b><span>主色 · 品牌色 / 主按钮 / 导航选中</span><span class="hex">#5A7A6B</span>
+        </div>
+        <div class="swatch light" style="background:#F5F0E6">
+          <b>麻纸</b><span>底色 · 页面背景 / 纸感面板</span><span class="hex">#F5F0E6</span>
+        </div>
+        <div class="swatch" style="background:#2E2C28">
+          <b>墨色</b><span>文字 · 正文 / 图标线 / 深色封面</span><span class="hex">#2E2C28</span>
+        </div>
+        <div class="swatch" style="background:#6B8E5A">
+          <b>苔绿</b><span>点缀 · 端点 / 签到 / 成功态</span><span class="hex">#6B8E5A</span>
+        </div>
+        <div class="swatch" style="background:#A64B3C">
+          <b>酽红</b><span>警示 · 印章 / 删除 / 年度标记</span><span class="hex">#A64B3C</span>
+        </div>
+      </div>
+
+      <div class="ratio-bar">
+        <i style="flex:52;background:#F5F0E6;color:#2E2C28">麻纸 52</i>
+        <i style="flex:18;background:#2E2C28">墨色 18</i>
+        <i style="flex:16;background:#5A7A6B">竹青 16</i>
+        <i style="flex:9;background:#6B8E5A">苔绿 9</i>
+        <i style="flex:5;background:#A64B3C">酽红 5</i>
+      </div>
+      <div class="ratio-legend">
+        <span>麻纸 · 52%</span>
+        <span>墨色 · 18%</span>
+        <span>竹青 · 16%</span>
+        <span>苔绿 · 9%</span>
+        <span>酽红 · 5%</span>
+      </div>
+
+      <div class="color-app">
+        <div class="app-tile">
+          <div>
+            <h4>浅色界面</h4>
+            <p>麻纸铺底、墨色文字、竹青主操作；苔绿只做签到与成功态，酽红只做印章与警示。</p>
+          </div>
+          <div class="mini-palette">
+            <i style="background:#F5F0E6"></i>
+            <i style="background:#2E2C28"></i>
+            <i style="background:#5A7A6B"></i>
+            <i style="background:#6B8E5A"></i>
+            <i style="background:#A64B3C"></i>
+          </div>
+        </div>
+        <div class="app-tile" style="background:#2E2C28;border-color:#2E2C28;color:#F5F0E6">
+          <div>
+            <h4>深色封面</h4>
+            <p>墨色作深底封面与年度册封底，竹青与苔绿提亮，酽红印章收尾。</p>
+          </div>
+          <div class="mini-palette">
+            <i style="background:#2E2C28"></i>
+            <i style="background:#5A7A6B"></i>
+            <i style="background:#6B8E5A"></i>
+            <i style="background:#F5F0E6"></i>
+            <i style="background:#A64B3C"></i>
+          </div>
+        </div>
+      </div>
+
+      <div class="do-dont">
+        <div class="do-card">
+          <b>做法 · 有分寸</b>
+          <ul>
+            <li>麻纸底 + 竹青主操作 + 墨色正文</li>
+            <li>苔绿用于签到、成功与端点强调</li>
+            <li>酽红只用印章、警示与年度标记</li>
+          </ul>
+        </div>
+        <div class="dont-card">
+          <b>禁忌 · 黄历感</b>
+          <ul>
+            <li>不用大红大金堆砌装饰</li>
+            <li>不用荧光绿与高饱和翠绿</li>
+            <li>酽红占比不超过画面 5%</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section soft" id="type">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="sec-index">04 / TYPE</div>
+        <div>
+          <h2>字体系统</h2>
+          <p>思源宋体立骨、系统无衬线保证可读、楷体只留给日记书写与仪式感场景；标题有骨，正文安静。</p>
+        </div>
+      </div>
+      <div class="type-hero">
+        <div class="specimen">青简<span class="en">SOURCE HAN SERIF SC · 700</span></div>
+        <div class="type-pair">
+          <div class="pair">
+            <b>标题 · 思源宋体</b>
+            <div class="demo" style="font-family:var(--serif);font-weight:700;font-size:24px">一编青简，半生浮沉</div>
+            <div class="meta">Source Han Serif SC / Noto Serif SC · 封面、年度回顾与引言</div>
+          </div>
+          <div class="pair">
+            <b>正文 · 系统无衬线</b>
+            <div class="demo">今天也好好记了一笔。</div>
+            <div class="meta">PingFang SC / Hiragino Sans GB · 导航、正文与 UI</div>
+          </div>
+          <div class="pair">
+            <b>手写 · 楷体</b>
+            <div class="demo" style="font-family:var(--kai);font-size:20px">写于此刻，入册成编</div>
+            <div class="meta">Kaiti / STKaiti · 日记视图与签名场景（需子集化）</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="type-scale">
+        <div class="scale-row"><span class="label">展示 · Display</span><span class="demo" style="font-size:44px">一编青简</span><span class="px">44 / 1.2</span></div>
+        <div class="scale-row"><span class="label">标题 · Title</span><span class="demo" style="font-size:28px">岁编 · 二〇二六</span><span class="px">28 / 1.3</span></div>
+        <div class="scale-row"><span class="label">章节 · Section</span><span class="demo" style="font-size:20px">今简</span><span class="px">20 / 1.4</span></div>
+        <div class="scale-row"><span class="label">正文 · Body</span><span class="demo" style="font-family:var(--sans);font-size:15px">晨风过窗，落笔三行。</span><span class="px">15 / 1.7</span></div>
+        <div class="scale-row"><span class="label">说明 · Caption</span><span class="demo" style="font-family:var(--sans);font-size:12px">八月十二 · 立秋后</span><span class="px">12 / 1.6</span></div>
+      </div>
+
+      <div class="kai-row">
+        <div class="kai-demo">今日之事，可入青简</div>
+        <p class="kai-note">楷体只用于日记书写与仪式感场景，不用于正文与数据界面；正式产品中必须子集化，保证首屏加载与移动端渲染稳定。</p>
+      </div>
+    </div>
+  </section>

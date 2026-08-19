@@ -1,0 +1,32 @@
+# 前端
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# 后端
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# 环境与密钥
+.env
+.env.*
+!.env.example
+
+# 数据与产物
+docker/mysql/data/
+*.log
+exports/
+
+# 编辑器
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
