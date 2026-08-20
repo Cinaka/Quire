@@ -60,3 +60,15 @@ export function toPlainText(content: EntryContent | null | undefined): string {
   flush()
   return lines.join("\n")
 }
+
+
+/** 编辑器里图片节点的 src 用这个协议，绝不存 blob: 开头的临时地址。 */
+export const LOCAL_MEDIA_PREFIX = "local://media/"
+
+export function toLocalSrc(mediaId: string): string {
+  return `${LOCAL_MEDIA_PREFIX}${mediaId}`
+}
+
+export function parseLocalSrc(src: string): string | null {
+  return src.startsWith(LOCAL_MEDIA_PREFIX) ? src.slice(LOCAL_MEDIA_PREFIX.length) : null
+}
