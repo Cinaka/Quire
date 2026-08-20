@@ -23,8 +23,25 @@
   --font-cn-serif: "Noto Serif SC", "Songti SC", "SimSun", serif;
   /* 楷体：黄历区专用。macOS 命中 Kaiti SC，Windows 命中 KaiTi，移动端多数退宋体 */
   --font-cn-kai: "Kaiti SC", "STKaiti", KaiTi, "Kaiti TC", "楷体", "Noto Serif SC", serif;
+  /* 正文无衬线：对应品牌板的 --sans。之前此处缺令牌，正文走的是系统默认 */
+  --font-cn-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 
-  --radius-card: 12px;
+  /* ===== 字号阶梯与配套行高（品牌板 V1.0）=====
+     五挡而已，成对使用：用了哪个字号就用对应行高。
+     不在这五挡里的字号不要新增——要加就先改这里。 */
+  --text-display: 44px;
+  --leading-display: 1.2;
+  --text-title: 28px;
+  --leading-title: 1.3;
+  --text-section: 20px;
+  --leading-section: 1.4;
+  --text-body: 15px;
+  --leading-body: 1.7;
+  --text-caption: 12px;
+  --leading-caption: 1.6;
+
+  /* 品牌板要求圆角统一 6px（原为 12px） */
+  --radius-card: 6px;
 }
 
 /* ===== 基础重置 ===== */
@@ -38,7 +55,9 @@ body {
   margin: 0;
   background: var(--color-paper);
   color: var(--color-ink);
-  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: var(--font-cn-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
   -webkit-font-smoothing: antialiased;
 }
 

@@ -28,7 +28,7 @@ const editor = useEditor({
   // 避免 shared 层依赖 Tiptap 的类型），而 Tiptap 要的是 JSONContent[]，
   // 两者不能直接赋值。转换只发生在这一处边界上。
   content: (props.doc ?? "") as Content,
-  extensions: buildExtensions("今日宜落笔……"),
+  extensions: buildExtensions("今日之事，可入青简"),
   editorProps: {
     attributes: { class: "prose-diary" },
 

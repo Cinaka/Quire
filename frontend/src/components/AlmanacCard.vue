@@ -121,21 +121,24 @@ const jiText = computed(() =>
 
 .lunar-date {
   font-family: var(--font-cn-kai);
-  font-size: 28px;
-  line-height: 1.2;
+  font-size: var(--text-title);
+  line-height: var(--leading-title);
   color: var(--color-ink);
 }
 
 .meta {
   margin-top: 4px;
-  font-size: 15px;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
   color: var(--color-ink-soft);
 }
 
 .badge {
   padding: 3px 10px;
+  /* 胶囊形的 999px 不算违反「圆角 6px」，那条针对的是卡片与按钮 */
   border-radius: 999px;
-  font-size: 14px;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
   color: var(--color-bamboo);
   background: var(--color-bamboo-wash);
   white-space: nowrap;
@@ -153,8 +156,8 @@ const jiText = computed(() =>
   height: 24px;
   line-height: 24px;
   text-align: center;
-  border-radius: 4px;
-  font-size: 15px;
+  border-radius: 6px;
+  font-size: var(--text-body);
   color: #fff;
 }
 
@@ -172,14 +175,16 @@ const jiText = computed(() =>
   flex-wrap: wrap;
   gap: 8px;
   font-family: var(--font-cn-kai);
-  font-size: 18px;
+  font-size: var(--text-section);
+  line-height: var(--leading-section);
   color: var(--color-ink);
 }
 
 .restricted {
   margin: 14px 0 0;
   font-family: var(--font-cn-kai);
-  font-size: 15px;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
   color: var(--color-ji);
 }
 
@@ -188,15 +193,16 @@ const jiText = computed(() =>
   padding: 0;
   border: none;
   background: none;
-  font-size: 14px;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
   color: var(--color-ink-faint);
   cursor: pointer;
 }
 
 .raw {
   margin-top: 12px;
-  font-size: 14px;
-  line-height: 1.8;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
   color: var(--color-ink-soft);
 }
 
@@ -230,13 +236,15 @@ const jiText = computed(() =>
 
 /* 标题比正文大：楷体下靠加粗拉开层级不可靠（很多楷体无粗体，会被伪粗抹掉笔画），改靠字号 */
 .k {
-  font-size: 17px;
+  font-size: var(--text-section);
+  line-height: var(--leading-section);
   color: var(--color-ink);
   letter-spacing: 2px;
 }
 
 .v {
-  font-size: 14px;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
   color: var(--color-ink-soft);
   word-break: break-all;
 }
@@ -270,13 +278,14 @@ const jiText = computed(() =>
   padding: 5px 0;
   border-radius: 6px;
   font-family: var(--font-cn-kai);
-  font-size: 16px;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
   cursor: default;
 }
 
 .hour i {
   font-style: normal;
-  font-size: 13px;
+  font-size: var(--text-caption);
   opacity: 0.75;
 }
 

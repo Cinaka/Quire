@@ -33,7 +33,7 @@
           <span class="entry-title">{{ e.title || "无题" }}</span>
         </li>
       </ul>
-      <p v-else class="empty">还没有一简。今日宜落笔。</p>
+      <p v-else class="empty">今日无事，也可留白</p>
     </section>
 
     <footer class="footer">本月已记 {{ monthDays }} 天</footer>
