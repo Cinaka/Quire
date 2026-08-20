@@ -13,6 +13,7 @@
     "dayjs": "^1.11.23",
     "dexie": "^4.4.5",
     "lunar-javascript": "^1.7.7",
+    "lunar-typescript": "^1.8.6",
     "pinia": "^4.0.3",
     "pinia-plugin-persistedstate": "^4.7.1",
     "uuid": "^14.0.2",

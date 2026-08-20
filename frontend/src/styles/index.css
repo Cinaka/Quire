@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/* ===== 设计令牌：唯一真相来源。小程序端将来直接搬这一段 ===== */
+@theme {
+  /* 竹青：主色，取自青简的竹片 */
+  --color-bamboo: #5a7a6b;
+  --color-bamboo-soft: #8aa596;
+  --color-bamboo-wash: #e8efea;
+
+  /* 麻纸：背景 */
+  --color-paper: #f5f0e6;
+  --color-paper-deep: #ebe3d5;
+
+  /* 墨：文字 */
+  --color-ink: #2e2c28;
+  --color-ink-soft: #6b665e;
+  --color-ink-faint: #a09a90;
+
+  /* 宜忌对照色 */
+  --color-yi: #6b8e5a;
+  --color-ji: #a64b3c;
+
+  --font-cn-serif: "Noto Serif SC", "Songti SC", "SimSun", serif;
+  /* 楷体：黄历区专用。macOS 命中 Kaiti SC，Windows 命中 KaiTi，移动端多数退宋体 */
+  --font-cn-kai: "Kaiti SC", "STKaiti", KaiTi, "Kaiti TC", "楷体", "Noto Serif SC", serif;
+
+  --radius-card: 12px;
+}
+
+/* ===== 基础重置 ===== */
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
