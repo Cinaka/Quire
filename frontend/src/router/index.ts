@@ -9,6 +9,7 @@ const router = createRouter({
     { path: "/list", name: "list", component: () => import("@/views/ListView.vue") },
     { path: "/schedules", name: "schedules", component: () => import("@/views/ScheduleView.vue") },
     { path: "/settings", name: "settings", component: () => import("@/views/SettingsView.vue") },
+    { path: "/trash", name: "trash",  component: () => import("@/views/TrashView.vue") },
     { path: "/:pathMatch(.*)*", name: "404", component: () => import("@/views/NotFoundView.vue") },
   ],
   scrollBehavior: () => ({ top: 0 }),

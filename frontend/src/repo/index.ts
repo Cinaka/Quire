@@ -1,5 +1,7 @@
+import { localBackupRepo } from "@/db/backupRepo"
 import { localEntryRepo, type IEntryRepo } from "@/db/entryRepo"
 import { localMediaRepo } from "@/db/mediaRepo"
+import { localStatsRepo } from "@/db/statsRepo"
 
 /**
  * 上层代码只从这里取仓库实例，永远不要直接 import @/db/*。
@@ -10,3 +12,5 @@ import { localMediaRepo } from "@/db/mediaRepo"
  */
 export const entryRepo: IEntryRepo = localEntryRepo
 export const mediaRepo = localMediaRepo
+export const backupRepo = localBackupRepo
+export const statsRepo = localStatsRepo

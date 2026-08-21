@@ -72,3 +72,52 @@ export function toLocalSrc(mediaId: string): string {
 export function parseLocalSrc(src: string): string | null {
   return src.startsWith(LOCAL_MEDIA_PREFIX) ? src.slice(LOCAL_MEDIA_PREFIX.length) : null
 }
+
+
+export interface TextPart {
+  text: string
+  hit: boolean
+}
+
+/**
+ * 生成列表摘要，并把命中关键词的片段切出来。
+ *
+ * 返回的是片段数组而不是 HTML 字符串，渲染层用 v-for 逐段输出。
+ * 这样就完全不需要 v-html——正文虽然是用户自己写的，
+ * 但 P2 同步之后内容可能来自别的设备，留一个注入面没必要。
+ */
+export function highlightParts(text: string, keyword: string, max = 90): TextPart[] {
+  const flat = text.replace(/\s+/g, " ").trim()
+  const ellipsis = (s: string): TextPart[] => [
+    { text: s.length > max ? `${s.slice(0, max)}…` : s, hit: false },
+  ]
+
+  const kw = keyword.trim()
+  if (!kw) return ellipsis(flat)
+
+  const lowerFlat = flat.toLowerCase()
+  const lowerKw = kw.toLowerCase()
+  const first = lowerFlat.indexOf(lowerKw)
+  if (first === -1) return ellipsis(flat)
+
+  // 命中处往前留 20 字上文，否则用户只看到关键词、看不懂在说什么
+  const start = Math.max(0, first - 20)
+  const win = flat.slice(start, start + max)
+  const lowerWin = win.toLowerCase()
+
+  const parts: TextPart[] = []
+  if (start > 0) parts.push({ text: "…", hit: false })
+
+  let cursor = 0
+  for (;;) {
+    const i = lowerWin.indexOf(lowerKw, cursor)
+    if (i === -1) break
+    if (i > cursor) parts.push({ text: win.slice(cursor, i), hit: false })
+    parts.push({ text: win.slice(i, i + kw.length), hit: true })
+    cursor = i + kw.length
+  }
+  if (cursor < win.length) parts.push({ text: win.slice(cursor), hit: false })
+  if (start + max < flat.length) parts.push({ text: "…", hit: false })
+
+  return parts
+}

@@ -27,6 +27,7 @@
 
     <section class="mt-6">
       <h2 class="section-title">近作</h2>
+      <button type="button" class="to-list" @click="router.push('/list')">成编</button>
       <ul v-if="recent.length" class="entry-list">
         <li v-for="e in recent" :key="e.id" @click="open(e.id)">
           <span class="entry-date">{{ e.entryDate.slice(5) }}</span>
@@ -166,5 +167,16 @@ onMounted(load)
   text-align: center;
   font-size: 14px;
   color: var(--color-ink-faint);
+}
+
+.to-list {
+  border: none;
+  background: var(--color-ji);
+  font-size: 12px;
+  line-height: 1.6;
+  color: white;
+  cursor: pointer;
+  padding: 5px;
+  border-radius: 4px;
 }
 </style>

@@ -1,3 +1,3 @@
 <template>
-  <div class="p-4">HomeView4</div>
+  <div class="p-4">NotFoundView</div>
 </template>
