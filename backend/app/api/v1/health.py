@@ -15,7 +15,7 @@ async def health():
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         result["mysql"] = True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - health 必须把连接失败降级为响应
         result["status"] = "degraded"
         result["mysql_error"] = str(e)[:200]
 
@@ -27,7 +27,7 @@ async def health():
             await client.ping()
             await client.aclose()
             result["redis"] = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - health 必须把连接失败降级为响应
             result["status"] = "degraded"
             result["redis"] = False
             result["redis_error"] = str(e)[:200]

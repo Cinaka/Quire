@@ -18,6 +18,8 @@ venv/
 .env
 .env.*
 !.env.example
+!frontend/.env.development
+!frontend/.env.production
 
 # 数据与产物
 docker/mysql/data/

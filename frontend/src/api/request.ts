@@ -6,7 +6,7 @@ const request: AxiosInstance = axios.create({
 })
 
 request.interceptors.request.use((config) => {
-  const token = localStorage.getItem("qingjian_access_token")
+  const token = localStorage.getItem("quire_access_token")
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
@@ -23,7 +23,7 @@ request.interceptors.response.use(
   },
   (err) => {
     if (err.response?.status === 401) {
-      localStorage.removeItem("qingjian_access_token")
+      localStorage.removeItem("quire_access_token")
       // P2 再做跳登录，游客态不该被打断
     }
     return Promise.reject(err)

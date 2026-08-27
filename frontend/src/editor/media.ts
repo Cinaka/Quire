@@ -1,10 +1,16 @@
 import type { Editor } from "@tiptap/vue-3"
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
 
 import { mediaRepo } from "@/repo"
 import { parseLocalSrc, toLocalSrc } from "@/shared/text"
 
 /** 只接受浏览器能解码的位图。HEIC 在多数浏览器里显示不出来，先拦掉 */
-const ACCEPTED = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+const ACCEPTED = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]
 
 /** 单张上限。超过这个尺寸的图存进 IndexedDB 会明显卡顿 */
 const MAX_SIZE = 10 * 1024 * 1024
@@ -17,63 +23,267 @@ export interface InsertResult {
 /**
  * 把文件写进本地库并插入图片节点。
  *
- * 关键点：先 await 落库、拿到 ID，再插入节点。
- * 反过来做（先插节点占位、异步补 ID）会在用户于写入完成前保存时
- * 留下一个指向不存在 ID 的节点，也就是永久碎图。
+ * 关键点：
+ *
+ * 1. 先 await 所有合法文件落库，拿到 media ID。
+ * 2. 所有图片一次性构造成连续 image 节点。
+ * 3. 最后一次 transaction 插入：
+ *
+ *      image
+ *      image
+ *      image
+ *      paragraph
+ *
+ * 4. 不再每插入一张图片就 createParagraphNear()。
+ *
+ * 这样连续的 image 节点才能由编辑器样式统一呈现为九宫格。
+ *
+ * 注意：
+ * - src 永远使用 local://media/{id}
+ * - 不写入 blob URL
+ * - alt 原样保留
  */
-export async function insertImages(editor: Editor, files: File[]): Promise<InsertResult> {
+export async function insertImages(
+  editor: Editor,
+  files: File[],
+): Promise<InsertResult> {
   const rejected: string[] = []
+  const nodes: Array<{
+    type: "image"
+    attrs: {
+      src: string
+      alt: string
+    }
+  }> = []
+
   let inserted = 0
 
   for (const file of files) {
+    // ─────────────────────────────
+    // 格式校验
+    // ─────────────────────────────
+
     if (!ACCEPTED.includes(file.type)) {
       rejected.push(`${file.name}：不支持的格式`)
       continue
     }
+
+    // ─────────────────────────────
+    // 文件大小校验
+    // ─────────────────────────────
+
     if (file.size > MAX_SIZE) {
       rejected.push(`${file.name}：超过 10 MB`)
       continue
     }
 
-    // 此时 entryId 还是空字符串——这篇日记可能还没落库。
-    // 保存时再由 mediaRepo.attach 认领，认领不到的由 purgeOrphans 清掉。
+    // ─────────────────────────────
+    // 先落库，再生成正文节点
+    //
+    // 此时 entryId 还是空字符串。
+    // 这篇日记可能还没有落库。
+    //
+    // 保存时由 mediaRepo.attach 认领，
+    // 认领不到的由 purgeOrphans 清理。
+    // ─────────────────────────────
+
     const item = await mediaRepo.add(file)
 
-    editor
-      .chain()
-      .focus()
-      .setImage({ src: toLocalSrc(item.id), alt: file.name })
-      .createParagraphNear()
-      .run()
+    nodes.push({
+      type: "image",
+      attrs: {
+        src: toLocalSrc(item.id),
+        alt: file.name,
+      },
+    })
 
     inserted += 1
   }
 
-  return { inserted, rejected }
+  // 没有成功插入的图片时，不修改编辑器内容。
+  if (nodes.length === 0) {
+    return {
+      inserted,
+      rejected,
+    }
+  }
+
+  // ─────────────────────────────
+  // 一次性插入全部图片
+  //
+  // 不再：
+  //
+  //   插图 → createParagraphNear()
+  //   插图 → createParagraphNear()
+  //   插图 → createParagraphNear()
+  //
+  // 而是：
+  //
+  //   image
+  //   image
+  //   image
+  //   paragraph
+  //
+  // 连续 image 节点由 CSS 负责九宫格呈现。
+  // ─────────────────────────────
+
+  editor
+    .chain()
+    .focus()
+    .insertContent([
+      ...nodes,
+      {
+        type: "paragraph",
+      },
+    ])
+    .run()
+
+  return {
+    inserted,
+    rejected,
+  }
 }
 
 /**
- * 从 Tiptap doc 里递归抽出所有本地图片 ID。
+ * 在当前 ProseMirror 文档中寻找指定 media ID 对应的 image 节点。
  *
- * 纯 JSON 遍历，不依赖 Tiptap 运行时——所以保存时可以直接对存量 JSON 调用，
- * 不需要先把内容灌进编辑器实例。
+ * 不缓存 position。
+ *
+ * 因为每次 ProseMirror transaction 后 position 都可能发生变化，
+ * 调用方只传 mediaId，每次移动时重新从当前 doc 查找。
  */
-export function collectMediaIds(doc: unknown): string[] {
-  const ids: string[] = []
+function imageAt(
+  doc: ProseMirrorNode,
+  mediaId: string,
+): { pos: number; node: ProseMirrorNode } | null {
+  let found: {
+    pos: number
+    node: ProseMirrorNode
+  } | null = null
 
-  const walk = (node: unknown): void => {
-    if (!node || typeof node !== "object") return
-
-    const n = node as { type?: string; attrs?: { src?: string }; content?: unknown[] }
-
-    if (n.type === "image" && typeof n.attrs?.src === "string") {
-      const id = parseLocalSrc(n.attrs.src)
-      if (id && !ids.includes(id)) ids.push(id)
+  doc.descendants((node, pos) => {
+    if (found || node.type.name !== "image") {
+      return
     }
 
-    if (Array.isArray(n.content)) n.content.forEach(walk)
+    const id =
+      typeof node.attrs.src === "string"
+        ? parseLocalSrc(node.attrs.src)
+        : null
+
+    if (id === mediaId) {
+      found = {
+        pos,
+        node,
+      }
+    }
+  })
+
+  return found
+}
+
+/**
+ * 移动正文中的 image 节点。
+ *
+ * sourceId / targetId 都是 media ID，
+ * 不接受、不缓存 ProseMirror position。
+ *
+ * side:
+ * - "before"：移动到目标图片之前
+ * - "after"：移动到目标图片之后
+ *
+ * 重要：
+ * 不直接操作 DOM。
+ * 不使用 SortableJS 直接搬 DOM。
+ * 不使用 getJSON() + 数组 splice + setContent()。
+ *
+ * 而是直接创建 ProseMirror transaction，
+ * 这样：
+ *
+ * - JSON 顺序会真正改变
+ * - undo / redo 可以正常工作
+ * - 当前选区不会因为 setContent() 整篇重建而被破坏
+ * - Tiptap 状态与实际 DOM 保持一致
+ */
+export function moveImageNode(
+  editor: Editor,
+  sourceId: string,
+  targetId: string,
+  side: "before" | "after",
+): boolean {
+  // 同一张图片移动到自己前后没有意义。
+  if (sourceId === targetId) {
+    return false
   }
 
-  walk(doc)
-  return ids
+  // 每次调用都从当前 doc 重新计算 position。
+  const source = imageAt(
+    editor.state.doc,
+    sourceId,
+  )
+
+  const target = imageAt(
+    editor.state.doc,
+    targetId,
+  )
+
+  if (!source || !target) {
+    return false
+  }
+
+  // 目标插入位置：
+  //
+  // before：
+  //   target.pos
+  //
+  // after：
+  //   target.pos + target.node.nodeSize
+  //
+  // nodeSize 对 image 这种 atom node 通常为 1，
+  // 但这里不要手写 +1，统一使用 node.nodeSize。
+  const rawTarget =
+    side === "before"
+      ? target.pos
+      : target.pos + target.node.nodeSize
+
+  // 先删除 source。
+  //
+  // 注意：删除 source 后，target position 可能已经发生变化。
+  // 所以不能直接使用 rawTarget。
+  const tr = editor.state.tr.delete(
+    source.pos,
+    source.pos + source.node.nodeSize,
+  )
+
+  // 通过 transaction mapping 把删除前的位置
+  // 映射到删除后的正确位置。
+  //
+  // before 使用 assoc = -1
+  // after  使用 assoc = 1
+  const mappedTarget = tr.mapping.map(
+    rawTarget,
+    side === "before" ? -1 : 1,
+  )
+
+  // 将原来的 ProseMirror node 插入新位置。
+  //
+  // 这里直接复用 source.node，
+  // 所以 attrs 中的：
+  //
+  //   src
+  //   alt
+  //
+  // 都会原样保留。
+  //
+  // 尤其不会把 blob URL 写进 attrs。
+  tr.insert(mappedTarget, source.node)
+
+  // 最终 dispatch transaction。
+  //
+  // 这是整个拖拽排序真正改变正文 JSON 顺序的地方。
+  editor.view.dispatch(
+    tr.scrollIntoView(),
+  )
+
+  return true
 }

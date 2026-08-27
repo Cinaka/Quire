@@ -1,22 +1,15 @@
 import "@/styles/index.css"
 
 import { createApp } from "vue"
-import { createPinia } from "pinia"
-import piniaPersist from "pinia-plugin-persistedstate"
 
 import App from "./App.vue"
 import router from "./router"
-
 // 静态导入整个 repo 命名空间：既给下面的 purgeOrphans 用，
 // 也让 DEV 调试句柄不再需要顶层 await import()
 import * as repo from "@/repo"
 
-const pinia = createPinia()
-pinia.use(piniaPersist)
-
 // 拆开链式调用，才能在 mount 之后继续往下写
 const app = createApp(App)
-app.use(pinia)
 app.use(router)
 app.mount("#app")
 
@@ -29,15 +22,30 @@ app.mount("#app")
  *      「图片突然变空白」，且完全无法归因。
  */
 void repo.mediaRepo
-  .purgeOrphans()
-  .then((n) => {
-    if (import.meta.env.DEV && n > 0) console.info(`[quire] 已清理 ${n} 张孤儿图片`)
+  .reconcileAll()
+  .then((reconciled) =>
+    repo.mediaRepo.purgeOrphans().then((purged) => ({ reconciled, purged })),
+  )
+  .then(({ reconciled, purged }) => {
+    if (import.meta.env.DEV && reconciled > 0) {
+      console.info(`[quire] 已校正 ${reconciled} 条图片关联`)
+    }
+    if (import.meta.env.DEV && purged > 0) {
+      console.info(`[quire] 已清理 ${purged} 张孤儿图片`)
+    }
   })
   .catch((err) => {
-    console.warn("[quire] purgeOrphans 失败", err)
+    // 对账失败时 then 链不会进入 purge：宁可暂留孤儿，也不能误删正文仍引用的图。
+    console.warn("[quire] 图片对账 / 孤儿清理失败", err)
   })
 
-// DEV 调试句柄。P1 收尾前整块删除（索引页第七节有这条待办）
+// DEV 调试句柄，生产构建整块摇掉。铁律 10 依赖这两个句柄，P1 阶段保留。
+// $router 已删：那是 P1-4 验收组件复用串文 bug 时的一次性工具。
+// $almanac 用动态 import 挂：农历库 gzip 98 KB，静态导入会把它拽进 dev 的
+// 初始依赖图；也不用顶层 await，那会挂住整个模块求值、拖长 dev 首屏。
 if (import.meta.env.DEV) {
-  Object.assign(window, { $repo: repo, $router: router })
+  Object.assign(window, { $repo: repo })
+  void import("@/shared/almanac").then((m) => {
+    Object.assign(window, { $almanac: m.getAlmanac })
+  })
 }

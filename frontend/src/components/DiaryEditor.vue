@@ -92,6 +92,9 @@ onBeforeUnmount(() => {
   font-size: 17px;
   line-height: 1.9;
   color: var(--color-ink);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .prose-diary p {
@@ -132,5 +135,16 @@ onBeforeUnmount(() => {
   height: 0;
   pointer-events: none;
   color: var(--color-ink-faint);
+}
+
+.prose-diary > * {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+
+.prose-diary > .local-image {
+  flex: 0 0 calc((100% - 16px) / 3);
+  margin: 0;
+  aspect-ratio: 1;
 }
 </style>

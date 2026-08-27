@@ -1,13 +1,5 @@
 import { db } from "./schema"
-
-export interface LocalStats {
-  entries: number
-  deleted: number
-  tags: number
-  media: number
-  /** 图片原图字节数之和。navigator.storage.estimate() 不可用时的兜底 */
-  mediaBytes: number
-}
+import type { LocalStats } from "@/shared/types"
 
 export const localStatsRepo = {
   async load(): Promise<LocalStats> {

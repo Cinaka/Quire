@@ -2,6 +2,7 @@ import logging
 import time
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -23,6 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     started = time.perf_counter()
@@ -30,17 +32,23 @@ async def log_requests(request: Request, call_next):
     cost = (time.perf_counter() - started) * 1000
     logger.info("%s %s -> %s %.1fms", request.method, request.url.path, response.status_code, cost)
     return response
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exc_handler(_: Request, exc: StarletteHTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"code": exc.status_code, "message": str(exc.detail), "data": None},
     )
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exc_handler(_: Request, exc: RequestValidationError):
     return JSONResponse(
         status_code=422,
-        content={"code": 422, "message": "参数校验失败", "data": exc.errors()},
+        content=jsonable_encoder(
+            {"code": 422, "message": "参数校验失败", "data": exc.errors()}
+        ),
     )
 @app.exception_handler(Exception)
 async def unhandled_exc_handler(_: Request, exc: Exception):

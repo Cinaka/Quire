@@ -1,7 +1,7 @@
 import { computed, ref } from "vue"
 
 import { statsRepo } from "@/repo"
-import type { LocalStats } from "@/db/statsRepo"
+import type { LocalStats } from "@/shared/types"
 
 const WARN_RATIO = 0.8
 

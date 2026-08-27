@@ -3,8 +3,10 @@ import uuid
 from sqlalchemy import BINARY, TypeDecorator
 from sqlalchemy.orm import DeclarativeBase
 
+
 class Base(DeclarativeBase):
     pass
+
 
 class UUIDBinary(TypeDecorator):
     """UUID ←→ BINARY(16)。
@@ -12,8 +14,10 @@ class UUIDBinary(TypeDecorator):
     因此直接存 uuid.bytes，不做 UUID_TO_BIN(x, 1) 的时间位交换。
     等价于 MySQL 的 UUID_TO_BIN(x, 0)。
     """
+
     impl = BINARY(16)
     cache_ok = True
+
     def process_bind_param(self, value, dialect):
         if value is None:
             return None

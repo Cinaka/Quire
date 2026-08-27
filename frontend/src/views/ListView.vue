@@ -1,10 +1,26 @@
 <template>
-  <div class="mx-auto w-full max-w-2xl px-4 py-4">
+  <div
+    class="list-page mx-auto w-full max-w-2xl px-4 py-4"
+    :style="pullStyle"
+    @touchstart="onTouchStart"
+    @touchmove="onTouchMove"
+    @touchend="onTouchEnd"
+    @touchcancel="onTouchCancel"
+  >
+    <div class="pull-indicator" :class="{ visible: distance > 0 || refreshing }">
+      {{ refreshing ? "重读简册中……" : ready ? "松手重读" : "下拉重读" }}
+    </div>
+
     <header class="head">
       <button type="button" class="plain" @click="router.push('/')">今简</button>
       <h1 class="page-title">成编</h1>
       <button type="button" class="plain accent" @click="router.push('/entry/new')">刻一简</button>
     </header>
+
+    <div class="view-switch" aria-label="简册视图">
+      <button type="button" class="view-button active" aria-pressed="true">列表视图</button>
+      <button type="button" class="view-button" disabled title="后续版本开放">日记本视图</button>
+    </div>
 
     <input
       v-model="keyword"
@@ -14,37 +30,104 @@
       enterkeyhint="search"
     />
 
+    <div class="filter-heading">
+      <button type="button" class="plain accent" :aria-expanded="filterOpen" @click="filterOpen = !filterOpen">
+        {{ filterOpen ? "收起筛选" : "展开筛选" }}
+      </button>
+      <span v-if="loading && items.length" class="count">检简中……</span>
+    </div>
+
+    <section v-if="filterOpen" class="filters" aria-label="筛选简册">
+      <div class="filter-row">
+        <span class="filter-label">标签</span>
+        <div class="filter-options">
+          <button
+            v-for="tag in tags"
+            :key="tag.id"
+            type="button"
+            class="chip"
+            :class="{ on: tagIds.includes(tag.id) }"
+            :aria-pressed="tagIds.includes(tag.id)"
+            @click="toggleTag(tag.id)"
+          >
+            {{ tag.name }}
+          </button>
+          <span v-if="!tags.length" class="count">暂无标签</span>
+        </div>
+        <small>多选时同时包含</small>
+      </div>
+
+      <div class="filter-row date-range">
+        <label>起始 <input v-model="dateFrom" type="date" /></label>
+        <label>结束 <input v-model="dateTo" type="date" /></label>
+      </div>
+
+      <div class="filter-row">
+        <span class="filter-label">图片</span>
+        <div class="filter-options">
+          <button type="button" class="chip" :class="{ on: hasImage === undefined }" @click="hasImage = undefined">全部</button>
+          <button type="button" class="chip" :class="{ on: hasImage === true }" @click="hasImage = true">有图</button>
+          <button type="button" class="chip" :class="{ on: hasImage === false }" @click="hasImage = false">无图</button>
+        </div>
+      </div>
+
+      <div class="filter-actions">
+        <button type="button" class="plain" @click="clearFilters">清除筛选</button>
+      </div>
+      <p v-if="filterError || tagError" class="filter-error" role="alert">
+        {{ filterError || tagError }}
+      </p>
+    </section>
+
     <div class="bar">
       <div class="orders">
         <button
-          v-for="o in ORDERS"
-          :key="o.value"
+          v-for="option in ORDERS"
+          :key="option.value"
           type="button"
           class="chip"
-          :class="{ on: order === o.value }"
-          @click="order = o.value"
+          :class="{ on: order === option.value }"
+          @click="order = option.value"
         >
-          {{ o.label }}
+          {{ option.label }}
         </button>
       </div>
       <span class="count">共 {{ total }} 简</span>
     </div>
 
-    <p v-if="loading && !items.length" class="hint">检简中……</p>
+    <div v-if="loading && !items.length && !filterError" class="skeleton-list" aria-label="检简中">
+      <div v-for="index in 5" :key="index" class="skeleton-row">
+        <span class="skeleton-thumb" />
+        <span class="skeleton-copy"><i /><i /></span>
+      </div>
+    </div>
 
     <template v-else-if="items.length">
-      <section v-for="g in groups" :key="g.key" class="group">
-        <h2 class="group-title">{{ g.label }}</h2>
+      <section v-for="group in groups" :key="group.key" class="group">
+        <h2 class="group-title" :class="{ static: order === 'updatedAtDesc' }">{{ group.label }}</h2>
 
         <ul class="list">
-          <li v-for="e in g.items" :key="e.id">
-            <button type="button" class="row" @click="open(e.id)">
-              <span class="row-head">
-                <span class="row-title">{{ e.title.trim() || "无题" }}</span>
-                <span class="row-day">{{ dayLabel(e.entryDate) }}</span>
-              </span>
-              <span class="row-snippet">
-                <span v-for="(p, i) in snippet(e)" :key="i" :class="{ hit: p.hit }">{{ p.text }}</span>
+          <li v-for="entry in group.items" :key="entry.id">
+            <button type="button" class="row" @click="open(entry.id)">
+              <EntryThumbnail
+                v-if="coverByEntry[entry.id]"
+                :media-id="coverByEntry[entry.id] ?? null"
+              />
+              <span class="row-copy">
+                <span class="row-head">
+                  <span class="row-title">{{ entry.title.trim() || "无题" }}</span>
+                  <span class="row-day">{{ dayLabel(entry.entryDate) }}</span>
+                </span>
+                <span class="row-snippet">
+                  <span v-for="(part, index) in snippet(entry)" :key="index" :class="{ hit: part.hit }">{{ part.text }}</span>
+                </span>
+                <span v-if="entry.mood || entry.weather || entry.tagIds.length" class="row-meta">
+                  <span v-if="entry.mood">{{ entry.mood }}</span>
+                  <span v-if="entry.weather">{{ entry.weather }}</span>
+                  <span v-for="id in entry.tagIds" :key="id" class="tag-name">
+                    {{ tagNameById[id] ?? "" }}
+                  </span>
+                </span>
               </span>
             </button>
           </li>
@@ -54,22 +137,25 @@
       <button v-if="hasMore" type="button" class="more" :disabled="loading" @click="loadMore">
         {{ loading ? "检简中……" : "再展一卷" }}
       </button>
-      <p v-else class="hint">已至卷末</p>
+      <p v-else-if="page > 1" class="end">已至卷末</p>
     </template>
 
     <p v-else class="empty">
-      {{ keyword.trim() ? "遍卷未见此语。" : "简册尚空，今日宜落笔。" }}
+      {{ hasFilters ? "筛选之下，未见合意之简。" : "简册尚空，今日宜落笔。" }}
     </p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from "vue"
+import { computed, onMounted, onUnmounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 
+import EntryThumbnail from "@/components/EntryThumbnail.vue"
 import { useEntryList } from "@/composables/useEntryList"
+import { usePullToRefresh } from "@/composables/usePullToRefresh"
+import { mediaRepo, tagRepo } from "@/repo"
 import { highlightParts, type TextPart } from "@/shared/text"
-import type { EntryListItem, EntryOrder } from "@/shared/types"
+import type { EntryListItem, EntryOrder, Tag } from "@/shared/types"
 
 const route = useRoute()
 const router = useRouter()
@@ -80,55 +166,158 @@ const ORDERS: Array<{ value: EntryOrder; label: string }> = [
   { value: "updatedAtDesc", label: "近改动" },
 ]
 
-const { keyword, order, items, total, loading, hasMore, reload, loadMore } = useEntryList()
+const {
+  keyword,
+  order,
+  tagIds,
+  dateFrom,
+  dateTo,
+  hasImage,
+  filterError,
+  items,
+  total,
+  page,
+  loading,
+  hasMore,
+  reload,
+  loadMore,
+} = useEntryList()
 
-// 关键词与地址栏同步，方便刷新后仍在同一次检索里，也方便把结果链接发给自己。
-// 用 replace 而不是 push：否则每敲一个字都会往历史栈里塞一条，后退键要按十几次。
-onMounted(() => {
-  const q = route.query.q
-  if (typeof q === "string" && q) keyword.value = q
-  void reload()
+const tags = ref<Tag[]>([])
+const tagError = ref("")
+const filterOpen = ref(false)
+const coverByEntry = ref<Record<string, string>>({})
+let coverSeq = 0
+
+const {
+  distance,
+  ready,
+  refreshing,
+  pullStyle,
+  onTouchStart,
+  onTouchMove,
+  onTouchEnd,
+  onTouchCancel,
+} = usePullToRefresh(reload, loading)
+
+const tagNameById = computed<Record<string, string>>(() =>
+  Object.fromEntries(tags.value.map((tag) => [tag.id, tag.name])),
+)
+
+const hasFilters = computed(() => Boolean(
+  keyword.value.trim() || tagIds.value.length || dateFrom.value || dateTo.value || hasImage.value !== undefined,
+))
+
+const groups = computed(() => {
+  if (order.value === "updatedAtDesc") {
+    return items.value.length
+      ? [{ key: "updated", label: "近改动", items: items.value }]
+      : []
+  }
+
+  const result: Array<{ key: string; label: string; items: EntryListItem[] }> = []
+  for (const entry of items.value) {
+    const key = entry.entryDate.slice(0, 7)
+    const last = result[result.length - 1]
+    if (last?.key === key) {
+      last.items.push(entry)
+    } else {
+      const [year, month] = key.split("-")
+      result.push({ key, label: `${year} 年 ${Number(month)} 月`, items: [entry] })
+    }
+  }
+  return result
 })
 
-watch(keyword, (v) => {
-  const q = v.trim()
-  void router.replace({ query: q ? { q } : {} })
-})
+async function loadTags(): Promise<void> {
+  try {
+    tags.value = await tagRepo.list()
+  } catch (reason) {
+    tagError.value = reason instanceof Error ? reason.message : "标签读取失败"
+  }
+}
+
+function toggleTag(id: string): void {
+  const selected = new Set(tagIds.value)
+  if (selected.has(id)) selected.delete(id)
+  else selected.add(id)
+  tagIds.value = [...selected]
+}
+
+function clearFilters(): void {
+  tagIds.value = []
+  dateFrom.value = ""
+  dateTo.value = ""
+  hasImage.value = undefined
+}
 
 function open(id: string): void {
   void router.push(`/entry/${id}`)
 }
 
-function snippet(e: EntryListItem): TextPart[] {
-  return highlightParts(e.contentText, keyword.value)
+function snippet(entry: EntryListItem): TextPart[] {
+  return highlightParts(entry.contentText, keyword.value)
 }
 
 function dayLabel(entryDate: string): string {
-  const [, m, d] = entryDate.split("-")
-  return `${Number(m)}月${Number(d)}日`
+  const [, month, day] = entryDate.split("-")
+  return `${Number(month)}月${Number(day)}日`
 }
 
-/** 按月分组。仅对「已载入的这些」分组，不额外查库 */
-const groups = computed(() => {
-  const out: Array<{ key: string; label: string; items: EntryListItem[] }> = []
+watch(
+  items,
+  async (rows) => {
+    const mine = ++coverSeq
+    const next = await mediaRepo.firstByEntries(rows.map((entry) => entry.id))
+    if (mine === coverSeq) coverByEntry.value = next
+  },
+  { immediate: true },
+)
 
-  for (const e of items.value) {
-    const key = e.entryDate.slice(0, 7)
-    const last = out[out.length - 1]
-    if (last && last.key === key) {
-      last.items.push(e)
-    } else {
-      const [y, m] = key.split("-")
-      out.push({ key, label: `${y} 年 ${Number(m)} 月`, items: [e] })
-    }
-  }
+watch(keyword, (value) => {
+  const query = value.trim()
+  void router.replace({ query: query ? { q: query } : {} })
+})
 
-  return out
+onMounted(() => {
+  const query = route.query.q
+  if (typeof query === "string" && query) keyword.value = query
+  void loadTags()
+  void reload()
+})
+
+onUnmounted(() => {
+  coverSeq += 1
 })
 </script>
 
 <style scoped>
-.head {
+.list-page {
+  position: relative;
+  transition: transform 160ms ease-out;
+}
+
+.pull-indicator {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  padding: 8px;
+  opacity: 0;
+  text-align: center;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-ink-faint);
+}
+
+.pull-indicator.visible {
+  opacity: 1;
+}
+
+.head,
+.bar,
+.filter-heading,
+.sec-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -138,8 +327,8 @@ const groups = computed(() => {
 .page-title {
   margin: 0;
   font-family: var(--font-cn-serif);
-  font-size: 20px;
-  line-height: 1.4;
+  font-size: var(--text-section);
+  line-height: var(--leading-section);
   color: var(--color-ink);
 }
 
@@ -147,14 +336,44 @@ const groups = computed(() => {
   padding: 6px 2px;
   border: none;
   background: none;
-  font-size: 15px;
-  line-height: 1.7;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
   color: var(--color-ink-soft);
   cursor: pointer;
 }
 
 .accent {
   color: var(--color-bamboo);
+}
+
+.view-switch {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.view-button,
+.chip {
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-card);
+  background: transparent;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-ink-soft);
+  cursor: pointer;
+}
+
+.view-button.active,
+.chip.on {
+  border-color: var(--color-bamboo);
+  background: var(--color-bamboo);
+  color: #fff;
+}
+
+.view-button:disabled {
+  color: var(--color-ink-faint);
+  cursor: not-allowed;
 }
 
 .search {
@@ -165,8 +384,8 @@ const groups = computed(() => {
   border-radius: var(--radius-card);
   background: var(--color-paper-deep);
   outline: none;
-  font-size: 15px;
-  line-height: 1.7;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
   color: var(--color-ink);
 }
 
@@ -174,54 +393,90 @@ const groups = computed(() => {
   border-color: var(--color-bamboo-soft);
 }
 
-.bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 4px;
+.filter-heading {
+  min-height: 34px;
 }
 
+.filters {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 12px;
+  border-radius: var(--radius-card);
+  background: var(--color-paper-deep);
+}
+
+.filter-row {
+  display: grid;
+  gap: 6px;
+}
+
+.filter-label,
+.filter-row small,
+.count,
+.filter-error {
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-ink-faint);
+}
+
+.filter-options,
 .orders {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 
-.chip {
-  padding: 3px 10px;
-  border: none;
-  border-radius: var(--radius-card);
-  background: transparent;
-  font-size: 12px;
-  line-height: 1.6;
+.date-range {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.date-range label {
+  display: grid;
+  gap: 4px;
+  font-size: var(--text-caption);
   color: var(--color-ink-soft);
-  cursor: pointer;
 }
 
-.chip.on {
-  color: #fff;
-  background: var(--color-bamboo);
+.date-range input {
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--color-paper);
+  color: var(--color-ink);
 }
 
-.count,
-.hint {
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--color-ink-faint);
+.filter-actions {
+  text-align: right;
 }
 
-.hint {
-  margin: 16px 0;
-  text-align: center;
+.filter-error {
+  margin: 0;
+  color: var(--color-ji);
+}
+
+.bar {
+  margin: 4px 0;
 }
 
 .group-title {
+  position: sticky;
+  top: 0;
+  z-index: 4;
   margin: 20px 0 6px;
+  padding: 6px 0;
+  background: color-mix(in srgb, var(--color-paper) 94%, transparent);
+  backdrop-filter: blur(6px);
   font-family: var(--font-cn-serif);
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: normal;
-  line-height: 1.6;
+  line-height: var(--leading-caption);
   color: var(--color-ink-faint);
+}
+
+.group-title.static {
+  position: static;
 }
 
 .list {
@@ -231,14 +486,21 @@ const groups = computed(() => {
 }
 
 .row {
-  display: block;
+  display: flex;
   width: 100%;
+  gap: 12px;
   padding: 10px 0;
   border: none;
   border-bottom: 1px solid var(--line-soft);
   background: none;
   text-align: left;
   cursor: pointer;
+}
+
+.row-copy {
+  display: block;
+  min-width: 0;
+  flex: 1;
 }
 
 .row-head {
@@ -249,34 +511,53 @@ const groups = computed(() => {
 }
 
 .row-title {
+  overflow: hidden;
   font-family: var(--font-cn-serif);
-  font-size: 20px;
-  line-height: 1.4;
+  font-size: var(--text-section);
+  line-height: var(--leading-section);
   color: var(--color-ink);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .row-day {
   flex: none;
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
   color: var(--color-ink-faint);
 }
 
 .row-snippet {
-  display: block;
+  display: -webkit-box;
   margin-top: 2px;
   overflow: hidden;
-  font-size: 15px;
-  line-height: 1.7;
-  color: var(--color-ink-soft);
-  /* 摘要最多两行，长日记不至于把列表撑开 */
-  display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  color: var(--color-ink-soft);
 }
 
 .row-snippet .hit {
   color: var(--color-bamboo);
+}
+
+.row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-ink-faint);
+}
+
+.tag-name:empty {
+  display: none;
+}
+
+.tag-name:not(:empty)::before {
+  content: "#";
 }
 
 .more {
@@ -288,18 +569,84 @@ const groups = computed(() => {
   border-radius: var(--radius-card);
   background: none;
   font-family: var(--font-cn-kai);
-  font-size: 15px;
-  line-height: 1.7;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
   color: var(--color-ink-soft);
   cursor: pointer;
 }
 
-.empty {
-  margin: 48px 0;
+.empty,
+.end {
+  margin: 32px 0;
   font-family: var(--font-cn-kai);
-  font-size: 15px;
-  line-height: 1.7;
   text-align: center;
   color: var(--color-ink-faint);
+}
+
+.empty {
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+
+.end {
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+
+.skeleton-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.skeleton-row {
+  display: flex;
+  gap: 12px;
+}
+
+.skeleton-thumb,
+.skeleton-copy i {
+  display: block;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--color-paper-deep), var(--color-paper), var(--color-paper-deep));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+}
+
+.skeleton-thumb {
+  width: 88px;
+  height: 88px;
+  flex: 0 0 88px;
+}
+
+.skeleton-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  align-content: center;
+  gap: 12px;
+}
+
+.skeleton-copy i {
+  height: 16px;
+}
+
+.skeleton-copy i:last-child {
+  width: 72%;
+}
+
+@keyframes shimmer {
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .list-page {
+    transition: none;
+  }
+
+  .skeleton-thumb,
+  .skeleton-copy i {
+    animation: none;
+  }
 }
 </style>

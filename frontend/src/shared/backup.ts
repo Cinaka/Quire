@@ -7,12 +7,14 @@ import type { Entry, MediaItem, Tag } from "./types"
  * 两者独立升级。导入时都要校验，但拒绝的粒度不同：
  * 外壳版本太新 → 整份拒绝；正文版本太新 → 只跳过那几篇。
  */
-export const BACKUP_FORMAT_VERSION = 1
+export const BACKUP_FORMAT_VERSION = 2
 
 /** media 的 Blob 在 JSON 里存 base64（不含 data URL 前缀）。 */
 export interface BackupMedia extends Omit<MediaItem, "blob" | "thumbBlob"> {
   blobBase64: string
   thumbBase64: string | null
+  /** v2 新增；可选是为了继续读取 v1 备份 */
+  thumbMime?: string | null
 }
 
 export interface BackupFile {

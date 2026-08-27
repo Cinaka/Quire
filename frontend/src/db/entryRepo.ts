@@ -1,6 +1,6 @@
 import { db } from "./schema"
 import { newId } from "@/shared/ids"
-import { toPlainText } from "@/shared/text"
+import { collectMediaIds, toPlainText } from "@/shared/text"
 import { todayLocal, utcNow } from "@/shared/time"
 import type {
   Entry,
@@ -65,9 +65,15 @@ export const localEntryRepo: IEntryRepo = {
           )
         : db.entries.where("isDeleted").equals(flag)
 
-    if (params.tagId) {
-      const tagId = params.tagId
-      coll = coll.and((e) => e.tagIds.includes(tagId))
+    if (params.tagIds?.length) {
+      const wanted = [...new Set(params.tagIds)]
+      coll = coll.and((entry) => wanted.every((id) => entry.tagIds.includes(id)))
+    }
+
+    if (params.hasImage !== undefined) {
+      coll = coll.and(
+        (entry) => (collectMediaIds(entry.content?.doc).length > 0) === params.hasImage,
+      )
     }
 
     if (params.keyword) {

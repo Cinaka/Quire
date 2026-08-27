@@ -25,3 +25,24 @@ export function formatLocal(iso: Iso): string {
   const pad = (n: number) => String(n).padStart(2, "0")
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
+
+/** 校验 YYYY-MM-DD 是否为真实存在的本地日历日。 */
+export function isLocalDate(value: string): value is LocalDate {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const [y, m, d] = value.split("-").map(Number)
+  const date = new Date(y, m - 1, d, 12)
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d
+}
+
+/** 使用本地中午做日历日加减，避开部分时区的夏令时午夜跳变。 */
+export function addLocalDays(value: LocalDate, amount: number): LocalDate {
+  if (!isLocalDate(value)) throw new Error(`invalid LocalDate: ${value}`)
+  const [y, m, d] = value.split("-").map(Number)
+  const date = new Date(y, m - 1, d, 12)
+  date.setDate(date.getDate() + amount)
+  return todayLocal(date)
+}
+
+export function isFutureLocalDate(value: LocalDate, today = todayLocal()): boolean {
+  return value > today
+}

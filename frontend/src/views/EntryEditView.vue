@@ -8,6 +8,14 @@
 
     <input v-model="title" class="title" placeholder="无题" @input="schedule" />
 
+    <EntryMetaFields
+      :key="routeId"
+      v-model:mood="mood"
+      v-model:weather="weather"
+      v-model:tag-ids="tagIds"
+      @change="schedule"
+    />
+
     <!-- v-if 不能省。loadedDoc 是 onMounted 里异步读出来的，而 DiaryEditor
          内部的 useEditor 在它自己 setup 阶段就用当时的 props.doc 建好了实例，
          那时候还是 null。之后 props 变了 Tiptap 也不会重新灌内容，
@@ -21,10 +29,10 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router"
 
 import DiaryEditor from "@/components/DiaryEditor.vue"
-import { collectMediaIds } from "@/editor/media"
+import EntryMetaFields from "@/components/EntryMetaFields.vue"
 import { entryRepo, mediaRepo } from "@/repo"
-import { toPlainText } from "@/shared/text"
-import { todayLocal } from "@/shared/time"
+import { collectMediaIds, toPlainText } from "@/shared/text"
+import { isLocalDate, todayLocal } from "@/shared/time"
 import { CONTENT_SCHEMA_VERSION, type TiptapDoc } from "@/shared/types"
 
 const route = useRoute()
@@ -33,6 +41,9 @@ const router = useRouter()
 /** null 表示这篇还没落库。点开编辑器不创建任何数据，第一次保存时才创建 */
 const entryId = ref<string | null>(null)
 const title = ref("")
+const mood = ref<string | null>(null)
+const weather = ref<string | null>(null)
+const tagIds = ref<string[]>([])
 const loadedDoc = ref<TiptapDoc | null>(null)
 /** 旧文读完之前不能挂载编辑器，否则它会以空文档定型 */
 const ready = ref(false)
@@ -42,6 +53,10 @@ const editorRef = ref<InstanceType<typeof DiaryEditor> | null>(null)
 let timer: number | null = null
 let pending = false
 let entryDate = todayLocal()
+let editRevision = 0
+let savedRevision = 0
+let persistQueue: Promise<void> = Promise.resolve()
+let loadRevision = 0
 
 const routeId = computed(() => (typeof route.params.id === "string" ? route.params.id : "new"))
 
@@ -49,10 +64,16 @@ const routeId = computed(() => (typeof route.params.id === "string" ? route.para
 function reset(): void {
   entryId.value = null
   title.value = ""
+  mood.value = null
+  weather.value = null
+  tagIds.value = []
   loadedDoc.value = null
   entryDate = todayLocal()
   pending = false
   status.value = ""
+  editRevision = 0
+  savedRevision = 0
+  persistQueue = Promise.resolve()
   if (timer !== null) {
     window.clearTimeout(timer)
     timer = null
@@ -60,20 +81,33 @@ function reset(): void {
 }
 
 async function load(id: string): Promise<void> {
+  const revision = ++loadRevision
   reset()
 
   if (id !== "new") {
     const entry = await entryRepo.get(id)
+    if (revision !== loadRevision) return
     if (!entry) {
       void router.replace("/")
       return
     }
     entryId.value = entry.id
     title.value = entry.title
+    mood.value = entry.mood
+    weather.value = entry.weather
+    tagIds.value = [...entry.tagIds]
     loadedDoc.value = entry.content?.doc ?? null
     entryDate = entry.entryDate
+  } else {
+    const requested = route.query.date
+    if (typeof requested === "string" && isLocalDate(requested) && requested <= todayLocal()) {
+      entryDate = requested
+    } else {
+      entryDate = todayLocal()
+    }
   }
 
+  if (revision !== loadRevision) return
   // 新建和编辑两条路径都在这里置位，保证行为一致
   ready.value = true
 }
@@ -83,16 +117,8 @@ onMounted(() => {
 })
 
 /**
- * 这个 watch 是本步的主角。
- *
  * vue-router 在同一条规则内换参数时会复用实例、不重跑 onMounted，
- * 所以必须自己接住参数变化。三件事的顺序不能变：
- *   1. await flush()  —— 先把上一篇的挂起保存写完（见下方 targetId 快照）
- *   2. ready = false  —— 让 DiaryEditor 卸载并 destroy()，丢掉旧编辑器实例
- *   3. load(next)     —— 读新的一篇，读完再把 ready 置回 true 重建编辑器
- *
- * 第 2 步不能省。P1-3 定的约定是「编辑器只在数据就绪后创建一次、创建完不受 props 影响」，
- * 那条约定的代价就是切换条目时必须走一次真正的销毁重建，不能靠 setContent 灌内容。
+ * 所以必须先排空上一篇的保存，再销毁旧编辑器并读取下一篇。
  */
 watch(routeId, async (next, prev) => {
   if (next === prev) return
@@ -104,14 +130,18 @@ watch(routeId, async (next, prev) => {
   await load(next)
 })
 
-/** 内容变了就排一次保存。800ms 是权衡：再短会频繁写库，再长丢失窗口太大 */
+/** 内容或元数据变化后排一次保存。 */
 function schedule(): void {
+  editRevision += 1
   pending = true
   status.value = "未保存"
 
   if (timer !== null) window.clearTimeout(timer)
   timer = window.setTimeout(() => {
-    void persist()
+    timer = null
+    void persist().catch(() => {
+      status.value = "保存失败"
+    })
   }, 800)
 }
 
@@ -119,38 +149,52 @@ function onChange(): void {
   schedule()
 }
 
-async function persist(): Promise<void> {
-  if (!pending) return
+/**
+ * 所有保存串到同一条 Promise 队列。run 保留本次错误给 flush / 路由守卫，
+ * persistQueue 自身吞掉错误，以便下一轮保存仍能继续。
+ */
+function persist(): Promise<void> {
+  const run = persistQueue.then(() => persistLatest())
+  persistQueue = run.catch(() => undefined)
+  return run
+}
 
-  // 一律从编辑器现取，不用事件里带过来的值——事件可能已经过期
-  const doc = editorRef.value?.snapshot() ?? null
-  if (!doc) return
+async function persistLatest(): Promise<void> {
+  if (savedRevision >= editRevision) return
 
-  // 把写入目标在 await 之前快照住。
-  // 这是修串文的第二道闸：即使调用方忘了先 flush，这次写入也只会落到
-  // 发起时那一篇上，而不会跟着 entryId 的后续变化跑到另一篇去。
+  // 真正轮到本任务时再取最新 revision 和表单快照，队列中的旧请求自然合并。
+  const revision = editRevision
+  const doc = editorRef.value?.snapshot() ?? loadedDoc.value ?? {
+    type: "doc" as const,
+    content: [{ type: "paragraph" }],
+  }
   const targetId = entryId.value
   const targetTitle = title.value
   const targetDate = entryDate
-
+  const targetMood = mood.value
+  const targetWeather = weather.value
+  const targetTagIds = [...new Set(tagIds.value)]
   const content = { schemaVersion: CONTENT_SCHEMA_VERSION, doc }
-
-  // 约束一：toPlainText 收的是 EntryContent 整包（它内部读 content.doc），不是裸 doc。
-  // 这里算出来的 text 只用于下面的空内容判断——真正写库的 contentText 由 repo 自己派生。
   const text = toPlainText(content)
+  const hasMeta = Boolean(targetMood || targetWeather || targetTagIds.length)
 
-  // 约束二：空日记不落库。用户点进来又退出去不该留垃圾数据
-  if (targetId === null && !targetTitle.trim() && !text.trim()) {
-    pending = false
-    status.value = ""
+  // 空的新日记不落库；只有心情、天气或标签也属于有效日记。
+  if (targetId === null && !targetTitle.trim() && !text.trim() && !hasMeta) {
+    savedRevision = Math.max(savedRevision, revision)
+    pending = savedRevision < editRevision
+    status.value = pending ? "未保存" : ""
     return
   }
 
   status.value = "保存中"
-
-  // payload 里没有 contentText。EntryCreateDto 里就没这个字段，
-  // create / update 内部会调 toPlainText 派生它。
-  const payload = { title: targetTitle, content, entryDate: targetDate }
+  const payload = {
+    title: targetTitle,
+    content,
+    entryDate: targetDate,
+    mood: targetMood,
+    weather: targetWeather,
+    tagIds: targetTagIds,
+  }
 
   let savedId: string
   if (targetId === null) {
@@ -164,36 +208,37 @@ async function persist(): Promise<void> {
     await entryRepo.update(targetId, payload)
   }
 
-  // 约束三：图片认领必须在正文落库之后。
-  // 反过来做，若正文写入失败，图片就挂在一篇不存在的日记上了。
+  // 图片认领必须在正文落库之后；正文 JSON 顺序是媒体 sortOrder 的真相来源。
   await mediaRepo.attach(savedId, collectMediaIds(doc))
 
-  // 期间已经切到别的条目了，就别再改状态文字，否则新页面会闪一下「已保存」
-  if (entryId.value !== savedId) return
+  savedRevision = Math.max(savedRevision, revision)
+  pending = savedRevision < editRevision
 
-  pending = false
-  status.value = "已保存"
+  // 保存期间若又有输入，旧保存不能清除“未保存”状态。
+  if (entryId.value === savedId) {
+    status.value = pending ? "未保存" : "已保存"
+  }
 }
 
-/** 改成 async。所有「离开前保存」的地方都必须 await 它，这是修串文的第一道闸 */
+/** 排空到 flush 调用期间出现的最新 revision。 */
 async function flush(): Promise<void> {
   if (timer !== null) {
     window.clearTimeout(timer)
     timer = null
   }
-  await persist()
+
+  do {
+    await persist()
+  } while (savedRevision < editRevision)
 }
 
 async function discard(): Promise<void> {
   if (!entryId.value) return
   if (!window.confirm("移入断简？可以再恢复。")) return
 
-  pending = false
-  if (timer !== null) {
-    window.clearTimeout(timer)
-    timer = null
-  }
-  await entryRepo.remove(entryId.value)
+  await flush()
+  const id = entryId.value
+  await entryRepo.remove(id)
   void router.replace("/")
 }
 
@@ -212,15 +257,26 @@ onBeforeRouteLeave(async () => {
   await flush()
 })
 
-/** 关标签页 / 刷新前落盘。注意这里只能同步触发，await 不会被等待 */
+// 关标签页 / 刷新前落盘。浏览器不会等待异步完成，但仍尽早触发队列。
 function onBeforeUnload(): void {
   void flush()
 }
 
+function onVisibilityChange(): void {
+  if (document.visibilityState === "hidden") {
+    void flush().catch(() => {
+      status.value = "保存失败"
+    })
+  }
+}
+
 window.addEventListener("beforeunload", onBeforeUnload)
+document.addEventListener("visibilitychange", onVisibilityChange)
 
 onBeforeUnmount(() => {
+  loadRevision += 1
   window.removeEventListener("beforeunload", onBeforeUnload)
+  document.removeEventListener("visibilitychange", onVisibilityChange)
   void flush()
 })
 </script>

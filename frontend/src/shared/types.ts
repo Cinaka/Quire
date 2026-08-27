@@ -83,9 +83,11 @@ export interface EntryListParams {
   page?: number
   pageSize?: number
   keyword?: string
-  tagId?: string
+  tagIds?: string[]
   dateFrom?: LocalDate
   dateTo?: LocalDate
+  /** undefined 全部；true 有图；false 无图 */
+  hasImage?: boolean
   /** true 时只返回回收站内容 */
   onlyDeleted?: boolean
   order?: EntryOrder
@@ -99,4 +101,17 @@ export interface Paged<T> {
   total: number
   page: number
   pageSize: number
+}
+
+/**
+ * 本机数据统计。定义放 shared 层：它只是一个形状，
+ * 谁来填（Dexie / 将来的小程序存储 / 云端）与它无关。
+ */
+export interface LocalStats {
+  entries: number
+  deleted: number
+  tags: number
+  media: number
+  /** 图片原图字节数之和。navigator.storage.estimate() 不可用时的兜底 */
+  mediaBytes: number
 }

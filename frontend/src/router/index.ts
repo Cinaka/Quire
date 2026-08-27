@@ -12,7 +12,7 @@ const router = createRouter({
     { path: "/trash", name: "trash",  component: () => import("@/views/TrashView.vue") },
     { path: "/:pathMatch(.*)*", name: "404", component: () => import("@/views/NotFoundView.vue") },
   ],
-  scrollBehavior: () => ({ top: 0 }),
+  scrollBehavior: (_to, _from, savedPosition) => savedPosition ?? { top: 0 },
 })
 
 export default router

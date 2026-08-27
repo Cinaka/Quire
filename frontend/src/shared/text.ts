@@ -121,3 +121,31 @@ export function highlightParts(text: string, keyword: string, max = 90): TextPar
 
   return parts
 }
+
+/**
+ * 从 Tiptap doc 里递归抽出所有本地图片 ID。
+ *
+ * 纯 JSON 遍历，不依赖 Tiptap 运行时——所以保存时可以直接对存量 JSON 调用，
+ * 不需要先把内容灌进编辑器实例。
+ */
+export function collectMediaIds(doc: unknown): string[] {
+  const ids: string[] = []
+
+  const walk = (node: unknown): void => {
+    if (!node || typeof node !== "object") return
+    const value = node as {
+      type?: string
+      attrs?: { src?: string }
+      content?: unknown[]
+    }
+
+    if (value.type === "image" && typeof value.attrs?.src === "string") {
+      const id = parseLocalSrc(value.attrs.src)
+      if (id && !ids.includes(id)) ids.push(id)
+    }
+    if (Array.isArray(value.content)) value.content.forEach(walk)
+  }
+
+  walk(doc)
+  return ids
+}

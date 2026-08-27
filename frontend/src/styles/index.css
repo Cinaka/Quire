@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Quire Kai Subset";
+  src: url("../assets/fonts/quire-kai-subset.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Quire Hand Subset";
+  src: url("../assets/fonts/quire-hand-subset.woff2?no-inline") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 /* ===== 设计令牌：唯一真相来源。小程序端将来直接搬这一段 ===== */
 @theme {
   /* 竹青：主色，取自青简的竹片 */
@@ -21,8 +37,10 @@
   --color-ji: #a64b3c;
 
   --font-cn-serif: "Noto Serif SC", "Songti SC", "SimSun", serif;
-  /* 楷体：黄历区专用。macOS 命中 Kaiti SC，Windows 命中 KaiTi，移动端多数退宋体 */
-  --font-cn-kai: "Kaiti SC", "STKaiti", KaiTi, "Kaiti TC", "楷体", "Noto Serif SC", serif;
+  /* 楷体：黄历区专用。本地子集弱网时先显示系统回退 */
+  --font-cn-kai: "Quire Kai Subset", "Kaiti SC", "STKaiti", KaiTi, "Noto Serif SC", serif;
+  /* 手写体只用于已收入 hand-chars.txt 的固定装饰文案 */
+  --font-cn-hand: "Quire Hand Subset", "Kaiti SC", "STKaiti", KaiTi, cursive;
   /* 正文无衬线：对应品牌板的 --sans。之前此处缺令牌，正文走的是系统默认 */
   --font-cn-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 
