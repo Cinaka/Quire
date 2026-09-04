@@ -3,54 +3,53 @@
     class="local-image"
     :class="{ selected, dragging }"
     :data-media-id="mediaId || undefined"
+    draggable="false"
+    @dragstart.prevent
   >
+    <!-- 预览格子同时是拖拽把手：短按开大图，长按 350ms 进入拖拽。
+         pointerdown 必须 .prevent，否则 ProseMirror 会把选区设成 NodeSelection
+         并把焦点拉回 contenteditable，移动版 Chrome 随即弹出软键盘。 -->
     <button
       v-if="url"
       type="button"
       class="preview"
       contenteditable="false"
-      @pointerdown.stop
-      @click.stop="open"
+      draggable="false"
+      :aria-label="alt || '查看大图'"
+      @pointerdown.stop.prevent="onPointerDown"
+      @contextmenu.prevent
+      @click.stop.prevent
     >
       <img :src="url" :alt="alt" draggable="false" />
     </button>
-    <div v-else-if="missing" class="missing">图片已丢失</div>
-    <div v-else class="loading" />
+    <div v-else-if="missing" class="missing" contenteditable="false">图片已丢失</div>
+    <div v-else class="loading" contenteditable="false" />
 
     <div class="image-actions" contenteditable="false">
       <button
         type="button"
-        class="drag-handle"
-        aria-label="拖动图片排序"
-        @pointerdown.stop="startDrag"
-        @click.stop
-      >
-        移
-      </button>
-      <button
-        type="button"
+        class="remove"
         aria-label="删除图片"
-        @pointerdown.stop
+        title="删除图片"
+        @pointerdown.stop.prevent
         @click.stop="props.deleteNode()"
       >
-        删
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M4 7h16" />
+          <path d="M10 4h4M10 11v6M14 11v6" />
+          <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" />
+        </svg>
       </button>
     </div>
 
-    <ImageLightbox
-      :open="lightboxOpen"
-      :blob="fullBlob"
-      :alt="alt"
-      @close="close"
-    />
+    <ImageLightbox :open="lightboxOpen" :blob="fullBlob" :alt="alt" @close="close" />
   </NodeViewWrapper>
 </template>
 
 <script setup lang="ts">
-import { NodeViewWrapper, type NodeViewProps } from "@tiptap/vue-3"
 import { computed, onUnmounted, ref, watch } from "vue"
-
-import ImageLightbox from  "@/components/ImageLightbox.vue"
+import { NodeViewWrapper, type NodeViewProps } from "@tiptap/vue-3"
+import ImageLightbox from "@/components/ImageLightbox.vue"
 import { useObjectUrl } from "@/composables/useObjectUrl"
 import { moveImageNode } from "@/editor/media"
 import { mediaRepo } from "@/repo"
@@ -58,31 +57,30 @@ import { parseLocalSrc } from "@/shared/text"
 
 const props = defineProps<NodeViewProps>()
 
-const blob = ref<Blob | null>(null)
-const url = useObjectUrl(blob)
-const fullBlob = ref<Blob | null>(null)
-const lightboxOpen = ref(false)
+// 长按阈值与位移容差：与 P1-5 下拉刷新、E2 原稿保持同一组值。
+const HOLD_MS = 350
+const MOVE_TOLERANCE = 8
+
 const mediaId = ref("")
 const missing = ref(false)
 const dragging = ref(false)
+const lightboxOpen = ref(false)
+const blob = ref<Blob | null>(null)
+const fullBlob = ref<Blob | null>(null)
+const url = useObjectUrl(blob)
 
-const alt = computed(() => (props.node.attrs.alt as string) ?? "")
+const alt = computed(() =>
+  typeof props.node.attrs.alt === "string" ? props.node.attrs.alt : "",
+)
 const selected = computed(() => props.selected)
 
+// 两个请求序号各管一条异步路径：缩图与原图。NodeView 会被复用，
+// 旧 Promise 回来得丢掉，否则会把上一张图盖到新格子上。
 let resolveSeq = 0
 let fullSeq = 0
-let holdTimer: number | null = null
-let activePointer: number | null = null
-let startX = 0
-let startY = 0
-let sourceMediaId = ""
-let handle: HTMLElement | null = null
 
 async function resolve(src: string): Promise<void> {
   const mine = ++resolveSeq
-  fullSeq += 1
-  lightboxOpen.value = false
-  fullBlob.value = null
   blob.value = null
   missing.value = false
 
@@ -92,127 +90,168 @@ async function resolve(src: string): Promise<void> {
 
   const thumb = await mediaRepo.getThumb(id)
   if (mine !== resolveSeq) return
-
   if (!thumb) missing.value = true
   else blob.value = thumb
 }
 
-async function open(): Promise<void> {
-  const id = mediaId.value
-  if (!id) return
+watch(
+  () => props.node.attrs.src,
+  (src) => {
+    void resolve(typeof src === "string" ? src : "")
+  },
+  { immediate: true },
+)
 
-  const mine = ++fullSeq
-  const item = await mediaRepo.get(id)
-  if (mine !== fullSeq || mediaId.value !== id || !item) return
+/* ---------- 拖拽 ---------- */
 
-  fullBlob.value = item.blob
-  lightboxOpen.value = true
+let holdTimer: number | null = null
+let activePointer: number | null = null
+let host: HTMLElement | null = null
+let startX = 0
+let startY = 0
+let painted: HTMLElement | null = null
+
+function clearDropPaint(): void {
+  if (!painted) return
+  painted.classList.remove("drop-before", "drop-after")
+  painted = null
 }
 
-function close(): void {
-  fullSeq += 1
-  lightboxOpen.value = false
-  fullBlob.value = null
+function paintDropTarget(el: HTMLElement | null, side: "before" | "after"): void {
+  if (painted && painted !== el) clearDropPaint()
+  if (!el) return
+  painted = el
+  el.classList.toggle("drop-before", side === "before")
+  el.classList.toggle("drop-after", side === "after")
+}
+
+// 落点只靠 elementFromPoint，不缓存 ProseMirror position（每次 transaction 都会变）。
+function targetAt(
+  x: number,
+  y: number,
+): { el: HTMLElement; id: string; side: "before" | "after" } | null {
+  const el = document
+    .elementFromPoint(x, y)
+    ?.closest<HTMLElement>(".local-image[data-media-id]")
+  const id = el?.dataset.mediaId
+  if (!el || !id || id === mediaId.value) return null
+
+  const rect = el.getBoundingClientRect()
+  const side = x < rect.left + rect.width / 2 ? "before" : "after"
+  return { el, id, side }
 }
 
 function cleanupDrag(): void {
   if (holdTimer !== null) window.clearTimeout(holdTimer)
   holdTimer = null
   window.removeEventListener("pointermove", onPointerMove)
-  window.removeEventListener("pointerup", finishDrag)
-  window.removeEventListener("pointercancel", cancelDrag)
-
-  if (handle && activePointer !== null && handle.hasPointerCapture(activePointer)) {
-    handle.releasePointerCapture(activePointer)
+  window.removeEventListener("pointerup", onPointerUp)
+  window.removeEventListener("pointercancel", onPointerCancel)
+  if (host && activePointer !== null && host.hasPointerCapture(activePointer)) {
+    host.releasePointerCapture(activePointer)
   }
-
+  host = null
   activePointer = null
-  sourceMediaId = ""
-  handle = null
   dragging.value = false
+  clearDropPaint()
 }
 
 function activateDrag(): void {
   holdTimer = null
-  if (!handle || activePointer === null) return
-
+  if (!host || activePointer === null) return
   try {
-    handle.setPointerCapture(activePointer)
-    dragging.value = true
+    host.setPointerCapture(activePointer)
   } catch {
     cleanupDrag()
+    return
   }
+  dragging.value = true
+  if (typeof navigator.vibrate === "function") navigator.vibrate(10)
 }
 
-function startDrag(event: PointerEvent): void {
-  if (!event.isPrimary || (event.pointerType === "mouse" && event.button !== 0)) return
-
+function onPointerDown(event: PointerEvent): void {
+  if (!mediaId.value || event.button !== 0) return
   cleanupDrag()
+
   activePointer = event.pointerId
+  host = event.currentTarget as HTMLElement
   startX = event.clientX
   startY = event.clientY
-  sourceMediaId = mediaId.value
-  handle = event.currentTarget as HTMLElement
 
   window.addEventListener("pointermove", onPointerMove, { passive: false })
-  window.addEventListener("pointerup", finishDrag)
-  window.addEventListener("pointercancel", cancelDrag)
+  window.addEventListener("pointerup", onPointerUp)
+  window.addEventListener("pointercancel", onPointerCancel)
 
-  if (event.pointerType === "mouse") {
-    activateDrag()
-    if (dragging.value) event.preventDefault()
-  } else {
-    holdTimer = window.setTimeout(activateDrag, 350)
-  }
+  holdTimer = window.setTimeout(activateDrag, HOLD_MS)
 }
 
 function onPointerMove(event: PointerEvent): void {
   if (event.pointerId !== activePointer) return
-
   const moved = Math.hypot(event.clientX - startX, event.clientY - startY)
-  if (!dragging.value && moved > 8) {
-    cleanupDrag()
-    return
+
+  if (!dragging.value) {
+    if (moved <= MOVE_TOLERANCE) return
+    // 鼠标：按住拖就是拖，不用等 350ms。
+    // 触屏：长按尚未成立就滑了 = 用户想滚页，放开手势。
+    if (event.pointerType === "mouse") activateDrag()
+    else cleanupDrag()
+    if (!dragging.value) return
   }
 
-  if (dragging.value) event.preventDefault()
+  event.preventDefault()
+  const hit = targetAt(event.clientX, event.clientY)
+  paintDropTarget(hit?.el ?? null, hit?.side ?? "before")
 }
 
-function finishDrag(event: PointerEvent): void {
+function onPointerUp(event: PointerEvent): void {
   if (event.pointerId !== activePointer) return
 
-  if (dragging.value && sourceMediaId) {
-    const target = document
-      .elementFromPoint(event.clientX, event.clientY)
-      ?.closest<HTMLElement>(".local-image[data-media-id]")
-    const targetId = target?.dataset.mediaId
+  const wasDragging = dragging.value
+  const moved = Math.hypot(event.clientX - startX, event.clientY - startY)
+  const hit = wasDragging ? targetAt(event.clientX, event.clientY) : null
+  cleanupDrag()
 
-    if (target && targetId) {
-      const rect = target.getBoundingClientRect()
-      const side = event.clientX < rect.left + rect.width / 2 ? "before" : "after"
-      moveImageNode(
-        props.editor as unknown as Parameters<typeof moveImageNode>[0],
-        sourceMediaId,
-        targetId,
-        side,
-      )
-    }
+  if (wasDragging) {
+    // 长按后原地抬手（hit 为 null）就是个空操作，不开大图。
+    if (hit) moveImageNode(props.editor, mediaId.value, hit.id, hit.side)
+    return
   }
+  if (moved <= MOVE_TOLERANCE) void open()
+}
 
+function onPointerCancel(event: PointerEvent): void {
+  if (event.pointerId !== activePointer) return
   cleanupDrag()
 }
 
-function cancelDrag(): void {
-  cleanupDrag()
+/* ---------- 灯箱 ---------- */
+
+// 开灯箱前必须把焦点从 contenteditable 上抢下来，否则移动版弹软键盘遂图。
+// 两句都要：activeElement.blur() 收当前焦点，editor.commands.blur() 防 PM 回焦。
+function dropFocus(): void {
+  const active = document.activeElement
+  if (active instanceof HTMLElement) active.blur()
+  props.editor.commands.blur()
 }
 
-watch(
-  () => props.node.attrs.src as string,
-  (src) => {
-    void resolve(src)
-  },
-  { immediate: true },
-)
+async function open(): Promise<void> {
+  if (!mediaId.value) return
+  dropFocus()
+
+  const mine = ++fullSeq
+  const item = await mediaRepo.get(mediaId.value)
+  if (mine !== fullSeq || !item) return
+
+  fullBlob.value = item.blob
+  lightboxOpen.value = true
+}
+
+// 关灯箱后绝不回焦编辑器：回焦 = 再弹一次键盘。
+function close(): void {
+  fullSeq += 1
+  lightboxOpen.value = false
+  fullBlob.value = null
+}
 
 onUnmounted(() => {
   resolveSeq += 1
@@ -224,8 +263,40 @@ onUnmounted(() => {
 <style scoped>
 .local-image {
   position: relative;
-  margin: 16px 0;
-  line-height: 0;
+  display: block;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.local-image.selected {
+  outline: 2px solid var(--color-ink-light);
+  outline-offset: 1px;
+}
+
+.local-image.dragging {
+  opacity: 0.45;
+}
+
+/* 拖拽中的插入位提示。类名是命伤时用 JS 打到另一个同类组件实例上的，
+   但两者 scope id 相同，scoped 样式仍然生效。 */
+.local-image.drop-before::after,
+.local-image.drop-after::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-ji);
+  pointer-events: none;
+}
+
+.local-image.drop-before::after {
+  left: 0;
+}
+
+.local-image.drop-after::after {
+  right: 0;
 }
 
 .preview {
@@ -234,69 +305,63 @@ onUnmounted(() => {
   height: 100%;
   padding: 0;
   border: 0;
-  background: transparent;
-  cursor: zoom-in;
+  background: none;
+  cursor: pointer;
+  /* pan-y：纵向滚页照旧，而“按住不动”不构成 pan，长按才抢得到手势。
+     写 none 会让九宫格占满屏时整页无处滚动。 */
+  touch-action: pan-y;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
-.local-image img {
+.preview img {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 8px;
+  pointer-events: none;
 }
 
-.local-image.selected img {
-  outline: 2px solid var(--color-bamboo);
-  outline-offset: 2px;
-}
-
-.local-image.dragging {
-  opacity: 0.72;
+.missing,
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-ink-light);
 }
 
 .image-actions {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  gap: 6px;
-  line-height: 1;
+  top: 4px;
+  right: 4px;
 }
 
-.image-actions button {
-  min-width: 32px;
-  min-height: 32px;
-  border: 1px solid color-mix(in srgb, var(--color-ink-faint) 35%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--color-paper) 88%, transparent);
-  color: var(--color-ink);
-  cursor: pointer;
-}
-
-.drag-handle {
-  touch-action: manipulation;
-  cursor: grab;
-}
-
-.local-image.dragging .drag-handle {
-  cursor: grabbing;
-}
-
-.loading,
-.missing {
+.remove {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 120px;
-  border-radius: 8px;
-  background: var(--color-paper-deep);
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--color-ink-faint);
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  cursor: pointer;
+  touch-action: manipulation;
 }
 
-.missing {
-  color: var(--color-ji);
+.remove svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 </style>

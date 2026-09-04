@@ -1,4 +1,6 @@
-import type { Editor } from "@tiptap/vue-3"
+// 改后：这个文件只用到 core 的能力（state / view / chain / commands），
+// 形参就该收基类。收基类时 vue-3 的 Editor 仍能传进来（子类兼容基类）。
+import type { Editor } from "@tiptap/core"
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
 
 import { mediaRepo } from "@/repo"
@@ -91,10 +93,10 @@ export async function insertImages(
 
     nodes.push({
       type: "image",
-      attrs: {
-        src: toLocalSrc(item.id),
-        alt: file.name,
-      },
+      // alt 不再写 file.name：文件名对读者无意义（微信图片_2026…、IMG_9527），
+      // 还等于把设备上的文件命名习惯写进日记正文。P1 不提供图注入口，
+      // 需要图注时再单独做一个编辑 UI，那时写进来的才是用户自己的文字。
+      attrs: { src: toLocalSrc(item.id), alt: "" },
     })
 
     inserted += 1

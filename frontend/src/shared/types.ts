@@ -63,6 +63,12 @@ export interface MediaItem {
   remoteUrl: string
   createdAt: Iso
   dirty: 0 | 1
+  /**
+   * 变成孤儿的时刻（UTC）。null / undefined 表示当前不是孤儿，
+   * 或是 E1 之前的历史数据（那时孤儿只可能是新贴的图）。
+   * 非索引字段，不需要升 Dexie version。
+   */
+  orphanedAt?: Iso | null
 }
 
 export interface EntryCreateDto {

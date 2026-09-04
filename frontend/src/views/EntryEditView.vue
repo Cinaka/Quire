@@ -124,7 +124,6 @@ watch(routeId, async (next, prev) => {
   if (next === prev) return
   // 新建落库后自己 replace 出来的地址变化（/entry/new → /entry/{id}）不算切换
   if (next === entryId.value) return
-
   await flush()
   ready.value = false
   await load(next)
@@ -139,9 +138,9 @@ function schedule(): void {
   if (timer !== null) window.clearTimeout(timer)
   timer = window.setTimeout(() => {
     timer = null
-    void persist().catch(() => {
-      status.value = "保存失败"
-    })
+    // 走 flushSafely 而不是裸 persist()：800ms 窗口里可能已累积多个 revision，
+    // 只跑一轮 persist 可能排不空（persistLatest 只合并到开始那一刻的 revision）。
+    flushSafely()
   }, 800)
 }
 
@@ -164,22 +163,29 @@ async function persistLatest(): Promise<void> {
 
   // 真正轮到本任务时再取最新 revision 和表单快照，队列中的旧请求自然合并。
   const revision = editRevision
-  const doc = editorRef.value?.snapshot() ?? loadedDoc.value ?? {
-    type: "doc" as const,
-    content: [{ type: "paragraph" }],
-  }
+  const doc = editorRef.value?.snapshot() ??
+    loadedDoc.value ?? {
+      type: "doc" as const,
+      content: [{ type: "paragraph" }],
+    }
+
   const targetId = entryId.value
   const targetTitle = title.value
   const targetDate = entryDate
   const targetMood = mood.value
   const targetWeather = weather.value
   const targetTagIds = [...new Set(tagIds.value)]
+
   const content = { schemaVersion: CONTENT_SCHEMA_VERSION, doc }
   const text = toPlainText(content)
   const hasMeta = Boolean(targetMood || targetWeather || targetTagIds.length)
+  // 图片必须单独判。L2/L3 之后「只贴了图」的正文纯文本是空串，
+  // 不把它算进来就会静默不落库，图片还会被 24 小时孤儿清理带走。
+  // collectMediaIds 在下面 attach 时本来就要调，这里多调一次是纯 JSON 遍历。
+  const hasImage = collectMediaIds(doc).length > 0
 
   // 空的新日记不落库；只有心情、天气或标签也属于有效日记。
-  if (targetId === null && !targetTitle.trim() && !text.trim() && !hasMeta) {
+  if (targetId === null && !targetTitle.trim() && !text.trim() && !hasMeta && !hasImage) {
     savedRevision = Math.max(savedRevision, revision)
     pending = savedRevision < editRevision
     status.value = pending ? "未保存" : ""
@@ -187,6 +193,7 @@ async function persistLatest(): Promise<void> {
   }
 
   status.value = "保存中"
+
   const payload = {
     title: targetTitle,
     content,
@@ -220,7 +227,13 @@ async function persistLatest(): Promise<void> {
   }
 }
 
-/** 排空到 flush 调用期间出现的最新 revision。 */
+/**
+ * 排空到 flush 调用期间出现的最新 revision。会向上抛：路由守卫靠它判断拦不拦。
+ *
+ * do/while 不会死循环：persistLatest() 成功时 savedRevision 单调递增到
+ * 当时的 editRevision；抛出时整个 flush() 直接 reject 退出循环。
+ * 唯一能让它多转一圈的情形是“保存期间又有输入”，而那正是它存在的理由。
+ */
 async function flush(): Promise<void> {
   if (timer !== null) {
     window.clearTimeout(timer)
@@ -232,10 +245,23 @@ async function flush(): Promise<void> {
   } while (savedRevision < editRevision)
 }
 
+/**
+ * “发完就不管”的唯一入口。给三个无法 await 的时机用：beforeunload、
+ * visibilitychange、onBeforeUnmount。
+ *
+ * 不能写成 void flush()：void 只丢弃返回值，不注册任何 rejection handler。
+ * E3 把 flush() 改成会 reject 之后，写库失败（配额溢出、条目已被彻底删除后的
+ * update）会变成未捕获 rejection：控制台一片红，而用户只看到状态卡在“保存中”。
+ */
+function flushSafely(): void {
+  void flush().catch(() => {
+    status.value = "保存失败"
+  })
+}
+
 async function discard(): Promise<void> {
   if (!entryId.value) return
   if (!window.confirm("移入断简？可以再恢复。")) return
-
   await flush()
   const id = entryId.value
   await entryRepo.remove(id)
@@ -259,15 +285,13 @@ onBeforeRouteLeave(async () => {
 
 // 关标签页 / 刷新前落盘。浏览器不会等待异步完成，但仍尽早触发队列。
 function onBeforeUnload(): void {
-  void flush()
+  flushSafely()
 }
 
+// 切后台 / 切标签页时落盘。只在 hidden 时做：visibilitychange 双向触发，
+// 回前台时并没有新输入。这是移动端唯一可靠的那道保险。
 function onVisibilityChange(): void {
-  if (document.visibilityState === "hidden") {
-    void flush().catch(() => {
-      status.value = "保存失败"
-    })
-  }
+  if (document.visibilityState === "hidden") flushSafely()
 }
 
 window.addEventListener("beforeunload", onBeforeUnload)
@@ -277,7 +301,9 @@ onBeforeUnmount(() => {
   loadRevision += 1
   window.removeEventListener("beforeunload", onBeforeUnload)
   document.removeEventListener("visibilitychange", onVisibilityChange)
-  void flush()
+  // 此处无法 await（钩子同步），但写入仍会在后台跑完：
+  // persistLatest 已在开头快照了 doc 与表单，不依赖已销毁的 editorRef。
+  flushSafely()
 })
 </script>
 

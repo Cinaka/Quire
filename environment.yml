@@ -15,7 +15,6 @@ dependencies:
       - python-jose[cryptography]==3.5.0
       - passlib[bcrypt]==1.7.4
       - uuid-utils==0.17.0
-      - redis==8.1.0
       - httpx==0.28.1
       - pytest==9.1.1
       - ruff==0.16.3

@@ -47,11 +47,11 @@ export function toPlainText(content: EntryContent | null | undefined): string {
       buf += " "
       return
     }
-    if (node.type === "image") {
-      const alt = node.attrs?.alt
-      if (typeof alt === "string" && alt) buf += ` ${alt} `
-      return
-    }
+    // 改后：图片不进纯文本索引。
+  // 原先拼的是 attrs.alt，而 alt 存的是上传时的文件名（17883932.jpg / IMG_2026.HEIC），
+  // 它会直接漏进首页与列表摘要，也让搜索被文件名命中。
+  // 图片的存在感改由 UI 的缩略图与数量徽标表达，不占用纯文本字段。
+    if (node.type === "image") return
     node.content?.forEach(walk)
     if (node.type && BLOCK_TYPES.has(node.type)) flush()
   }

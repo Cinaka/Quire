@@ -24,7 +24,20 @@
       <ul v-if="dateEntries.length" class="entry-list">
         <li v-for="entry in dateEntries" :key="entry.id" @click="open(entry.id)">
           <span class="entry-title">{{ entry.title || "无题" }}</span>
-          <span class="entry-preview">{{ preview(entry.contentText) }}</span>
+          <!-- 摘要位只放真文本；整篇只有图时才显示「N 张图片」并弱化 -->
+          <span class="entry-preview" :class="{ faint: !hasText(entry) }">{{ preview(entry) }}</span>
+          <span
+            v-if="imageCountByEntry[entry.id]"
+            class="img-badge"
+            :aria-label="`${imageCountByEntry[entry.id]} 张图片`"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <rect x="3" y="5" width="18" height="14" rx="2" />
+              <circle cx="8.5" cy="10" r="1.5" />
+              <path d="M21 16l-5-5-9 8" />
+            </svg>
+            {{ imageCountByEntry[entry.id] }}
+          </span>
         </li>
       </ul>
       <div v-else class="empty-state">
@@ -54,6 +67,18 @@
         <li v-for="entry in recent" :key="entry.id" @click="open(entry.id)">
           <span class="entry-date">{{ entry.entryDate.slice(5) }}</span>
           <span class="entry-title">{{ entry.title || "无题" }}</span>
+          <span
+            v-if="imageCountByEntry[entry.id]"
+            class="img-badge"
+            :aria-label="`${imageCountByEntry[entry.id]} 张图片`"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <rect x="3" y="5" width="18" height="14" rx="2" />
+              <circle cx="8.5" cy="10" r="1.5" />
+              <path d="M21 16l-5-5-9 8" />
+            </svg>
+            {{ imageCountByEntry[entry.id] }}
+          </span>
         </li>
       </ul>
       <p v-else class="empty">简册尚空，今日宜落笔</p>
@@ -74,8 +99,9 @@ import { useRouter } from "vue-router"
 import AlmanacCard from "@/components/AlmanacCard.vue"
 import BambooSlipEmpty from "@/components/BambooSlipEmpty.vue"
 import HomeDateNavigator from "@/components/HomeDateNavigator.vue"
-import { entryRepo } from "@/repo"
+import { entryRepo, mediaRepo } from "@/repo"
 import { getAlmanac, type AlmanacDay } from "@/shared/almanac"
+import { entryExcerpt } from "@/shared/entryMeta"
 import { todayLocal } from "@/shared/time"
 import type { EntryListItem } from "@/shared/types"
 
@@ -86,19 +112,31 @@ const selectedDate = ref(today)
 const almanac = ref<AlmanacDay | null>(null)
 const dateEntries = ref<EntryListItem[]>([])
 const recent = ref<EntryListItem[]>([])
+const imageCountByEntry = ref<Record<string, number>>({})
 const monthDays = ref(0)
 const notice = ref("")
 let loadSeq = 0
 
 const dayNum = computed(() => Number(selectedDate.value.slice(8, 10)))
 const monthLabel = computed(() => `${Number(selectedDate.value.slice(5, 7))} 月`)
+
 const writeLabel = computed(() => {
   if (selectedDate.value !== today) return "补记一简"
   return dateEntries.value.length ? "再刻一简" : "刻一简"
 })
 
-function preview(text: string): string {
-  const value = text.replace(/\n/g, " ").trim()
+/** 是否有真正写下的文字。L2 之后图片不再进 contentText，所以这就是可靠判据。 */
+function hasText(entry: EntryListItem): boolean {
+  return entry.contentText.trim().length > 0
+}
+
+/**
+ * 首页摘要：真文本优先，纯图日记退回「N 张图片」。
+ * entryExcerpt 已经把换行与连续空白折成单空格，这里只负责截断。
+ * 这个结果仅用于展示，绝不写回 contentText（铁律 1）。
+ */
+function preview(entry: EntryListItem): string {
+  const value = entryExcerpt(entry.contentText, imageCountByEntry.value[entry.id] ?? 0)
   return value.length > 40 ? `${value.slice(0, 40)}…` : value
 }
 
@@ -114,11 +152,19 @@ async function load(): Promise<void> {
 
   const prefix = date.slice(0, 7)
   const counts = await entryRepo.countByDate(`${prefix}-01`, `${prefix}-31`)
+
+  // 两个列表可能有重叠（今天刚写的也在近作里），去重后一次取张数。
+  // 只读 Entry JSON 与 media 主键，不载入任何 Blob。
+  const ids = [...new Set([...minePage.items, ...latest.items].map((e) => e.id))]
+  const imageCounts = await mediaRepo.countByEntries(ids)
+
+  // 沿用同一个 loadSeq 守卫：快速连点日期时，旧请求不得盖回新日期的数据。
   if (mine !== loadSeq) return
 
   almanac.value = nextAlmanac
   dateEntries.value = minePage.items
   recent.value = latest.items
+  imageCountByEntry.value = imageCounts
   monthDays.value = Object.keys(counts).length
 }
 
@@ -233,6 +279,37 @@ onMounted(() => {
   color: var(--color-ink-faint);
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* 「4 张图片」不是用户写的字。首页摘要本来就是弱色，
+   这里再压一档并去掉与真文本相同的观感 */
+.entry-preview.faint {
+  font-style: normal;
+  opacity: 0.75;
+}
+
+/* 徽标推到行尾：margin-left auto 而不是给 preview 加 flex: 1，
+   这样标题与摘要的现有截断行为一点都不用改 */
+.img-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.img-badge svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .empty-state {

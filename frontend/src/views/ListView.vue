@@ -74,6 +74,7 @@
       <div class="filter-actions">
         <button type="button" class="plain" @click="clearFilters">清除筛选</button>
       </div>
+
       <p v-if="filterError || tagError" class="filter-error" role="alert">
         {{ filterError || tagError }}
       </p>
@@ -105,7 +106,6 @@
     <template v-else-if="items.length">
       <section v-for="group in groups" :key="group.key" class="group">
         <h2 class="group-title" :class="{ static: order === 'updatedAtDesc' }">{{ group.label }}</h2>
-
         <ul class="list">
           <li v-for="entry in group.items" :key="entry.id">
             <button type="button" class="row" @click="open(entry.id)">
@@ -116,11 +116,33 @@
               <span class="row-copy">
                 <span class="row-head">
                   <span class="row-title">{{ entry.title.trim() || "无题" }}</span>
-                  <span class="row-day">{{ dayLabel(entry.entryDate) }}</span>
+                  <span class="row-tail">
+                    <!-- 图片数量徽标。图标无文本，屏读靠 aria-label 说全 -->
+                    <span
+                      v-if="imageCountByEntry[entry.id]"
+                      class="img-badge"
+                      :aria-label="`${imageCountByEntry[entry.id]} 张图片`"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <rect x="3" y="5" width="18" height="14" rx="2" />
+                        <circle cx="8.5" cy="10" r="1.5" />
+                        <path d="M21 16l-5-5-9 8" />
+                      </svg>
+                      {{ imageCountByEntry[entry.id] }}
+                    </span>
+                    <span class="row-day">{{ dayLabel(entry.entryDate) }}</span>
+                  </span>
                 </span>
-                <span class="row-snippet">
-                  <span v-for="(part, index) in snippet(entry)" :key="index" :class="{ hit: part.hit }">{{ part.text }}</span>
+
+                <!-- 有真文本时仍走 highlightParts，搜索命中必须能高亮；
+                     整篇只有图时才用 entryExcerpt 的张数兜底，并弱化颜色。 -->
+                <span class="row-snippet" :class="{ faint: !hasText(entry) }">
+                  <template v-if="hasText(entry)">
+                    <span v-for="(part, index) in snippet(entry)" :key="index" :class="{ hit: part.hit }">{{ part.text }}</span>
+                  </template>
+                  <template v-else>{{ fallbackExcerpt(entry) }}</template>
                 </span>
+
                 <span v-if="entry.mood || entry.weather || entry.tagIds.length" class="row-meta">
                   <span v-if="entry.mood">{{ entry.mood }}</span>
                   <span v-if="entry.weather">{{ entry.weather }}</span>
@@ -154,6 +176,7 @@ import EntryThumbnail from "@/components/EntryThumbnail.vue"
 import { useEntryList } from "@/composables/useEntryList"
 import { usePullToRefresh } from "@/composables/usePullToRefresh"
 import { mediaRepo, tagRepo } from "@/repo"
+import { entryExcerpt } from "@/shared/entryMeta"
 import { highlightParts, type TextPart } from "@/shared/text"
 import type { EntryListItem, EntryOrder, Tag } from "@/shared/types"
 
@@ -187,6 +210,10 @@ const tags = ref<Tag[]>([])
 const tagError = ref("")
 const filterOpen = ref(false)
 const coverByEntry = ref<Record<string, string>>({})
+const imageCountByEntry = ref<Record<string, number>>({})
+
+// 封面与张数共用同一个序号：它们在同一个 watch 里一起取，
+// 分成两个序号只会给自己留下“封面是新的、张数是旧的”这种半旧状态。
 let coverSeq = 0
 
 const {
@@ -255,8 +282,18 @@ function open(id: string): void {
   void router.push(`/entry/${id}`)
 }
 
+/** 是否有真正写下的文字。L2 之后图片不再进 contentText，所以这就是可靠判据。 */
+function hasText(entry: EntryListItem): boolean {
+  return entry.contentText.trim().length > 0
+}
+
 function snippet(entry: EntryListItem): TextPart[] {
   return highlightParts(entry.contentText, keyword.value)
+}
+
+/** 只在没有真文本时用。纯展示，绝不写回 contentText（铁律 1）。 */
+function fallbackExcerpt(entry: EntryListItem): string {
+  return entryExcerpt(entry.contentText, imageCountByEntry.value[entry.id] ?? 0)
 }
 
 function dayLabel(entryDate: string): string {
@@ -264,15 +301,18 @@ function dayLabel(entryDate: string): string {
   return `${Number(month)}月${Number(day)}日`
 }
 
-watch(
-  items,
-  async (rows) => {
-    const mine = ++coverSeq
-    const next = await mediaRepo.firstByEntries(rows.map((entry) => entry.id))
-    if (mine === coverSeq) coverByEntry.value = next
-  },
-  { immediate: true },
-)
+// 封面与张数一次批量取。两个方法都只读 Entry JSON 与 media 主键，不载入 Blob。
+watch(items, async (list) => {
+  const mine = ++coverSeq
+  const ids = list.map((e) => e.id)
+  const [covers, counts] = await Promise.all([
+    mediaRepo.firstByEntries(ids),
+    mediaRepo.countByEntries(ids),
+  ])
+  if (mine !== coverSeq) return
+  coverByEntry.value = covers
+  imageCountByEntry.value = counts
+})
 
 watch(keyword, (value) => {
   const query = value.trim()
@@ -520,11 +560,40 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
+/* 徽标与日期同属“右侧附注”，一起 flex: none，
+   保证标题继续吃掉剩余宽度并正常省略号截断 */
+.row-tail {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 8px;
+}
+
 .row-day {
   flex: none;
   font-size: var(--text-caption);
   line-height: var(--leading-caption);
   color: var(--color-ink-faint);
+}
+
+.img-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.img-badge svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .row-snippet {
@@ -536,6 +605,11 @@ onUnmounted(() => {
   font-size: var(--text-body);
   line-height: var(--leading-body);
   color: var(--color-ink-soft);
+}
+
+/* 「4 张图片」不是用户写的字，视觉上要弱于真文本 */
+.row-snippet.faint {
+  color: var(--color-ink-faint);
 }
 
 .row-snippet .hit {

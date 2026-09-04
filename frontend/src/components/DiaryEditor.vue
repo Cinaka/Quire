@@ -147,4 +147,8 @@ onBeforeUnmount(() => {
   margin: 0;
   aspect-ratio: 1;
 }
+.prose-diary.dragging-image,
+.prose-diary.dragging-image * {
+  user-select: none;
+}
 </style>
