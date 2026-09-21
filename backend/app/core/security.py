@@ -1,3 +1,4 @@
+import time
 import uuid
 from datetime import timedelta
 
@@ -9,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.time import utcnow
 from app.db.session import get_db
 from app.models.user import User
 
@@ -26,13 +26,15 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def create_token(user: User, token_type: str, lifetime: timedelta) -> str:
-    now = utcnow()
+    # JWT NumericDate 必须使用 UTC Unix epoch。不能对 utcnow() 返回的无时区
+    # datetime 调 timestamp()：它会被解释成本机时区，东八区会令令牌早八小时过期。
+    now = int(time.time())
     payload = {
         "sub": str(user.id),
         "typ": token_type,
         "tv": user.token_version,
-        "iat": int(now.timestamp()),
-        "exp": int((now + lifetime).timestamp()),
+        "iat": now,
+        "exp": now + int(lifetime.total_seconds()),
     }
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
