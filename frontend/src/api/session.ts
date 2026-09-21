@@ -1,6 +1,6 @@
 import { db } from "@/db/schema"
 
-import { get, post } from "./request"
+import { post } from "./request"
 import { clearAccessToken, getAccessToken, setAccessToken } from "./tokenStore"
 
 export interface SessionUser {
