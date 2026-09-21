@@ -170,10 +170,12 @@ async def refresh(
 
     user = await db.scalar(select(User).where(User.id == user_id))
     session = await db.scalar(
-        select(RefreshSession).where(
+        select(RefreshSession)
+        .where(
             RefreshSession.id == session_id,
             RefreshSession.user_id == user_id,
         )
+        .with_for_update()
     )
     now = utcnow()
     if (
@@ -209,7 +211,9 @@ async def logout(
         try:
             payload = decode_token(quire_refresh_token, "refresh")
             session_id = uuid.UUID(str(payload["jti"]))
-            session = await db.scalar(select(RefreshSession).where(RefreshSession.id == session_id))
+            session = await db.scalar(
+                select(RefreshSession).where(RefreshSession.id == session_id)
+            )
             if session is not None and session.revoked_at is None:
                 session.revoked_at = utcnow()
                 await db.commit()
