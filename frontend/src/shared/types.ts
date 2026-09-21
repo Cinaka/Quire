@@ -33,6 +33,13 @@ export interface Entry {
   createdAt: Iso
   updatedAt: Iso
   clientUpdatedAt: Iso
+  /**
+   * 服务端 updated_at 的回填。"" = 尚未同步过。
+   *
+   * 只下行、不上行，且 **不参与冲突仲裁**（仲裁只看 clientUpdatedAt，
+   * 第四节第 2 小节）。存它只为了排查时能看出“服务端以为的最后一次写是何时”。
+   */
+  serverUpdatedAt: Iso | ""
   deletedAt: Iso | null
   /** 0 或 1。IndexedDB 不索引 null，所以软删除标记必须单独用数字字段。 */
   isDeleted: 0 | 1
@@ -61,6 +68,10 @@ export interface MediaItem {
   sortOrder: number
   /** 空字符串表示还没上云。P2 上传成功后填 CDN 地址。 */
   remoteUrl: string
+
+  /** 缩略图的云端地址。"" = 未上云。与 remoteUrl 同一口径：空串，不用 null。 */
+  thumbRemoteUrl: string
+
   createdAt: Iso
   dirty: 0 | 1
   /**
