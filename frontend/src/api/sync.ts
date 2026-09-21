@@ -111,12 +111,13 @@ export async function runSync(): Promise<void> {
     if (!pushed.complete) return
     const since = await meta("lastSyncAt")
     if (!since) {
-      // 有游客数据时严格遵守 bootstrap 只 push；空的新设备没有本地数据可被覆盖，
-      // 可以直接从纪元游标全量拉取该账号已有内容。
       if (pushed.hadWork) {
-        if (pushed.serverTime) await db.meta.put({ key: "lastSyncAt", value: pushed.serverTime })
+        // bootstrap 本轮严格只 push。push 全部成功后把下一轮游标放在纪元，
+        // 这样既不会先下行覆盖游客数据，又能在下一轮合并账号原有云端历史。
+        await db.meta.put({ key: "lastSyncAt", value: FULL_PULL_CURSOR })
         return
       }
+      // 空的新设备没有本地内容可被覆盖，可以在首次同步直接全量拉取。
       await pullAll(FULL_PULL_CURSOR)
       return
     }
