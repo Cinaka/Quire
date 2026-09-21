@@ -9,7 +9,7 @@ import { RouterLink, RouterView } from "vue-router"
       <RouterLink to="/">今简</RouterLink>
       <RouterLink to="/list">简册</RouterLink>
       <span class="nav-disabled" aria-disabled="true" title="预简（待刻）尚未开放">预简</span>
-      <RouterLink to="/auth">云笺</RouterLink>
+      <RouterLink to="/sync">云笺</RouterLink>
       <RouterLink to="/settings">设置</RouterLink>
     </nav>
   </div>
