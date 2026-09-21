@@ -1,6 +1,6 @@
 import { db } from "@/db/schema"
 
-import { post } from "./request"
+import { del, get, post } from "./request"
 import { clearAccessToken, getAccessToken, setAccessToken } from "./tokenStore"
 
 export interface SessionUser {
@@ -8,6 +8,13 @@ export interface SessionUser {
   email: string | null
   nickname: string | null
   timezone: string
+}
+
+export interface DeviceSession {
+  id: string
+  createdAt: string
+  expiresAt: string
+  current: boolean
 }
 
 interface AuthResponse {
@@ -58,4 +65,17 @@ export async function logout(): Promise<void> {
   } finally {
     clearAccessToken()
   }
+}
+
+export async function listDeviceSessions(): Promise<DeviceSession[]> {
+  return get<DeviceSession[]>("/auth/sessions")
+}
+
+export async function revokeOtherSessions(): Promise<number> {
+  const data = await post<{ revoked: number }>("/auth/sessions/revoke-others")
+  return data.revoked
+}
+
+export async function revokeDeviceSession(id: string): Promise<void> {
+  await del<null>(`/auth/sessions/${id}`)
 }

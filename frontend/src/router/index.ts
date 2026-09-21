@@ -7,6 +7,7 @@ const router = createRouter({
     { path: "/auth", name: "auth", component: () => import("@/views/AuthView.vue") },
     { path: "/sync", name: "sync", component: () => import("@/views/SyncView.vue") },
     { path: "/sync/issues", name: "sync-issues", component: () => import("@/views/SyncIssuesView.vue") },
+    { path: "/sync/sessions", name: "sync-sessions", component: () => import("@/views/SessionsView.vue") },
     { path: "/entry/new", name: "entry-new", component: () => import("@/views/EntryEditView.vue") },
     { path: "/entry/:id", name: "entry-edit", component: () => import("@/views/EntryEditView.vue") },
     { path: "/list", name: "list", component: () => import("@/views/ListView.vue") },

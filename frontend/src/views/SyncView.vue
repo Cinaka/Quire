@@ -29,6 +29,9 @@
         >
           处理冲突与错误
         </button>
+        <button type="button" class="secondary" :disabled="busy" @click="router.push('/sync/sessions')">
+          管理登录设备
+        </button>
         <button type="button" class="secondary" :disabled="busy" @click="signOut">
           退出登录
         </button>
