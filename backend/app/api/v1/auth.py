@@ -1,13 +1,13 @@
 import uuid
-from datetime import timedelta
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.ids import new_id
+from app.core.rate_limit import login_rate_limiter
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -80,8 +80,7 @@ def clear_refresh_cookie(response: Response) -> None:
 
 async def issue_auth(response: Response, user: User) -> Envelope[AuthResponse]:
     access = create_access_token(user)
-    refresh = create_refresh_token(user)
-    set_refresh_cookie(response, refresh)
+    set_refresh_cookie(response, create_refresh_token(user))
     return ok(
         AuthResponse(
             user=user_response(user),
@@ -115,14 +114,22 @@ async def register(
 
 @router.post("/login")
 async def login(
+    request: Request,
     body: LoginRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> Envelope[AuthResponse]:
     email = body.email.strip().lower()
+    client_ip = request.client.host if request.client else "unknown"
+    rate_key = f"{client_ip}:{email}"
+    login_rate_limiter.check(rate_key)
+
     user = await db.scalar(select(User).where(User.email == email))
     if user is None or not user.password_hash or not verify_password(body.password, user.password_hash):
+        login_rate_limiter.fail(rate_key)
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
+
+    login_rate_limiter.clear(rate_key)
     return await issue_auth(response, user)
 
 
@@ -144,7 +151,12 @@ async def refresh(
         raise HTTPException(status_code=401, detail="刷新令牌已失效")
     access = create_access_token(user)
     set_refresh_cookie(response, create_refresh_token(user))
-    return ok(RefreshResponse(access_token=access, expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60))
+    return ok(
+        RefreshResponse(
+            access_token=access,
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        )
+    )
 
 
 @router.post("/logout")
