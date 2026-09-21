@@ -60,7 +60,8 @@ const message = ref("")
 
 async function metaArrayCount(key: string): Promise<number> {
   const row = await db.meta.get(key)
-  return Array.isArray(row?.value) ? row.value.length : 0
+  const value = row?.value
+  return Array.isArray(value) ? value.length : 0
 }
 
 async function refresh(): Promise<void> {
@@ -87,7 +88,9 @@ async function syncNow(): Promise<void> {
   try {
     await runSync()
     await refresh()
-    message.value = dirtyTotal.value ? `仍有 ${dirtyTotal.value} 项待处理，请查看同步错误。` : "同步完成。"
+    message.value = dirtyTotal.value
+      ? `仍有 ${dirtyTotal.value} 项待处理，请查看同步错误。`
+      : "同步完成。"
     failed.value = dirtyTotal.value > 0
   } catch (error) {
     failed.value = true
