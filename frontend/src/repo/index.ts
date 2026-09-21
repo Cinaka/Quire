@@ -2,6 +2,7 @@ import { localBackupRepo } from "@/db/backupRepo"
 import { localFirstMediaRepo } from "@/db/cloudMediaRepo"
 import { localEntryRepo, type IEntryRepo } from "@/db/entryRepo"
 import { localStatsRepo } from "@/db/statsRepo"
+import { localSyncRepo } from "@/db/syncRepo"
 import { localTagRepo, type ITagRepo } from "@/db/tagRepo"
 
 /**
@@ -13,3 +14,4 @@ export const mediaRepo = localFirstMediaRepo
 export const tagRepo: ITagRepo = localTagRepo
 export const backupRepo = localBackupRepo
 export const statsRepo = localStatsRepo
+export const syncRepo = localSyncRepo
