@@ -54,8 +54,7 @@ import { useRouter } from "vue-router"
 
 import { isLoggedIn, logout } from "@/api/session"
 import { runSync } from "@/api/sync"
-import { syncRepo } from "@/repo"
-import type { SyncStatus } from "@/db/syncRepo"
+import { syncRepo, type SyncStatus } from "@/repo"
 
 const router = useRouter()
 const loggedIn = ref(isLoggedIn())

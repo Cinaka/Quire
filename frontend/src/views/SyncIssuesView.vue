@@ -38,18 +38,19 @@ import { onMounted, ref } from "vue"
 import { useRouter } from "vue-router"
 
 import { runSync } from "@/api/sync"
-import { syncRepo } from "@/repo"
-import type { SyncConflict, SyncErrorItem } from "@/db/syncRepo"
+import { syncRepo, type SyncConflict, type SyncErrorItem } from "@/repo"
 
 const router = useRouter()
 const conflicts = ref<SyncConflict[]>([])
 const errors = ref<SyncErrorItem[]>([])
 
 async function load(): Promise<void> {
-  ;[conflicts.value, errors.value] = await Promise.all([
+  const [nextConflicts, nextErrors] = await Promise.all([
     syncRepo.conflicts(),
     syncRepo.errors(),
   ])
+  conflicts.value = nextConflicts
+  errors.value = nextErrors
 }
 
 async function resolve(entryId: string, strategy: "local" | "server"): Promise<void> {
