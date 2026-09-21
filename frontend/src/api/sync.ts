@@ -1,12 +1,20 @@
-import { db } from "@/db/schema"
 import { pullChanges, pushBatch, uploadMedia } from "@/api/endpoints"
-import { fromWireEntry, fromWireTag, mediaPatchFromWire, toWireEntry, toWireMediaMetaPush, toWireTag } from "@/api/mappers"
+import {
+  fromWireEntry,
+  fromWireTag,
+  mediaPatchFromWire,
+  toWireEntry,
+  toWireMediaMetaPush,
+  toWireTag,
+} from "@/api/mappers"
 import type { WireMediaMeta, WireTag } from "@/api/wire"
+import { db } from "@/db/schema"
 import { utcNow } from "@/shared/time"
 import type { Entry } from "@/shared/types"
 
 const BATCH = 50
 const MAX_ERRORS = 3
+const FULL_PULL_CURSOR = "1970-01-01T00:00:00.000Z"
 let running = false
 
 async function meta(key: string): Promise<string> {
@@ -14,13 +22,17 @@ async function meta(key: string): Promise<string> {
   return typeof row?.value === "string" ? row.value : ""
 }
 
-async function pushAll(): Promise<{ serverTime: string; complete: boolean }> {
+async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWork: boolean }> {
   let serverTime = ""
+  let hadWork = false
   for (;;) {
     const entries = await db.entries.where("dirty").equals(1).limit(BATCH).toArray()
     const tags = await db.tags.where("dirty").equals(1).limit(BATCH).toArray()
     const mediaMeta = await db.media.where("dirty").equals(1).limit(BATCH).toArray()
-    if (!entries.length && !tags.length && !mediaMeta.length) return { serverTime, complete: true }
+    if (!entries.length && !tags.length && !mediaMeta.length) {
+      return { serverTime, complete: true, hadWork }
+    }
+    hadWork = true
 
     const uploadFailed = new Set<string>()
     for (const media of mediaMeta) {
@@ -46,16 +58,25 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean }> {
       mediaMeta: sendableMedia.map(toWireMediaMetaPush),
     })
     serverTime = result.serverTime
+
     await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
       for (const item of result.entries) {
         if (item.status === "applied") await db.entries.update(item.id, { dirty: 0 })
         else if (item.status === "error") await noteError("entry", item.id, item.message)
       }
-      for (const item of result.tags) if (item.status === "applied") await db.tags.update(item.id, { dirty: 0 })
-      for (const item of result.mediaMeta) if (item.status === "applied") await db.media.update(item.id, { dirty: 0 })
+      for (const item of result.tags) {
+        if (item.status === "applied") await db.tags.update(item.id, { dirty: 0 })
+      }
+      for (const item of result.mediaMeta) {
+        if (item.status === "applied") await db.media.update(item.id, { dirty: 0 })
+      }
     })
-    const progressed = result.entries.some((item) => item.status === "applied") || result.tags.some((item) => item.status === "applied") || result.mediaMeta.some((item) => item.status === "applied")
-    if (!progressed) return { serverTime, complete: false }
+
+    const progressed =
+      result.entries.some((item) => item.status === "applied") ||
+      result.tags.some((item) => item.status === "applied") ||
+      result.mediaMeta.some((item) => item.status === "applied")
+    if (!progressed) return { serverTime, complete: false, hadWork }
   }
 }
 
@@ -69,7 +90,9 @@ async function pullAll(since: string): Promise<void> {
         const local = await db.entries.get(incoming.id)
         if (!local) await db.entries.put({ ...incoming, dirty: 0 })
         else if (local.dirty === 1) await stashConflict(incoming)
-        else if (incoming.clientUpdatedAt > local.clientUpdatedAt) await db.entries.put({ ...incoming, dirty: 0 })
+        else if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
+          await db.entries.put({ ...incoming, dirty: 0 })
+        }
       }
       await mergeTags(result.tags)
       await mergeMediaMeta(result.mediaMeta)
@@ -88,8 +111,13 @@ export async function runSync(): Promise<void> {
     if (!pushed.complete) return
     const since = await meta("lastSyncAt")
     if (!since) {
-      if (!pushed.serverTime) return
-      await db.meta.put({ key: "lastSyncAt", value: pushed.serverTime })
+      // 有游客数据时严格遵守 bootstrap 只 push；空的新设备没有本地数据可被覆盖，
+      // 可以直接从纪元游标全量拉取该账号已有内容。
+      if (pushed.hadWork) {
+        if (pushed.serverTime) await db.meta.put({ key: "lastSyncAt", value: pushed.serverTime })
+        return
+      }
+      await pullAll(FULL_PULL_CURSOR)
       return
     }
     await pullAll(since)
@@ -128,10 +156,20 @@ async function mergeMediaMeta(rows: WireMediaMeta[]): Promise<void> {
     const patch = mediaPatchFromWire(wire)
     const local = await db.media.get(wire.id)
     if (local) await db.media.update(wire.id, patch)
-    else await db.media.put({
-      id: wire.id, blob: new Blob([], { type: wire.mime }), thumbBlob: null,
-      mime: wire.mime, width: wire.width, height: wire.height, size: wire.size,
-      createdAt: wire.created_at, dirty: 0, orphanedAt: null, ...patch,
-    })
+    else {
+      await db.media.put({
+        id: wire.id,
+        blob: new Blob([], { type: wire.mime }),
+        thumbBlob: null,
+        mime: wire.mime,
+        width: wire.width,
+        height: wire.height,
+        size: wire.size,
+        createdAt: wire.created_at,
+        dirty: 0,
+        orphanedAt: null,
+        ...patch,
+      })
+    }
   }
 }

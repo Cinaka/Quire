@@ -1,7 +1,8 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,13 @@ from app.models.user import User
 from app.schemas.envelope import Envelope, ok
 
 router = APIRouter(prefix="/sync", tags=["sync"])
+SUFFIX_MIME = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
 
 
 class SyncEntry(EntryRequest):
@@ -52,7 +60,11 @@ async def push_tag(db: AsyncSession, user: User, item: SyncTag) -> dict:
     existing = await db.scalar(select(Tag).where(Tag.id == item.id, Tag.user_id == user.id))
     duplicate = await db.scalar(select(Tag).where(Tag.user_id == user.id, Tag.name == item.name))
     if duplicate is not None and duplicate.id != item.id:
-        return {"id": str(item.id), "status": "error", "message": f"duplicate_tag:{duplicate.id}"}
+        return {
+            "id": str(item.id),
+            "status": "error",
+            "message": f"duplicate_tag:{duplicate.id}",
+        }
     if existing is None:
         existing = Tag(id=item.id, user_id=user.id, name=item.name, color=item.color)
         db.add(existing)
@@ -63,9 +75,17 @@ async def push_tag(db: AsyncSession, user: User, item: SyncTag) -> dict:
 
 
 async def push_media(db: AsyncSession, user: User, item: SyncMedia) -> dict:
-    existing = await db.scalar(select(Media).where(Media.id == item.id, Media.user_id == user.id))
+    existing = await db.scalar(
+        select(Media).where(Media.id == item.id, Media.user_id == user.id)
+    )
     if existing is None:
-        existing = Media(id=item.id, user_id=user.id, entry_id=item.entry_id, url="", thumb_url="")
+        existing = Media(
+            id=item.id,
+            user_id=user.id,
+            entry_id=item.entry_id,
+            url="",
+            thumb_url="",
+        )
         db.add(existing)
     existing.entry_id = item.entry_id
     existing.sort_order = item.sort_order
@@ -88,7 +108,15 @@ async def push(
         entry_body = EntryRequest(**item.model_dump(exclude={"id"}))
         entry, result = await upsert_entry(db, user, item.id, entry_body)
         if result == "stale":
-            entries.append({"id": str(item.id), "status": "stale", "server_client_updated_at": entry.client_updated_at.isoformat() if entry.client_updated_at else None})
+            entries.append(
+                {
+                    "id": str(item.id),
+                    "status": "stale",
+                    "server_client_updated_at": (
+                        entry.client_updated_at.isoformat() if entry.client_updated_at else None
+                    ),
+                }
+            )
         else:
             entries.append({"id": str(item.id), "status": "applied"})
     for item in body.tags:
@@ -96,7 +124,14 @@ async def push(
     for item in body.media_meta:
         media_meta.append(await push_media(db, user, item))
     await db.commit()
-    return ok({"server_time": utcnow(), "entries": entries, "tags": tags, "media_meta": media_meta})
+    return ok(
+        {
+            "server_time": utcnow(),
+            "entries": entries,
+            "tags": tags,
+            "media_meta": media_meta,
+        }
+    )
 
 
 @router.get("/changes")
@@ -106,33 +141,97 @@ async def changes(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Envelope[dict]:
-    entry_query = select(DiaryEntry).where(DiaryEntry.user_id == user.id)
-    if since:
-        entry_query = entry_query.where(DiaryEntry.updated_at > since)
-    entries = list((await db.execute(entry_query.order_by(DiaryEntry.updated_at).limit(limit))).scalars())
+    if since is not None and since.tzinfo is not None:
+        since = since.astimezone(timezone.utc).replace(tzinfo=None)
+
+    query = select(DiaryEntry).where(DiaryEntry.user_id == user.id)
+    if since is not None:
+        query = query.where(DiaryEntry.updated_at > since)
+    page = list(
+        (
+            await db.execute(
+                query.order_by(DiaryEntry.updated_at, DiaryEntry.id).limit(limit + 1)
+            )
+        ).scalars()
+    )
+    has_more = len(page) > limit
+    entries = page[:limit]
     ids = [row.id for row in entries]
-    tag_rows = list((await db.execute(select(EntryTag).where(EntryTag.entry_id.in_(ids)))).scalars()) if ids else []
+
+    tag_rows = (
+        list(
+            (
+                await db.execute(select(EntryTag).where(EntryTag.entry_id.in_(ids)))
+            ).scalars()
+        )
+        if ids
+        else []
+    )
     tag_ids = {row.tag_id for row in tag_rows}
-    tags = list((await db.execute(select(Tag).where(Tag.user_id == user.id, Tag.id.in_(tag_ids)))).scalars()) if tag_ids else []
-    media = list((await db.execute(select(Media).where(Media.user_id == user.id, Media.entry_id.in_(ids)))).scalars()) if ids else []
+    tags = (
+        list(
+            (
+                await db.execute(
+                    select(Tag).where(Tag.user_id == user.id, Tag.id.in_(tag_ids))
+                )
+            ).scalars()
+        )
+        if tag_ids
+        else []
+    )
+    media = (
+        list(
+            (
+                await db.execute(
+                    select(Media).where(Media.user_id == user.id, Media.entry_id.in_(ids))
+                )
+            ).scalars()
+        )
+        if ids
+        else []
+    )
+
     tag_map: dict[uuid.UUID, list[uuid.UUID]] = {entry_id: [] for entry_id in ids}
     for row in tag_rows:
         tag_map.setdefault(row.entry_id, []).append(row.tag_id)
+
     entry_items = []
     for row in entries:
         item = to_response(row, tag_map.get(row.id, [])).model_dump(mode="json")
         item["updated_at"] = row.updated_at
         entry_items.append(item)
-    return ok({
-        "server_time": utcnow(),
-        "has_more": len(entries) == limit,
-        "entries": entry_items,
-        "tags": [
-            {"id": row.id, "name": row.name, "color": row.color, "created_at": row.created_at}
-            for row in tags
-        ],
-        "media_meta": [
-            {"id": row.id, "entry_id": row.entry_id, "sort_order": row.sort_order, "width": row.width, "height": row.height, "size": row.size, "mime": "", "url": row.url, "thumb_url": row.thumb_url or "", "created_at": row.created_at}
-            for row in media
-        ],
-    })
+
+    cursor = entries[-1].updated_at if has_more and entries else utcnow()
+    return ok(
+        {
+            "server_time": cursor,
+            "has_more": has_more,
+            "entries": entry_items,
+            "tags": [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "color": row.color,
+                    "created_at": row.created_at,
+                }
+                for row in tags
+            ],
+            "media_meta": [
+                {
+                    "id": row.id,
+                    "entry_id": row.entry_id,
+                    "sort_order": row.sort_order,
+                    "width": row.width,
+                    "height": row.height,
+                    "size": row.size,
+                    "mime": SUFFIX_MIME.get(
+                        Path(row.url).suffix.lower(), "application/octet-stream"
+                    ),
+                    "url": row.url,
+                    "thumb_url": row.thumb_url or "",
+                    "created_at": row.created_at,
+                }
+                for row in media
+            ],
+        }
+    )
