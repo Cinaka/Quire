@@ -1,5 +1,6 @@
 import logging
 import time
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -7,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
 from app.core.config import settings
@@ -14,8 +16,9 @@ from app.core.config import settings
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(settings.APP_NAME)
 
+Path(settings.MEDIA_ROOT).mkdir(parents=True, exist_ok=True)
 app = FastAPI(title=settings.APP_NAME, docs_url="/docs", openapi_url="/openapi.json")
-
+app.mount(settings.MEDIA_PUBLIC_PREFIX, StaticFiles(directory=settings.MEDIA_ROOT), name="media")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -36,24 +39,18 @@ async def log_requests(request: Request, call_next):
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exc_handler(_: Request, exc: StarletteHTTPException):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"code": exc.status_code, "message": str(exc.detail), "data": None},
-    )
+    return JSONResponse(status_code=exc.status_code, content={"code": exc.status_code, "message": str(exc.detail), "data": None})
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exc_handler(_: Request, exc: RequestValidationError):
-    return JSONResponse(
-        status_code=422,
-        content=jsonable_encoder(
-            {"code": 422, "message": "参数校验失败", "data": exc.errors()}
-        ),
-    )
+    return JSONResponse(status_code=422, content=jsonable_encoder({"code": 422, "message": "参数校验失败", "data": exc.errors()}))
+
+
 @app.exception_handler(Exception)
 async def unhandled_exc_handler(_: Request, exc: Exception):
     logger.exception("unhandled error: %s", exc)
-    return JSONResponse(
-        status_code=500, content={"code": 500, "message": "服务器内部错误", "data": None}
-    )
+    return JSONResponse(status_code=500, content={"code": 500, "message": "服务器内部错误", "data": None})
+
+
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
