@@ -13,15 +13,34 @@
       </label>
       <label>
         密码
-        <input v-model="password" type="password" minlength="8" autocomplete="current-password" required />
+        <input
+          v-model="password"
+          type="password"
+          minlength="8"
+          :autocomplete="registering ? 'new-password' : 'current-password'"
+          required
+        />
       </label>
       <label v-if="registering">
         再输一次密码
-        <input v-model="confirmPassword" type="password" minlength="8" autocomplete="new-password" required />
+        <input
+          v-model="confirmPassword"
+          type="password"
+          minlength="8"
+          autocomplete="new-password"
+          required
+        />
       </label>
       <p v-if="error" class="error">{{ error }}</p>
-      <button type="submit" :disabled="busy">{{ busy ? "处理中……" : registering ? "注册并同步" : "登录并同步" }}</button>
-      <button type="button" class="secondary" :disabled="busy" @click="registering = !registering">
+      <button type="submit" :disabled="busy">
+        {{ busy ? "处理中……" : registering ? "注册并同步" : "登录并同步" }}
+      </button>
+      <button
+        type="button"
+        class="secondary"
+        :disabled="busy"
+        @click="registering = !registering"
+      >
         {{ registering ? "已有账号？去登录" : "没有账号？去注册" }}
       </button>
     </form>
@@ -50,17 +69,25 @@ async function submit(): Promise<void> {
     error.value = "两次输入的密码不一致。"
     return
   }
+
   busy.value = true
   try {
     const user = registering.value
       ? await register(email.value, password.value)
       : await login(email.value, password.value)
     const claim = await claimLocalData(user.id)
+
     if (claim.kind === "ownerMismatch") {
-      const clear = window.confirm("当前浏览器已有另一个账号的数据。确定导出备份并清空本地，改用当前账号吗？")
+      const clear = window.confirm(
+        "当前浏览器已有另一个账号的数据。确定导出备份并清空本地，改用当前账号吗？",
+      )
       if (!clear) throw new Error("已取消切换账号")
       await resetLocalForNewOwner(user.id)
     }
+
+    // 第一轮对游客数据只 push，并把下一轮游标放在纪元；第二轮才全量 pull。
+    // 空的新设备第一轮已直接 pull，第二轮只是一次无变更的轻量检查。
+    await runSync()
     await runSync()
     await router.push("/")
   } catch (err) {
