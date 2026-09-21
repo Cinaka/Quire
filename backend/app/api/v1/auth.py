@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -16,7 +17,9 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.core.time import utcnow
 from app.db.session import get_db
+from app.models.refresh_session import RefreshSession
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
 
@@ -78,9 +81,27 @@ def clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(REFRESH_COOKIE, path=f"{settings.API_V1_PREFIX}/auth")
 
 
-async def issue_auth(response: Response, user: User) -> Envelope[AuthResponse]:
+async def new_refresh_session(db: AsyncSession, user: User) -> tuple[RefreshSession, str]:
+    session = RefreshSession(
+        id=new_id(),
+        user_id=user.id,
+        token_version=user.token_version,
+        expires_at=utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+    )
+    db.add(session)
+    await db.flush()
+    return session, create_refresh_token(user, session.id)
+
+
+async def issue_auth(
+    response: Response,
+    user: User,
+    db: AsyncSession,
+) -> Envelope[AuthResponse]:
     access = create_access_token(user)
-    set_refresh_cookie(response, create_refresh_token(user))
+    _, refresh = await new_refresh_session(db, user)
+    await db.commit()
+    set_refresh_cookie(response, refresh)
     return ok(
         AuthResponse(
             user=user_response(user),
@@ -107,9 +128,8 @@ async def register(
         timezone=body.timezone,
     )
     db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    return await issue_auth(response, user)
+    await db.flush()
+    return await issue_auth(response, user, db)
 
 
 @router.post("/login")
@@ -130,7 +150,7 @@ async def login(
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
 
     login_rate_limiter.clear(rate_key)
-    return await issue_auth(response, user)
+    return await issue_auth(response, user, db)
 
 
 @router.post("/refresh")
@@ -144,13 +164,33 @@ async def refresh(
     payload = decode_token(quire_refresh_token, "refresh")
     try:
         user_id = uuid.UUID(str(payload["sub"]))
+        session_id = uuid.UUID(str(payload["jti"]))
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail="用户标识无效") from exc
+        raise HTTPException(status_code=401, detail="刷新令牌无效") from exc
+
     user = await db.scalar(select(User).where(User.id == user_id))
-    if user is None or int(payload.get("tv", -1)) != user.token_version:
+    session = await db.scalar(
+        select(RefreshSession).where(
+            RefreshSession.id == session_id,
+            RefreshSession.user_id == user_id,
+        )
+    )
+    now = utcnow()
+    if (
+        user is None
+        or session is None
+        or session.revoked_at is not None
+        or session.expires_at <= now
+        or session.token_version != user.token_version
+        or int(payload.get("tv", -1)) != user.token_version
+    ):
         raise HTTPException(status_code=401, detail="刷新令牌已失效")
+
+    session.revoked_at = now
+    _, refresh_token = await new_refresh_session(db, user)
     access = create_access_token(user)
-    set_refresh_cookie(response, create_refresh_token(user))
+    await db.commit()
+    set_refresh_cookie(response, refresh_token)
     return ok(
         RefreshResponse(
             access_token=access,
@@ -160,7 +200,21 @@ async def refresh(
 
 
 @router.post("/logout")
-async def logout(response: Response) -> Envelope[None]:
+async def logout(
+    response: Response,
+    quire_refresh_token: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> Envelope[None]:
+    if quire_refresh_token:
+        try:
+            payload = decode_token(quire_refresh_token, "refresh")
+            session_id = uuid.UUID(str(payload["jti"]))
+            session = await db.scalar(select(RefreshSession).where(RefreshSession.id == session_id))
+            if session is not None and session.revoked_at is None:
+                session.revoked_at = utcnow()
+                await db.commit()
+        except (HTTPException, ValueError):
+            pass
     clear_refresh_cookie(response)
     return ok(None)
 

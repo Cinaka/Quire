@@ -25,17 +25,22 @@ def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
 
 
-def create_token(user: User, token_type: str, lifetime: timedelta) -> str:
-    # JWT NumericDate 必须使用 UTC Unix epoch。不能对 utcnow() 返回的无时区
-    # datetime 调 timestamp()：它会被解释成本机时区，东八区会令令牌早八小时过期。
+def create_token(
+    user: User,
+    token_type: str,
+    lifetime: timedelta,
+    extra: dict[str, object] | None = None,
+) -> str:
     now = int(time.time())
-    payload = {
+    payload: dict[str, object] = {
         "sub": str(user.id),
         "typ": token_type,
         "tv": user.token_version,
         "iat": now,
         "exp": now + int(lifetime.total_seconds()),
     }
+    if extra:
+        payload.update(extra)
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
@@ -47,11 +52,13 @@ def create_access_token(user: User) -> str:
     )
 
 
-def create_refresh_token(user: User) -> str:
+def create_refresh_token(user: User, session_id: uuid.UUID | None = None) -> str:
+    token_id = session_id or uuid.uuid4()
     return create_token(
         user,
         "refresh",
         timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        {"jti": str(token_id)},
     )
 
 
@@ -62,6 +69,8 @@ def decode_token(token: str, expected_type: str) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="令牌无效") from exc
     if payload.get("typ") != expected_type or not payload.get("sub"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="令牌类型无效")
+    if expected_type == "refresh" and not payload.get("jti"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新令牌无效")
     return payload
 
 
