@@ -7,7 +7,7 @@ import {
   toWireMediaMetaPush,
   toWireTag,
 } from "@/api/mappers"
-import type { WireMediaMeta, WireTag } from "@/api/wire"
+import type { PushItemResult, WireMediaMeta, WireTag } from "@/api/wire"
 import { db } from "@/db/schema"
 import { utcNow } from "@/shared/time"
 import type { Entry } from "@/shared/types"
@@ -15,6 +15,7 @@ import type { Entry } from "@/shared/types"
 const BATCH = 50
 const MAX_ERRORS = 3
 const FULL_PULL_CURSOR = "1970-01-01T00:00:00.000Z"
+const DUPLICATE_TAG_PREFIX = "duplicate_tag:"
 let running = false
 
 async function meta(key: string): Promise<string> {
@@ -58,6 +59,7 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
       mediaMeta: sendableMedia.map(toWireMediaMetaPush),
     })
     serverTime = result.serverTime
+    let reconciledDuplicate = false
 
     await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
       for (const item of result.entries) {
@@ -65,19 +67,47 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
         else if (item.status === "error") await noteError("entry", item.id, item.message)
       }
       for (const item of result.tags) {
-        if (item.status === "applied") await db.tags.update(item.id, { dirty: 0 })
+        if (item.status === "applied") {
+          await db.tags.update(item.id, { dirty: 0 })
+        } else if (await reconcileDuplicateTag(item)) {
+          reconciledDuplicate = true
+        } else if (item.status === "error") {
+          await noteError("tag", item.id, item.message)
+        }
       }
       for (const item of result.mediaMeta) {
         if (item.status === "applied") await db.media.update(item.id, { dirty: 0 })
+        else if (item.status === "error") await noteError("media", item.id, item.message)
       }
     })
 
     const progressed =
+      reconciledDuplicate ||
       result.entries.some((item) => item.status === "applied") ||
       result.tags.some((item) => item.status === "applied") ||
       result.mediaMeta.some((item) => item.status === "applied")
     if (!progressed) return { serverTime, complete: false, hadWork }
   }
+}
+
+async function reconcileDuplicateTag(item: PushItemResult): Promise<boolean> {
+  if (item.status !== "error" || !item.message?.startsWith(DUPLICATE_TAG_PREFIX)) return false
+  const canonicalId = item.message.slice(DUPLICATE_TAG_PREFIX.length)
+  if (!canonicalId || canonicalId === item.id) return false
+
+  const affected = await db.entries.where("tagIds").equals(item.id).toArray()
+  for (const entry of affected) {
+    const now = utcNow()
+    const tagIds = [...new Set(entry.tagIds.map((id) => (id === item.id ? canonicalId : id)))]
+    await db.entries.update(entry.id, {
+      tagIds,
+      updatedAt: now,
+      clientUpdatedAt: now,
+      dirty: 1,
+    })
+  }
+  await db.tags.delete(item.id)
+  return true
 }
 
 async function pullAll(since: string): Promise<void> {
@@ -112,12 +142,9 @@ export async function runSync(): Promise<void> {
     const since = await meta("lastSyncAt")
     if (!since) {
       if (pushed.hadWork) {
-        // bootstrap 本轮严格只 push。push 全部成功后把下一轮游标放在纪元，
-        // 这样既不会先下行覆盖游客数据，又能在下一轮合并账号原有云端历史。
         await db.meta.put({ key: "lastSyncAt", value: FULL_PULL_CURSOR })
         return
       }
-      // 空的新设备没有本地内容可被覆盖，可以在首次同步直接全量拉取。
       await pullAll(FULL_PULL_CURSOR)
       return
     }
