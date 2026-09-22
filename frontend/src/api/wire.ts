@@ -23,7 +23,7 @@ export interface WireTag {
 
 export interface WireMediaMeta {
   id: string
-  entry_id: string
+  entry_id: string | null
   sort_order: number
   width: number | null
   height: number | null
