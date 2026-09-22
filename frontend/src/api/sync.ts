@@ -44,6 +44,18 @@ async function errorRecords(): Promise<ErrorRecord[]> {
   return Array.isArray(row?.value) ? (row.value as ErrorRecord[]) : []
 }
 
+async function pendingPurgeIds(): Promise<Set<string>> {
+  const row = await db.meta.get("pendingPurges")
+  return new Set(Array.isArray(row?.value) ? (row.value as string[]) : [])
+}
+
+async function clearPendingPurges(ids: Set<string>): Promise<void> {
+  if (!ids.size) return
+  const current = await pendingPurgeIds()
+  for (const id of ids) current.delete(id)
+  await db.meta.put({ key: "pendingPurges", value: [...current] })
+}
+
 async function blockedIds(): Promise<Record<string, Set<string>>> {
   const blocked: Record<string, Set<string>> = {
     entry: new Set<string>(), tag: new Set<string>(), media: new Set<string>(),
@@ -87,7 +99,7 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
   let serverTime = ""
   let hadWork = false
   for (;;) {
-    const blocked = await blockedIds()
+    const [blocked, purges] = await Promise.all([blockedIds(), pendingPurgeIds()])
     const [allEntries, allTags, allMedia] = await Promise.all([
       db.entries.where("dirty").equals(1).toArray(),
       db.tags.where("dirty").equals(1).toArray(),
@@ -103,7 +115,6 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
 
     const uploadFailed = new Set<string>()
     for (const media of mediaMeta) {
-      // entryId 为空表示图片已从正文移除。只上报元数据让服务端清理，绝不重新上传文件。
       if (!media.entryId || media.blob.size === 0) continue
       try {
         await uploadMedia(media.id, media.blob, {
@@ -130,24 +141,39 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
     await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
       for (const item of result.entries) {
         if (item.status === "applied") {
-          await db.entries.update(item.id, { dirty: 0 }); await clearError("entry", item.id)
+          if (purges.has(item.id)) await db.entries.delete(item.id)
+          else await db.entries.update(item.id, { dirty: 0 })
+          await clearError("entry", item.id)
         } else if (item.status === "stale") {
           const local = await db.entries.get(item.id)
-          if (local) { await stashConflict(local); await db.entries.update(item.id, { dirty: 0 }) }
+          if (local) {
+            await stashConflict(local)
+            await db.entries.update(item.id, { dirty: 0 })
+          }
+          await clearPendingPurges(new Set([item.id]))
           await clearError("entry", item.id)
-        } else if (item.status === "error") await noteError("entry", item.id, item.message)
+        } else if (item.status === "error") {
+          await noteError("entry", item.id, item.message)
+        }
       }
       for (const item of result.tags) {
         if (item.status === "applied") {
-          await db.tags.update(item.id, { dirty: 0 }); await clearError("tag", item.id)
+          await db.tags.update(item.id, { dirty: 0 })
+          await clearError("tag", item.id)
         } else if (await reconcileDuplicateTag(item)) {
-          reconciledDuplicate = true; await clearError("tag", item.id)
-        } else if (item.status === "error") await noteError("tag", item.id, item.message)
+          reconciledDuplicate = true
+          await clearError("tag", item.id)
+        } else if (item.status === "error") {
+          await noteError("tag", item.id, item.message)
+        }
       }
       for (const item of result.mediaMeta) {
         if (item.status === "applied") {
-          await db.media.update(item.id, { dirty: 0 }); await clearError("media", item.id)
-        } else if (item.status === "error") await noteError("media", item.id, item.message)
+          await db.media.update(item.id, { dirty: 0 })
+          await clearError("media", item.id)
+        } else if (item.status === "error") {
+          await noteError("media", item.id, item.message)
+        }
       }
     })
 
@@ -178,22 +204,29 @@ async function reconcileDuplicateTag(item: PushItemResult): Promise<boolean> {
 async function pullAll(since: string): Promise<void> {
   let cursor = since
   let afterId = ""
+  const purges = await pendingPurgeIds()
   for (;;) {
     const result = await pullChanges({ since: cursor, afterId: afterId || undefined, limit: 200 })
     await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
       for (const wire of result.entries) {
+        if (purges.has(wire.id)) continue
         const incoming: Entry = fromWireEntry(wire)
         const local = await db.entries.get(incoming.id)
-        if (!local) { await db.entries.put({ ...incoming, dirty: 0 }); continue }
+        if (!local) {
+          await db.entries.put({ ...incoming, dirty: 0 })
+          continue
+        }
         if (local.dirty === 1) {
           if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
-            await stashConflict(local, incoming); await db.entries.put({ ...incoming, dirty: 0 })
+            await stashConflict(local, incoming)
+            await db.entries.put({ ...incoming, dirty: 0 })
           }
           continue
         }
         await attachServerConflict(incoming)
         if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
-          await stashConflict(local, incoming); await db.entries.put({ ...incoming, dirty: 0 })
+          await stashConflict(local, incoming)
+          await db.entries.put({ ...incoming, dirty: 0 })
         }
       }
       await mergeTags(result.tags)
@@ -204,6 +237,7 @@ async function pullAll(since: string): Promise<void> {
     if (!result.hasMore) break
   }
   await db.meta.put({ key: "lastSyncAt", value: cursor })
+  await clearPendingPurges(purges)
 }
 
 export async function runSync(): Promise<void> {
@@ -214,12 +248,17 @@ export async function runSync(): Promise<void> {
     if (!pushed.complete) return
     const since = await meta("lastSyncAt")
     if (!since) {
-      if (pushed.hadWork) { await db.meta.put({ key: "lastSyncAt", value: FULL_PULL_CURSOR }); return }
+      if (pushed.hadWork) {
+        await db.meta.put({ key: "lastSyncAt", value: FULL_PULL_CURSOR })
+        return
+      }
       await pullAll(FULL_PULL_CURSOR)
       return
     }
     await pullAll(since)
-  } finally { running = false }
+  } finally {
+    running = false
+  }
 }
 
 async function noteError(kind: string, id: string, message?: string): Promise<void> {
@@ -241,7 +280,10 @@ async function mergeTags(rows: WireTag[]): Promise<void> {
   for (const wire of rows) {
     const incoming = fromWireTag(wire)
     const local = await db.tags.get(wire.id)
-    if (local) { if (local.dirty === 0) await db.tags.put(incoming); continue }
+    if (local) {
+      if (local.dirty === 0) await db.tags.put(incoming)
+      continue
+    }
     if (await db.tags.where("name").equals(wire.name).first()) continue
     await db.tags.put(incoming)
   }
@@ -253,13 +295,26 @@ async function mergeMediaMeta(rows: WireMediaMeta[]): Promise<void> {
     const local = await db.media.get(wire.id)
     if (local) {
       if (local.dirty === 1) {
-        await db.media.update(wire.id, { remoteUrl: patch.remoteUrl, thumbRemoteUrl: patch.thumbRemoteUrl })
-      } else await db.media.update(wire.id, patch)
+        await db.media.update(wire.id, {
+          remoteUrl: patch.remoteUrl,
+          thumbRemoteUrl: patch.thumbRemoteUrl,
+        })
+      } else {
+        await db.media.update(wire.id, patch)
+      }
     } else {
       await db.media.put({
-        id: wire.id, blob: new Blob([], { type: wire.mime }), thumbBlob: null,
-        mime: wire.mime, width: wire.width, height: wire.height, size: wire.size,
-        createdAt: wire.created_at, dirty: 0, orphanedAt: null, ...patch,
+        id: wire.id,
+        blob: new Blob([], { type: wire.mime }),
+        thumbBlob: null,
+        mime: wire.mime,
+        width: wire.width,
+        height: wire.height,
+        size: wire.size,
+        createdAt: wire.created_at,
+        dirty: 0,
+        orphanedAt: null,
+        ...patch,
       })
     }
   }
