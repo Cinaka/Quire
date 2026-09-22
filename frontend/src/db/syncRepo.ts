@@ -18,9 +18,19 @@ export interface SyncErrorItem {
   at: string
 }
 
+export interface PendingSyncItem {
+  kind: "entry" | "tag" | "media"
+  id: string
+  label: string
+  detail: string
+}
+
 export interface SyncStatus {
   ownerUserId: string
   lastSyncAt: string
+  dirtyEntries: number
+  dirtyTags: number
+  dirtyMedia: number
   dirtyTotal: number
   conflictCount: number
   errorCount: number
@@ -71,10 +81,41 @@ export const localSyncRepo = {
     return {
       ownerUserId: typeof owner?.value === "string" ? owner.value : "",
       lastSyncAt: typeof cursor?.value === "string" ? cursor.value : "",
+      dirtyEntries: entries,
+      dirtyTags: tags,
+      dirtyMedia: media,
       dirtyTotal: entries + tags + media,
       conflictCount: arrayValue<unknown>(conflicts?.value).length,
       errorCount: arrayValue<SyncErrorItem>(errors?.value).length,
     }
+  },
+
+  async pending(): Promise<PendingSyncItem[]> {
+    const [entries, tags, media] = await Promise.all([
+      db.entries.where("dirty").equals(1).toArray(),
+      db.tags.where("dirty").equals(1).toArray(),
+      db.media.where("dirty").equals(1).toArray(),
+    ])
+    return [
+      ...entries.map((item): PendingSyncItem => ({
+        kind: "entry",
+        id: item.id,
+        label: item.title || "无题日记",
+        detail: `${item.entryDate}${item.isDeleted ? " · 待同步删除" : " · 待上传正文"}`,
+      })),
+      ...tags.map((item): PendingSyncItem => ({
+        kind: "tag",
+        id: item.id,
+        label: `#${item.name}`,
+        detail: "待上传标签",
+      })),
+      ...media.map((item): PendingSyncItem => ({
+        kind: "media",
+        id: item.id,
+        label: `图片 ${item.id.slice(0, 8)}`,
+        detail: `${item.entryId ? "已关联日记" : "未关联"} · ${item.size} bytes`,
+      })),
+    ]
   },
 
   async conflicts(): Promise<SyncConflict[]> {

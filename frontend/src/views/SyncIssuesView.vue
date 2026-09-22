@@ -7,6 +7,21 @@
     </header>
 
     <section class="card">
+      <div class="section-head">
+        <h2>待处理上传</h2>
+        <button v-if="pending.length" type="button" :disabled="busy" @click="retryAll">
+          {{ busy ? "同步中……" : "重新同步" }}
+        </button>
+      </div>
+      <p v-if="!pending.length" class="note">暂无待上传项目。</p>
+      <article v-for="item in pending" :key="`${item.kind}:${item.id}`" class="issue">
+        <strong>{{ item.label }}</strong>
+        <p>{{ kindLabel(item.kind) }} · {{ item.detail }}</p>
+        <code>{{ item.id }}</code>
+      </article>
+    </section>
+
+    <section class="card">
       <h2>冲突留档</h2>
       <p v-if="!conflicts.length" class="note">暂无冲突。</p>
       <article v-for="item in conflicts" :key="`${item.entryId}:${item.at}`" class="issue">
@@ -16,12 +31,7 @@
         <p v-else>云端版本尚未拉取；可以先保留本地并重新上传。</p>
         <div class="actions">
           <button type="button" @click="resolve(item.entryId, 'local')">保留本地</button>
-          <button
-            v-if="item.server"
-            type="button"
-            class="danger"
-            @click="resolve(item.entryId, 'server')"
-          >
+          <button v-if="item.server" type="button" class="danger" @click="resolve(item.entryId, 'server')">
             采用云端
           </button>
         </div>
@@ -45,19 +55,42 @@ import { onMounted, ref } from "vue"
 import { useRouter } from "vue-router"
 
 import { runSync } from "@/api/sync"
-import { syncRepo, type SyncConflict, type SyncErrorItem } from "@/repo"
+import {
+  syncRepo,
+  type PendingSyncItem,
+  type SyncConflict,
+  type SyncErrorItem,
+} from "@/repo"
 
 const router = useRouter()
+const pending = ref<PendingSyncItem[]>([])
 const conflicts = ref<SyncConflict[]>([])
 const errors = ref<SyncErrorItem[]>([])
+const busy = ref(false)
+
+function kindLabel(kind: PendingSyncItem["kind"]): string {
+  return { entry: "日记", tag: "标签", media: "图片" }[kind]
+}
 
 async function load(): Promise<void> {
-  const [nextConflicts, nextErrors] = await Promise.all([
+  const [nextPending, nextConflicts, nextErrors] = await Promise.all([
+    syncRepo.pending(),
     syncRepo.conflicts(),
     syncRepo.errors(),
   ])
+  pending.value = nextPending
   conflicts.value = nextConflicts
   errors.value = nextErrors
+}
+
+async function retryAll(): Promise<void> {
+  busy.value = true
+  try {
+    await runSync()
+    await load()
+  } finally {
+    busy.value = false
+  }
 }
 
 async function resolve(entryId: string, strategy: "local" | "server"): Promise<void> {
@@ -78,7 +111,7 @@ onMounted(() => void load())
 </script>
 
 <style scoped>
-.head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.head, .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h1, h2 { margin: 0; font-family: var(--font-cn-serif); font-weight: normal; font-size: 20px; }
 .spacer { width: 32px; }
 .plain { padding: 6px 2px; border: 0; background: none; color: var(--color-ink-soft); cursor: pointer; }
@@ -86,7 +119,9 @@ h1, h2 { margin: 0; font-family: var(--font-cn-serif); font-weight: normal; font
 .issue { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
 .issue strong { color: var(--color-ink); font-size: 15px; overflow-wrap: anywhere; }
 .issue p, .note { margin: 6px 0; color: var(--color-ink-faint); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.issue code { color: var(--color-ink-faint); font-size: 10px; overflow-wrap: anywhere; }
 .actions { display: flex; gap: 8px; }
 button { padding: 7px 10px; border: 1px solid var(--line-soft); border-radius: var(--radius-card); background: transparent; color: var(--color-ink-soft); cursor: pointer; }
 button.danger { color: var(--color-ji); }
+button:disabled { opacity: 0.5; cursor: default; }
 </style>

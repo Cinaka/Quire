@@ -12,7 +12,13 @@
         <dl class="kv">
           <div><dt>本地归属</dt><dd>{{ status.ownerUserId || "读取中" }}</dd></div>
           <div><dt>上次同步</dt><dd>{{ status.lastSyncAt || "尚未完成" }}</dd></div>
-          <div><dt>待上传</dt><dd>{{ status.dirtyTotal }} 项</dd></div>
+          <div>
+            <dt>待上传</dt>
+            <dd>
+              {{ status.dirtyTotal }} 项
+              <small>日记 {{ status.dirtyEntries }} / 标签 {{ status.dirtyTags }} / 图片 {{ status.dirtyMedia }}</small>
+            </dd>
+          </div>
           <div><dt>冲突留档</dt><dd>{{ status.conflictCount }} 项</dd></div>
           <div><dt>同步错误</dt><dd>{{ status.errorCount }} 项</dd></div>
         </dl>
@@ -29,17 +35,10 @@
         >
           查看待处理项、冲突与错误
         </button>
-        <button
-          type="button"
-          class="secondary"
-          :disabled="busy"
-          @click="router.push('/sync/sessions')"
-        >
+        <button type="button" class="secondary" :disabled="busy" @click="router.push('/sync/sessions')">
           管理登录设备
         </button>
-        <button type="button" class="secondary" :disabled="busy" @click="signOut">
-          退出登录
-        </button>
+        <button type="button" class="secondary" :disabled="busy" @click="signOut">退出登录</button>
       </template>
       <template v-else>
         <p class="note">尚未登录。登录后，本地简册会先备份，再安全上行。</p>
@@ -49,9 +48,7 @@
 
     <section class="card">
       <h2>本地优先</h2>
-      <p class="note">
-        IndexedDB 始终是当前设备的权威副本。同步顺序固定为先推后拉，未上传的本地内容不会被云端覆盖。
-      </p>
+      <p class="note">IndexedDB 始终是当前设备的权威副本。同步顺序固定为先推后拉，未上传的本地内容不会被云端覆盖。</p>
     </section>
   </main>
 </template>
@@ -69,6 +66,9 @@ const loggedIn = ref(isLoggedIn())
 const status = ref<SyncStatus>({
   ownerUserId: "",
   lastSyncAt: "",
+  dirtyEntries: 0,
+  dirtyTags: 0,
+  dirtyMedia: 0,
   dirtyTotal: 0,
   conflictCount: 0,
   errorCount: 0,
@@ -123,15 +123,15 @@ onMounted(() => void refresh())
 
 <style scoped>
 .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.head h1, .card h2 { margin: 0; font-family: var(--font-cn-serif); font-weight: normal; color: var(--color-ink); }
-.head h1, .card h2 { font-size: 20px; }
+.head h1, .card h2 { margin: 0; font-family: var(--font-cn-serif); font-weight: normal; color: var(--color-ink); font-size: 20px; }
 .spacer { width: 32px; }
 .plain { padding: 6px 2px; border: 0; background: none; color: var(--color-ink-soft); cursor: pointer; }
 .card { margin-top: 16px; padding: 14px; border: 1px solid var(--line-soft); border-radius: var(--radius-card); background: var(--color-paper-deep); }
 .kv { margin: 10px 0; }
 .kv div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; }
 .kv dt { color: var(--color-ink-faint); font-size: 12px; }
-.kv dd { margin: 0; max-width: 70%; overflow-wrap: anywhere; color: var(--color-ink); font-size: 12px; text-align: right; }
+.kv dd { margin: 0; max-width: 72%; overflow-wrap: anywhere; color: var(--color-ink); font-size: 12px; text-align: right; }
+.kv small { display: block; margin-top: 2px; color: var(--color-ink-faint); }
 .note, .message { color: var(--color-ink-faint); font-size: 12px; line-height: 1.6; }
 .message { color: var(--color-bamboo); }
 .message.bad { color: var(--color-ji); }
