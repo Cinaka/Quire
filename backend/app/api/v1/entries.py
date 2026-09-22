@@ -7,7 +7,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
-from app.core.time import utcnow
+from app.core.time import as_utc_naive, utcnow
 from app.db.session import get_db
 from app.models.diary_entry import DiaryEntry
 from app.models.entry_tag import EntryTag
@@ -72,7 +72,12 @@ async def upsert_entry(
     entry = await db.scalar(
         select(DiaryEntry).where(DiaryEntry.id == entry_id, DiaryEntry.user_id == user.id)
     )
-    if entry is not None and entry.client_updated_at and body.client_updated_at <= entry.client_updated_at:
+    incoming_updated_at = as_utc_naive(body.client_updated_at)
+    if (
+        entry is not None
+        and entry.client_updated_at
+        and incoming_updated_at <= entry.client_updated_at
+    ):
         return entry, "stale"
     if entry is None:
         entry = DiaryEntry(id=entry_id, user_id=user.id)
@@ -85,8 +90,8 @@ async def upsert_entry(
     entry.mood = body.mood
     entry.weather = body.weather
     entry.from_schedule_id = body.from_schedule_id
-    entry.client_updated_at = body.client_updated_at
-    entry.deleted_at = body.deleted_at
+    entry.client_updated_at = incoming_updated_at
+    entry.deleted_at = as_utc_naive(body.deleted_at) if body.deleted_at else None
     await db.flush()
     await db.execute(delete(EntryTag).where(EntryTag.entry_id == entry_id))
     for tag_id in set(body.tag_ids):
@@ -112,17 +117,37 @@ async def list_entries(
     else:
         query = query.where(DiaryEntry.deleted_at.is_(None))
     if keyword:
-        query = query.where((DiaryEntry.title.contains(keyword)) | (DiaryEntry.content_text.contains(keyword)))
+        query = query.where(
+            (DiaryEntry.title.contains(keyword))
+            | (DiaryEntry.content_text.contains(keyword))
+        )
     if date_from:
         query = query.where(DiaryEntry.entry_date >= date_from)
     if date_to:
         query = query.where(DiaryEntry.entry_date <= date_to)
     if tag_id:
-        query = query.join(EntryTag, EntryTag.entry_id == DiaryEntry.id).where(EntryTag.tag_id == tag_id)
+        query = query.join(EntryTag, EntryTag.entry_id == DiaryEntry.id).where(
+            EntryTag.tag_id == tag_id
+        )
     total = await db.scalar(select(func.count()).select_from(query.subquery())) or 0
-    rows = list((await db.execute(query.order_by(DiaryEntry.entry_date.desc(), DiaryEntry.sort_order.desc()).offset((page - 1) * page_size).limit(page_size))).scalars())
+    rows = list(
+        (
+            await db.execute(
+                query.order_by(
+                    DiaryEntry.entry_date.desc(), DiaryEntry.sort_order.desc()
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        ).scalars()
+    )
     mapping = await tag_map(db, [row.id for row in rows])
-    return paged([to_response(row, mapping.get(row.id, [])) for row in rows], total, page, page_size)
+    return paged(
+        [to_response(row, mapping.get(row.id, [])) for row in rows],
+        total,
+        page,
+        page_size,
+    )
 
 
 @router.get("/{entry_id}")
@@ -131,7 +156,11 @@ async def get_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Envelope[EntryResponse]:
-    entry = await db.scalar(select(DiaryEntry).where(DiaryEntry.id == entry_id, DiaryEntry.user_id == user.id))
+    entry = await db.scalar(
+        select(DiaryEntry).where(
+            DiaryEntry.id == entry_id, DiaryEntry.user_id == user.id
+        )
+    )
     if entry is None:
         raise HTTPException(status_code=404, detail="日记不存在")
     mapping = await tag_map(db, [entry.id])
@@ -161,13 +190,22 @@ async def delete_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Envelope[EntryResponse]:
-    entry = await db.scalar(select(DiaryEntry).where(DiaryEntry.id == entry_id, DiaryEntry.user_id == user.id))
+    entry = await db.scalar(
+        select(DiaryEntry).where(
+            DiaryEntry.id == entry_id, DiaryEntry.user_id == user.id
+        )
+    )
     if entry is None:
         raise HTTPException(status_code=404, detail="日记不存在")
     client_updated_at = body.get("client_updated_at")
     if not client_updated_at:
         raise HTTPException(status_code=422, detail="缺少 client_updated_at")
-    parsed = datetime.fromisoformat(str(client_updated_at).replace("Z", "+00:00")).replace(tzinfo=None)
+    try:
+        parsed = as_utc_naive(
+            datetime.fromisoformat(str(client_updated_at).replace("Z", "+00:00"))
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="client_updated_at 格式无效") from exc
     if entry.client_updated_at and parsed <= entry.client_updated_at:
         raise HTTPException(status_code=409, detail="服务端已有更新版本")
     entry.client_updated_at = parsed
