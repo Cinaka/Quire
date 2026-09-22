@@ -3,10 +3,13 @@
     <header class="head">
       <button type="button" class="plain" @click="router.push('/settings')">设置</button>
       <h1 class="page-title">断简</h1>
-      <button v-if="items.length" type="button" class="plain danger" @click="purgeAll">尽弃</button>
+      <button v-if="items.length" type="button" class="plain danger" :disabled="purgingAll" @click="purgeAll">
+        {{ purgingAll ? "弃去中……" : "尽弃" }}
+      </button>
     </header>
 
     <p class="note">残简可复原。彻底弃去会先同步墓碑，确认上云后再从当前设备清除。</p>
+    <p v-if="actionError" class="error">{{ actionError }}</p>
     <p v-if="loading && !items.length" class="hint">检简中……</p>
 
     <template v-else-if="items.length">
@@ -18,8 +21,10 @@
             <span class="row-snippet">{{ digest(e) }}</span>
           </div>
           <div class="row-act">
-            <button type="button" class="plain accent" @click="restore(e.id)">复原</button>
-            <button type="button" class="plain danger" @click="purge(e.id)">弃去</button>
+            <button type="button" class="plain accent" :disabled="busyIds.has(e.id)" @click="restore(e.id)">复原</button>
+            <button type="button" class="plain danger" :disabled="busyIds.has(e.id)" @click="purge(e.id)">
+              {{ busyIds.has(e.id) ? "弃去中……" : "弃去" }}
+            </button>
           </div>
         </li>
       </ul>
@@ -33,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from "vue"
+import { onMounted, reactive, ref } from "vue"
 import { useRouter } from "vue-router"
 
 import { useEntryList } from "@/composables/useEntryList"
@@ -43,6 +48,9 @@ import type { EntryListItem } from "@/shared/types"
 
 const router = useRouter()
 const { items, loading, hasMore, page, reload, loadMore } = useEntryList({ onlyDeleted: true })
+const busyIds = reactive(new Set<string>())
+const purgingAll = ref(false)
+const actionError = ref("")
 
 onMounted(() => { void reload() })
 
@@ -61,25 +69,55 @@ function digest(e: EntryListItem): string {
 }
 
 async function restore(id: string): Promise<void> {
-  await entryRepo.restore(id)
-  await reload()
+  if (busyIds.has(id)) return
+  busyIds.add(id)
+  actionError.value = ""
+  try {
+    await entryRepo.restore(id)
+    await reload()
+  } catch (error) {
+    actionError.value = `复原失败：${(error as Error).message}`
+  } finally {
+    busyIds.delete(id)
+  }
 }
 
 async function purge(id: string): Promise<void> {
-  if (!window.confirm("彻底弃去这一简？确认同步后，本机正文与图片将不可复原。")) return
-  await entryRepo.purge(id)
-  await reload()
+  if (busyIds.has(id) || !window.confirm("彻底弃去这一简？确认同步后，本机正文与图片将不可复原。")) return
+  busyIds.add(id)
+  actionError.value = ""
+
+  // 先更新当前列表，避免 IndexedDB 写入和后台同步期间看起来“点击无反应”。
+  // 若写入失败，reload 会恢复该项，并把真实错误显示出来。
+  items.value = items.value.filter((entry) => entry.id !== id)
+  try {
+    await entryRepo.purge(id)
+    await reload()
+  } catch (error) {
+    actionError.value = `弃去失败：${(error as Error).message}`
+    await reload()
+  } finally {
+    busyIds.delete(id)
+  }
 }
 
 async function purgeAll(): Promise<void> {
-  if (!window.confirm("清空断简？全部残简会先同步墓碑，之后从本机清除。")) return
-  // pendingPurges 会立刻从断简列表隐藏，所以每轮继续读取第一页即可自然前进。
-  for (;;) {
-    const next = await entryRepo.list({ onlyDeleted: true, pageSize: 50 })
-    if (!next.items.length) break
-    for (const entry of next.items) await entryRepo.purge(entry.id)
+  if (purgingAll.value || !window.confirm("清空断简？全部残简会先同步墓碑，之后从本机清除。")) return
+  purgingAll.value = true
+  actionError.value = ""
+  try {
+    for (;;) {
+      const next = await entryRepo.list({ onlyDeleted: true, pageSize: 50 })
+      if (!next.items.length) break
+      for (const entry of next.items) await entryRepo.purge(entry.id)
+    }
+    await reload()
+  } catch (error) {
+    actionError.value = `尽弃失败：${(error as Error).message}`
+    await reload()
+  } finally {
+    purgingAll.value = false
   }
-  await reload()
 }
 </script>
 
@@ -89,7 +127,8 @@ async function purgeAll(): Promise<void> {
 .plain { padding: 6px 2px; border: none; background: none; font-size: 15px; line-height: 1.7; color: var(--color-ink-soft); cursor: pointer; }
 .accent { color: var(--color-bamboo); }
 .danger { color: var(--color-ji); }
-.note, .hint { margin: 8px 0 4px; font-size: 12px; line-height: 1.6; color: var(--color-ink-faint); }
+.note, .hint, .error { margin: 8px 0 4px; font-size: 12px; line-height: 1.6; color: var(--color-ink-faint); }
+.error { color: var(--color-ji); }
 .hint { margin: 16px 0; text-align: center; }
 .list { margin: 0; padding: 0; list-style: none; }
 .row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
@@ -101,4 +140,5 @@ async function purgeAll(): Promise<void> {
 .more { display: block; width: 100%; margin: 20px 0; padding: 10px; border: 1px solid var(--line-soft); border-radius: var(--radius-card); background: none; font-family: var(--font-cn-kai); font-size: 15px; line-height: 1.7; color: var(--color-ink-soft); cursor: pointer; }
 .end { margin: 20px 0; font-family: var(--font-cn-kai); font-size: 12px; line-height: 1.6; text-align: center; color: var(--color-ink-faint); }
 .empty { margin: 48px 0; font-family: var(--font-cn-kai); font-size: 15px; line-height: 1.7; text-align: center; color: var(--color-ink-faint); }
+button:disabled { opacity: 0.5; cursor: default; }
 </style>
