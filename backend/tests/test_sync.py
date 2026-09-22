@@ -8,8 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 os.environ.setdefault("MYSQL_PASSWORD", "test-only")
 os.environ.setdefault("JWT_SECRET", "test-only-secret")
 
-from app.api.v1.sync import SyncMedia, push_media, remove_media_files
+from app.api.v1.sync import SyncMedia, push_media
 from app.core.config import settings
+from app.core.media_storage import media_disk_paths, remove_media_paths
 from app.models.media import Media
 
 USER_ID = uuid.UUID("0198f2a1-4b3c-7000-8000-abcdef123456")
@@ -34,7 +35,7 @@ def test_sync_media_accepts_null_entry_id() -> None:
     assert media_payload(None).entry_id is None
 
 
-def test_remove_media_files_deletes_original_and_thumbnail(tmp_path, monkeypatch) -> None:
+def test_remove_media_paths_deletes_original_and_thumbnail(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
     monkeypatch.setattr(settings, "MEDIA_PUBLIC_PREFIX", "/media")
     folder = tmp_path / str(USER_ID)
@@ -43,21 +44,18 @@ def test_remove_media_files_deletes_original_and_thumbnail(tmp_path, monkeypatch
     thumbnail = folder / "image.thumb.webp"
     original.write_bytes(b"original")
     thumbnail.write_bytes(b"thumbnail")
-    row = Media(
-        id=MEDIA_ID,
-        user_id=USER_ID,
-        entry_id=ENTRY_ID,
-        url=f"/media/{USER_ID}/image.webp",
-        thumb_url=f"/media/{USER_ID}/image.thumb.webp",
-    )
 
-    remove_media_files(row)
+    paths = media_disk_paths(
+        f"/media/{USER_ID}/image.webp",
+        f"/media/{USER_ID}/image.thumb.webp",
+    )
+    remove_media_paths(paths)
 
     assert not original.exists()
     assert not thumbnail.exists()
 
 
-def test_push_media_unlink_deletes_row_and_files(tmp_path, monkeypatch) -> None:
+def test_push_media_unlink_defers_files_until_after_commit(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
     monkeypatch.setattr(settings, "MEDIA_PUBLIC_PREFIX", "/media")
     folder = tmp_path / str(USER_ID)
@@ -80,11 +78,15 @@ def test_push_media_unlink_deletes_row_and_files(tmp_path, monkeypatch) -> None:
     )
     user = SimpleNamespace(id=USER_ID)
 
-    result = asyncio.run(push_media(db, user, media_payload(None)))
+    result, paths = asyncio.run(push_media(db, user, media_payload(None)))
 
     assert result == {"id": str(MEDIA_ID), "status": "applied"}
     db.delete.assert_awaited_once_with(row)
     db.execute.assert_awaited_once()
+    assert original.exists()
+    assert thumbnail.exists()
+
+    remove_media_paths(paths)
     assert not original.exists()
     assert not thumbnail.exists()
 
@@ -98,11 +100,20 @@ def test_push_unknown_orphan_is_idempotent() -> None:
     )
     user = SimpleNamespace(id=USER_ID)
 
-    first = asyncio.run(push_media(db, user, media_payload(None)))
-    second = asyncio.run(push_media(db, user, media_payload(None)))
+    first, first_paths = asyncio.run(push_media(db, user, media_payload(None)))
+    second, second_paths = asyncio.run(push_media(db, user, media_payload(None)))
 
     assert first["status"] == "applied"
     assert second["status"] == "applied"
+    assert first_paths == []
+    assert second_paths == []
     db.delete.assert_not_awaited()
     db.execute.assert_not_awaited()
     db.add.assert_not_called()
+
+
+def test_media_path_mapping_rejects_paths_outside_public_prefix(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
+    monkeypatch.setattr(settings, "MEDIA_PUBLIC_PREFIX", "/media")
+
+    assert media_disk_paths("/other/file.webp", "/media/../../outside.webp") == []
