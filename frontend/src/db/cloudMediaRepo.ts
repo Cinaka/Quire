@@ -3,7 +3,7 @@ import type { MediaItem } from "@/shared/types"
 import { localMediaRepo } from "./mediaRepo"
 import { db } from "./schema"
 
-function isImageBlob(blob: Blob | null | undefined): blob is Blob {
+function isImageBlob(blob: Blob | null | undefined): boolean {
   return Boolean(blob && blob.size > 0 && blob.type.toLowerCase().startsWith("image/"))
 }
 
@@ -56,7 +56,7 @@ export const localFirstMediaRepo = {
   async getThumb(id: string): Promise<Blob | undefined> {
     const item = await localMediaRepo.get(id)
     if (!item) return undefined
-    if (isImageBlob(item.thumbBlob)) return item.thumbBlob
+    if (isImageBlob(item.thumbBlob)) return item.thumbBlob ?? undefined
 
     if (item.thumbRemoteUrl) {
       const thumb = await download(item.thumbRemoteUrl)
