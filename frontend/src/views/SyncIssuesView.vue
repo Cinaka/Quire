@@ -31,13 +31,35 @@
           </button>
         </div>
       </div>
-      <p v-if="conflicts.length" class="note">批量操作会一次处理当前列表中的全部冲突，请先确认选择方向。</p>
+      <p v-if="conflicts.length" class="note">冲突留档保留 30 天、最多 100 条。请比较两侧内容后再选择版本。</p>
       <p v-else class="note">暂无冲突。</p>
+
       <article v-for="item in conflicts" :key="`${item.entryId}:${item.at}`" class="issue">
         <strong>{{ item.local.title || item.server?.title || "无题" }}</strong>
-        <p>本地编辑于 {{ item.local.clientUpdatedAt }}</p>
-        <p v-if="item.server">云端编辑于 {{ item.server.clientUpdatedAt }}</p>
-        <p v-else>云端版本尚未拉取；可以先保留本地并重新上传。</p>
+        <div class="compare">
+          <section class="version local-version">
+            <div class="version-head">
+              <b>本地版本</b>
+              <span>{{ stateLabel(item.local) }}</span>
+            </div>
+            <p class="version-title">{{ item.local.title.trim() || "无题" }}</p>
+            <p class="preview">{{ preview(item.local) }}</p>
+            <small>编辑于 {{ item.local.clientUpdatedAt }}</small>
+          </section>
+
+          <section class="version server-version">
+            <template v-if="item.server">
+              <div class="version-head">
+                <b>云端版本</b>
+                <span>{{ stateLabel(item.server) }}</span>
+              </div>
+              <p class="version-title">{{ item.server.title.trim() || "无题" }}</p>
+              <p class="preview">{{ preview(item.server) }}</p>
+              <small>编辑于 {{ item.server.clientUpdatedAt }}</small>
+            </template>
+            <p v-else class="preview">云端版本尚未拉取，可以先保留本地并重新上传。</p>
+          </section>
+        </div>
         <div class="actions">
           <button type="button" :disabled="busy" @click="resolve(item.entryId, 'local')">保留本地</button>
           <button v-if="item.server" type="button" class="danger" :disabled="busy" @click="resolve(item.entryId, 'server')">采用云端</button>
@@ -66,6 +88,7 @@ import { useRouter } from "vue-router"
 
 import { runSync } from "@/api/sync"
 import { syncRepo, type PendingSyncItem, type SyncConflict, type SyncErrorItem } from "@/repo"
+import type { Entry } from "@/shared/types"
 
 const router = useRouter()
 const pending = ref<PendingSyncItem[]>([])
@@ -76,6 +99,16 @@ const hasAllServer = computed(() => conflicts.value.every((item) => Boolean(item
 
 function kindLabel(kind: PendingSyncItem["kind"]): string {
   return { entry: "日记", tag: "标签", media: "图片" }[kind]
+}
+
+function stateLabel(entry: Entry): string {
+  return entry.isDeleted ? "已删除" : "正文"
+}
+
+function preview(entry: Entry): string {
+  const text = entry.contentText.replace(/\s+/g, " ").trim()
+  if (!text) return entry.isDeleted ? "（删除墓碑）" : "（无正文）"
+  return text.length > 240 ? `${text.slice(0, 240)}…` : text
 }
 
 async function load(): Promise<void> {
@@ -89,7 +122,12 @@ async function load(): Promise<void> {
 
 async function retryAll(): Promise<void> {
   busy.value = true
-  try { await runSync(); await load() } finally { busy.value = false }
+  try {
+    await runSync()
+    await load()
+  } finally {
+    busy.value = false
+  }
 }
 
 async function resolve(entryId: string, strategy: "local" | "server"): Promise<void> {
@@ -139,14 +177,27 @@ h1, h2 { margin: 0; font-family: var(--font-cn-serif); font-weight: normal; font
 .spacer { width: 32px; }
 .plain { padding: 6px 2px; border: 0; background: none; color: var(--color-ink-soft); cursor: pointer; }
 .card { margin-top: 16px; padding: 14px; border: 1px solid var(--line-soft); border-radius: var(--radius-card); background: var(--color-paper-deep); }
-.issue { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
-.issue strong { color: var(--color-ink); font-size: 15px; overflow-wrap: anywhere; }
+.issue { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.issue > strong { color: var(--color-ink); font-size: 15px; overflow-wrap: anywhere; }
 .issue p, .note { margin: 6px 0; color: var(--color-ink-faint); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .issue code { color: var(--color-ink-faint); font-size: 10px; overflow-wrap: anywhere; }
+.compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+.version { min-width: 0; padding: 10px; border: 1px solid var(--line-soft); border-radius: var(--radius-card); background: color-mix(in srgb, var(--color-paper-deep) 88%, white); }
+.version-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.version-head b { color: var(--color-ink); font-size: 13px; }
+.version-head span, .version small { color: var(--color-ink-faint); font-size: 10px; }
+.version-title { color: var(--color-ink) !important; font-weight: 600; }
+.preview { min-height: 3.2em; white-space: pre-wrap; }
+.local-version { border-color: var(--color-bamboo); }
+.server-version { border-color: var(--line-soft); }
 .paused { color: var(--color-ji) !important; }
 .actions, .bulk-actions { display: flex; gap: 8px; }
 .bulk-actions { flex-wrap: wrap; justify-content: flex-end; }
 button { padding: 7px 10px; border: 1px solid var(--line-soft); border-radius: var(--radius-card); background: transparent; color: var(--color-ink-soft); cursor: pointer; }
 button.danger { color: var(--color-ji); }
 button:disabled { opacity: 0.5; cursor: default; }
+@media (max-width: 560px) {
+  .compare { grid-template-columns: 1fr; }
+  .section-head { align-items: flex-start; }
+}
 </style>

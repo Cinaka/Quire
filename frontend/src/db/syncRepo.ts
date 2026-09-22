@@ -3,6 +3,8 @@ import type { Entry } from "@/shared/types"
 
 import { db } from "./schema"
 
+const CONFLICT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+
 export interface SyncConflict {
   entryId: string
   at: string
@@ -48,6 +50,26 @@ function rawConflictId(value: unknown): string {
   return row.local?.id ?? row.server?.id ?? ""
 }
 
+function activeConflictRows(value: unknown): {
+  rows: Array<Record<string, unknown>>
+  pruned: boolean
+} {
+  const raw = arrayValue<Record<string, unknown>>(value)
+  const cutoff = Date.now() - CONFLICT_RETENTION_MS
+  const rows = raw.filter((row) => {
+    if (typeof row.at !== "string") return true
+    const timestamp = Date.parse(row.at)
+    return Number.isNaN(timestamp) || timestamp >= cutoff
+  })
+  return { rows, pruned: rows.length !== raw.length }
+}
+
+async function persistPrunedConflicts(value: unknown): Promise<Array<Record<string, unknown>>> {
+  const active = activeConflictRows(value)
+  if (active.pruned) await db.meta.put({ key: "conflicts", value: active.rows })
+  return active.rows
+}
+
 async function normalizeConflicts(value: unknown): Promise<SyncConflict[]> {
   const rows = arrayValue<Record<string, unknown>>(value)
   const result: SyncConflict[] = []
@@ -58,7 +80,12 @@ async function normalizeConflicts(value: unknown): Promise<SyncConflict[]> {
     const storedLocal = row.local as Entry | undefined
     const local = storedLocal ?? (await db.entries.get(id)) ?? server
     if (!local) continue
-    result.push({ entryId: id, at: typeof row.at === "string" ? row.at : utcNow(), local, server })
+    result.push({
+      entryId: id,
+      at: typeof row.at === "string" ? row.at : utcNow(),
+      local,
+      server,
+    })
   }
   return result
 }
@@ -74,6 +101,7 @@ export const localSyncRepo = {
       db.meta.get("conflicts"),
       db.meta.get("syncErrors"),
     ])
+    const activeConflicts = await persistPrunedConflicts(conflicts?.value)
     return {
       ownerUserId: typeof owner?.value === "string" ? owner.value : "",
       lastSyncAt: typeof cursor?.value === "string" ? cursor.value : "",
@@ -81,7 +109,7 @@ export const localSyncRepo = {
       dirtyTags: tags,
       dirtyMedia: media,
       dirtyTotal: entries + tags + media,
-      conflictCount: arrayValue<unknown>(conflicts?.value).length,
+      conflictCount: activeConflicts.length,
       errorCount: arrayValue<SyncErrorItem>(errors?.value).length,
     }
   },
@@ -94,14 +122,18 @@ export const localSyncRepo = {
     ])
     return [
       ...entries.map((item): PendingSyncItem => ({
-        kind: "entry", id: item.id, label: item.title || "无题日记",
+        kind: "entry",
+        id: item.id,
+        label: item.title || "无题日记",
         detail: `${item.entryDate}${item.isDeleted ? " · 待同步删除" : " · 待上传正文"}`,
       })),
       ...tags.map((item): PendingSyncItem => ({
         kind: "tag", id: item.id, label: `#${item.name}`, detail: "待上传标签",
       })),
       ...media.map((item): PendingSyncItem => ({
-        kind: "media", id: item.id, label: `图片 ${item.id.slice(0, 8)}`,
+        kind: "media",
+        id: item.id,
+        label: `图片 ${item.id.slice(0, 8)}`,
         detail: `${item.entryId ? "已关联日记" : "未关联"} · ${item.size} bytes`,
       })),
     ]
@@ -109,7 +141,7 @@ export const localSyncRepo = {
 
   async conflicts(): Promise<SyncConflict[]> {
     const row = await db.meta.get("conflicts")
-    return normalizeConflicts(row?.value)
+    return normalizeConflicts(await persistPrunedConflicts(row?.value))
   },
 
   async errors(): Promise<SyncErrorItem[]> {
@@ -120,7 +152,7 @@ export const localSyncRepo = {
   async resolveConflict(entryId: string, strategy: "local" | "server"): Promise<void> {
     await db.transaction("rw", db.entries, db.meta, async () => {
       const row = await db.meta.get("conflicts")
-      const raw = arrayValue<Record<string, unknown>>(row?.value)
+      const raw = activeConflictRows(row?.value).rows
       const conflict = [...(await normalizeConflicts(raw))]
         .reverse()
         .find((item) => item.entryId === entryId)
@@ -130,7 +162,12 @@ export const localSyncRepo = {
         await db.entries.put({ ...conflict.server, dirty: 0 })
       } else {
         const now = utcNow()
-        await db.entries.put({ ...conflict.local, updatedAt: now, clientUpdatedAt: now, dirty: 1 })
+        await db.entries.put({
+          ...conflict.local,
+          updatedAt: now,
+          clientUpdatedAt: now,
+          dirty: 1,
+        })
       }
       await db.meta.put({
         key: "conflicts",
@@ -142,7 +179,7 @@ export const localSyncRepo = {
   async resolveAllConflicts(strategy: "local" | "server"): Promise<number> {
     return db.transaction("rw", db.entries, db.meta, async () => {
       const row = await db.meta.get("conflicts")
-      const raw = arrayValue<Record<string, unknown>>(row?.value)
+      const raw = activeConflictRows(row?.value).rows
       const normalized = await normalizeConflicts(raw)
       const latest = new Map<string, SyncConflict>()
       for (const conflict of normalized) latest.set(conflict.entryId, conflict)
