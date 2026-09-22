@@ -73,10 +73,12 @@ async def upsert_entry(
         select(DiaryEntry).where(DiaryEntry.id == entry_id, DiaryEntry.user_id == user.id)
     )
     incoming_updated_at = as_utc_naive(body.client_updated_at)
+    # 时间相等代表同一次幂等重放，按 P2 规则由本地胜出并视为 applied。
+    # 只有客户端严格更旧时才拒写，否则多浏览器认领同一批数据会永久 dirty。
     if (
         entry is not None
         and entry.client_updated_at
-        and incoming_updated_at <= entry.client_updated_at
+        and incoming_updated_at < entry.client_updated_at
     ):
         return entry, "stale"
     if entry is None:
