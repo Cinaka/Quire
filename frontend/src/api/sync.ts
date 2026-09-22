@@ -273,7 +273,11 @@ async function pullAll(since: string): Promise<void> {
         }
         await attachServerConflict(incoming)
         if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
-          if (incoming.isDeleted === 0) await stashConflict(local, incoming)
+          // 只有两边都是正文版本时才需要保留输版。
+          // 远端删除和远端恢复都是明确状态转换，不应让干净副本产生伪冲突。
+          if (local.isDeleted === 0 && incoming.isDeleted === 0) {
+            await stashConflict(local, incoming)
+          }
           await db.entries.put({ ...incoming, dirty: 0 })
         }
       }
