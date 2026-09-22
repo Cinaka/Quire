@@ -110,7 +110,6 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
         } else if (item.status === "stale") {
           const local = await db.entries.get(item.id)
           if (local) {
-            // 先把输掉的本地版本完整留档，再解除 dirty 阻塞，让 pull 获取胜出的云端版本。
             await stashConflict(local)
             await db.entries.update(item.id, { dirty: 0 })
           }
@@ -180,6 +179,9 @@ async function pullAll(since: string): Promise<void> {
 
         await attachServerConflict(incoming)
         if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
+          // 即使本地版本已经成功上传，后来被另一设备的更新取代时也先留档。
+          // 这样“后编辑胜出”与“输掉版本可恢复”可以同时成立。
+          await stashConflict(local, incoming)
           await db.entries.put({ ...incoming, dirty: 0 })
         }
       }
