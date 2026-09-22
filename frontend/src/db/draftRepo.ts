@@ -1,4 +1,4 @@
-import type { LocalDate, TiptapDoc } from "@/shared/types"
+import type { Entry, LocalDate, TiptapDoc } from "@/shared/types"
 
 import { db } from "./schema"
 
@@ -28,6 +28,17 @@ function isDraft(value: unknown): value is EditorDraft {
   )
 }
 
+function matchesEntry(draft: EditorDraft, entry: Entry): boolean {
+  return (
+    draft.entryDate === entry.entryDate &&
+    draft.title === entry.title &&
+    draft.mood === entry.mood &&
+    draft.weather === entry.weather &&
+    JSON.stringify(draft.tagIds) === JSON.stringify(entry.tagIds) &&
+    JSON.stringify(draft.doc) === JSON.stringify(entry.content?.doc ?? null)
+  )
+}
+
 export const localDraftRepo = {
   async get(): Promise<EditorDraft | null> {
     const row = await db.meta.get(DRAFT_KEY)
@@ -35,6 +46,15 @@ export const localDraftRepo = {
   },
 
   async save(draft: EditorDraft): Promise<void> {
+    // 页面卸载时“保存正文”和“保存安全草稿”可能并发完成。若正文已经完整落库，
+    // 不再留下同内容草稿，避免下次打开时误报为崩溃恢复。
+    if (draft.entryId) {
+      const entry = await db.entries.get(draft.entryId)
+      if (entry && matchesEntry(draft, entry)) {
+        await db.meta.delete(DRAFT_KEY)
+        return
+      }
+    }
     await db.meta.put({ key: DRAFT_KEY, value: draft })
   },
 
