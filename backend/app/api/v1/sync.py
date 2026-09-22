@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.entries import EntryRequest, to_response, upsert_entry
@@ -137,6 +137,7 @@ async def push(
 @router.get("/changes")
 async def changes(
     since: datetime | None = None,
+    after_id: uuid.UUID | None = None,
     limit: int = Query(200, ge=1, le=500),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -145,8 +146,16 @@ async def changes(
         since = since.astimezone(timezone.utc).replace(tzinfo=None)
 
     query = select(DiaryEntry).where(DiaryEntry.user_id == user.id)
-    if since is not None:
+    if since is not None and after_id is not None:
+        query = query.where(
+            or_(
+                DiaryEntry.updated_at > since,
+                and_(DiaryEntry.updated_at == since, DiaryEntry.id > after_id),
+            )
+        )
+    elif since is not None:
         query = query.where(DiaryEntry.updated_at > since)
+
     page = list(
         (
             await db.execute(
@@ -201,10 +210,13 @@ async def changes(
         item["updated_at"] = row.updated_at
         entry_items.append(item)
 
-    cursor = entries[-1].updated_at if has_more and entries else utcnow()
+    last = entries[-1] if entries else None
+    cursor_time = last.updated_at if has_more and last is not None else utcnow()
+    cursor_id = str(last.id) if has_more and last is not None else None
     return ok(
         {
-            "server_time": cursor,
+            "server_time": cursor_time,
+            "cursor_id": cursor_id,
             "has_more": has_more,
             "entries": entry_items,
             "tags": [

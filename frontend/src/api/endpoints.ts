@@ -24,6 +24,7 @@ interface RawPush {
 
 interface RawPull {
   server_time: string
+  cursor_id: string | null
   has_more: boolean
   entries: WireEntry[]
   tags: WireTag[]
@@ -44,10 +45,19 @@ export async function pushBatch(body: PushBody): Promise<PushResult> {
   }
 }
 
-export async function pullChanges(params: { since: string; limit: number }): Promise<PullResult> {
-  const d = await get<RawPull>("/sync/changes", params)
+export async function pullChanges(params: {
+  since: string
+  afterId?: string
+  limit: number
+}): Promise<PullResult> {
+  const d = await get<RawPull>("/sync/changes", {
+    since: params.since,
+    after_id: params.afterId || undefined,
+    limit: params.limit,
+  })
   return {
     serverTime: d.server_time,
+    cursorId: d.cursor_id ?? "",
     hasMore: Boolean(d.has_more),
     entries: d.entries ?? [],
     tags: d.tags ?? [],
@@ -58,7 +68,13 @@ export async function pullChanges(params: { since: string; limit: number }): Pro
 export async function uploadMedia(
   id: string,
   file: Blob,
-  options: { thumb?: Blob | null; entryId?: string; sortOrder?: number; width?: number | null; height?: number | null } = {},
+  options: {
+    thumb?: Blob | null
+    entryId?: string
+    sortOrder?: number
+    width?: number | null
+    height?: number | null
+  } = {},
 ): Promise<unknown> {
   const body = new FormData()
   body.append("file", file, `${id}.${file.type.split("/")[1] || "bin"}`)
@@ -67,8 +83,7 @@ export async function uploadMedia(
   body.append("sort_order", String(options.sortOrder ?? 0))
   if (options.width != null) body.append("width", String(options.width))
   if (options.height != null) body.append("height", String(options.height))
-  const response = await post<unknown>(`/media/${id}`, body)
-  return response
+  return post<unknown>(`/media/${id}`, body)
 }
 
 export async function listMedia(entryId?: string): Promise<unknown[]> {

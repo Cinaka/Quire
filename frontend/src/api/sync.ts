@@ -67,13 +67,9 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
         else if (item.status === "error") await noteError("entry", item.id, item.message)
       }
       for (const item of result.tags) {
-        if (item.status === "applied") {
-          await db.tags.update(item.id, { dirty: 0 })
-        } else if (await reconcileDuplicateTag(item)) {
-          reconciledDuplicate = true
-        } else if (item.status === "error") {
-          await noteError("tag", item.id, item.message)
-        }
+        if (item.status === "applied") await db.tags.update(item.id, { dirty: 0 })
+        else if (await reconcileDuplicateTag(item)) reconciledDuplicate = true
+        else if (item.status === "error") await noteError("tag", item.id, item.message)
       }
       for (const item of result.mediaMeta) {
         if (item.status === "applied") await db.media.update(item.id, { dirty: 0 })
@@ -94,13 +90,11 @@ async function reconcileDuplicateTag(item: PushItemResult): Promise<boolean> {
   if (item.status !== "error" || !item.message?.startsWith(DUPLICATE_TAG_PREFIX)) return false
   const canonicalId = item.message.slice(DUPLICATE_TAG_PREFIX.length)
   if (!canonicalId || canonicalId === item.id) return false
-
   const affected = await db.entries.where("tagIds").equals(item.id).toArray()
   for (const entry of affected) {
     const now = utcNow()
-    const tagIds = [...new Set(entry.tagIds.map((id) => (id === item.id ? canonicalId : id)))]
     await db.entries.update(entry.id, {
-      tagIds,
+      tagIds: [...new Set(entry.tagIds.map((id) => (id === item.id ? canonicalId : id)))],
       updatedAt: now,
       clientUpdatedAt: now,
       dirty: 1,
@@ -112,8 +106,13 @@ async function reconcileDuplicateTag(item: PushItemResult): Promise<boolean> {
 
 async function pullAll(since: string): Promise<void> {
   let cursor = since
+  let afterId = ""
   for (;;) {
-    const result = await pullChanges({ since: cursor, limit: 200 })
+    const result = await pullChanges({
+      since: cursor,
+      afterId: afterId || undefined,
+      limit: 200,
+    })
     await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
       for (const wire of result.entries) {
         const incoming: Entry = fromWireEntry(wire)
@@ -128,6 +127,7 @@ async function pullAll(since: string): Promise<void> {
       await mergeMediaMeta(result.mediaMeta)
     })
     cursor = result.serverTime
+    afterId = result.cursorId
     if (!result.hasMore) break
   }
   await db.meta.put({ key: "lastSyncAt", value: cursor })
