@@ -5,6 +5,7 @@ import { createApp } from "vue"
 import { setUnauthorizedHandler } from "@/api/request"
 import { isLoggedIn } from "@/api/session"
 import { runSync } from "@/api/sync"
+import { emitBackgroundSync } from "@/api/syncEvents"
 import { db } from "@/db/schema"
 import * as repo from "@/repo"
 import App from "./App.vue"
@@ -45,12 +46,21 @@ function scheduleSync(delay = 5_000): void {
 }
 
 async function runBackgroundSync(): Promise<void> {
-  if (!isLoggedIn() || !navigator.onLine) return
+  if (!isLoggedIn()) return
+  if (!navigator.onLine) {
+    emitBackgroundSync({ phase: "offline" })
+    return
+  }
+  emitBackgroundSync({ phase: "running" })
   try {
     await runSync()
     retryDelay = 15_000
+    emitBackgroundSync({ phase: "success" })
   } catch (error) {
-    console.warn(`[quire] 后台同步失败，将在 ${Math.round(retryDelay / 1000)} 秒后重试`, error)
+    const retryInSeconds = Math.round(retryDelay / 1000)
+    const message = (error as Error).message
+    emitBackgroundSync({ phase: "error", message, retryInSeconds })
+    console.warn(`[quire] 后台同步失败，将在 ${retryInSeconds} 秒后重试`, error)
     scheduleSync(retryDelay)
     retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY)
   }
@@ -69,6 +79,7 @@ db.media.hook("updating", () => scheduleSync())
 db.media.hook("deleting", () => scheduleSync())
 
 if (isLoggedIn()) scheduleSync(0)
+window.addEventListener("offline", () => emitBackgroundSync({ phase: "offline" }))
 window.addEventListener("online", () => {
   retryDelay = 15_000
   scheduleSync(0)

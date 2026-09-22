@@ -11,6 +11,7 @@
       <template v-if="loggedIn">
         <dl class="kv">
           <div><dt>本地归属</dt><dd>{{ status.ownerUserId || "读取中" }}</dd></div>
+          <div><dt>网络状态</dt><dd>{{ networkLabel }}</dd></div>
           <div><dt>上次同步</dt><dd>{{ status.lastSyncAt || "尚未完成" }}</dd></div>
           <div>
             <dt>待上传</dt>
@@ -23,22 +24,22 @@
           <div><dt>同步错误</dt><dd>{{ status.errorCount }} 项</dd></div>
         </dl>
         <p v-if="message" class="message" :class="{ bad: failed }">{{ message }}</p>
-        <button type="button" class="primary" :disabled="busy" @click="syncNow">
-          {{ busy ? "正在同步……" : "立即同步" }}
+        <button type="button" class="primary" :disabled="busy || backgroundBusy || offline" @click="syncNow">
+          {{ busy || backgroundBusy ? "正在同步……" : offline ? "当前离线" : "立即同步" }}
         </button>
         <button
           v-if="status.dirtyTotal || status.conflictCount || status.errorCount"
           type="button"
           class="secondary"
-          :disabled="busy"
+          :disabled="busy || backgroundBusy"
           @click="router.push('/sync/issues')"
         >
           查看待处理项、冲突与错误
         </button>
-        <button type="button" class="secondary" :disabled="busy" @click="router.push('/sync/sessions')">
+        <button type="button" class="secondary" :disabled="busy || backgroundBusy" @click="router.push('/sync/sessions')">
           管理登录设备
         </button>
-        <button type="button" class="secondary" :disabled="busy" @click="signOut">退出登录</button>
+        <button type="button" class="secondary" :disabled="busy || backgroundBusy" @click="signOut">退出登录</button>
       </template>
       <template v-else>
         <p class="note">尚未登录。登录后，本地简册会先备份，再安全上行。</p>
@@ -54,11 +55,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue"
+import { computed, onMounted, onUnmounted, ref } from "vue"
 import { useRouter } from "vue-router"
 
 import { isLoggedIn, logout } from "@/api/session"
 import { runSync } from "@/api/sync"
+import { onBackgroundSync, type BackgroundSyncState } from "@/api/syncEvents"
 import { syncRepo, type SyncStatus } from "@/repo"
 
 const router = useRouter()
@@ -74,12 +76,44 @@ const status = ref<SyncStatus>({
   errorCount: 0,
 })
 const busy = ref(false)
+const backgroundBusy = ref(false)
+const offline = ref(!navigator.onLine)
 const failed = ref(false)
-const message = ref("")
+const message = ref(offline.value ? "当前离线，恢复网络后会自动同步。" : "")
+let stopBackgroundEvents: (() => void) | null = null
+
+const networkLabel = computed(() => {
+  if (offline.value) return "离线"
+  if (busy.value || backgroundBusy.value) return "在线 · 正在同步"
+  return "在线"
+})
 
 async function refresh(): Promise<void> {
   loggedIn.value = isLoggedIn()
   status.value = await syncRepo.status()
+}
+
+async function handleBackgroundState(state: BackgroundSyncState): Promise<void> {
+  offline.value = state.phase === "offline" ? true : !navigator.onLine
+  backgroundBusy.value = state.phase === "running"
+  if (state.phase === "running") {
+    failed.value = false
+    message.value = "正在后台同步……"
+    return
+  }
+  if (state.phase === "offline") {
+    failed.value = true
+    message.value = "当前离线，恢复网络后会自动同步。"
+    return
+  }
+  await refresh()
+  if (state.phase === "success") {
+    failed.value = false
+    message.value = status.value.dirtyTotal ? `仍有 ${status.value.dirtyTotal} 项待处理。` : "自动同步完成。"
+  } else {
+    failed.value = true
+    message.value = `后台同步失败：${state.message}；${state.retryInSeconds} 秒后重试。`
+  }
 }
 
 async function syncNow(): Promise<void> {
@@ -118,7 +152,11 @@ async function signOut(): Promise<void> {
   }
 }
 
-onMounted(() => void refresh())
+onMounted(() => {
+  stopBackgroundEvents = onBackgroundSync((state) => void handleBackgroundState(state))
+  void refresh()
+})
+onUnmounted(() => stopBackgroundEvents?.())
 </script>
 
 <style scoped>
