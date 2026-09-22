@@ -64,6 +64,14 @@ def validate_image_bytes(data: bytes, claimed_mime: str | None) -> str:
     return detected
 
 
+def stored_media_files_exist(row: Media) -> bool:
+    public_paths = [row.url]
+    if row.thumb_url:
+        public_paths.append(row.thumb_url)
+    paths = media_disk_paths(*public_paths)
+    return len(paths) == len(public_paths) and all(path.is_file() for path in paths)
+
+
 def to_response(row: Media) -> MediaResponse:
     return MediaResponse(
         id=row.id,
@@ -93,7 +101,7 @@ async def upload_media(
     existing = await db.scalar(
         select(Media).where(Media.id == media_id, Media.user_id == user.id)
     )
-    if existing is not None and existing.url:
+    if existing is not None and existing.url and stored_media_files_exist(existing):
         return ok(to_response(existing))
 
     data = await file.read(MAX_BYTES + 1)
@@ -109,6 +117,7 @@ async def upload_media(
             raise HTTPException(status_code=413, detail="缩略图不能超过 10 MB")
         thumb_mime = validate_image_bytes(thumb_data, thumb.content_type)
 
+    old_paths = media_disk_paths(existing.url, existing.thumb_url or "") if existing else []
     relative_dir = Path(media_id.hex[:4])
     disk_dir = Path(settings.MEDIA_ROOT) / relative_dir
     disk_dir.mkdir(parents=True, exist_ok=True)
@@ -117,6 +126,7 @@ async def upload_media(
     original_path = disk_dir / f"{media_id}{suffix}"
     url = f"{settings.MEDIA_PUBLIC_PREFIX}/{relative_dir.as_posix()}/{media_id}{suffix}"
     written_paths = [original_path]
+    created_paths = [original_path] if not original_path.exists() else []
     committed = False
     try:
         original_path.write_bytes(data)
@@ -126,6 +136,8 @@ async def upload_media(
             thumb_suffix = MIME_SUFFIX[thumb_mime]
             thumb_path = disk_dir / f"{media_id}_thumb{thumb_suffix}"
             written_paths.append(thumb_path)
+            if not thumb_path.exists():
+                created_paths.append(thumb_path)
             thumb_path.write_bytes(thumb_data)
             thumb_url = (
                 f"{settings.MEDIA_PUBLIC_PREFIX}/{relative_dir.as_posix()}"
@@ -146,8 +158,9 @@ async def upload_media(
         committed = True
     finally:
         if not committed:
-            remove_media_paths(written_paths)
+            remove_media_paths(created_paths)
 
+    remove_media_paths([path for path in old_paths if path not in written_paths])
     await db.refresh(row)
     return ok(to_response(row))
 

@@ -1,4 +1,5 @@
 import os
+import uuid
 
 import pytest
 from fastapi import HTTPException
@@ -6,7 +7,9 @@ from fastapi import HTTPException
 os.environ.setdefault("MYSQL_PASSWORD", "test-only")
 os.environ.setdefault("JWT_SECRET", "test-only-secret")
 
-from app.api.v1.media import detect_image_mime, validate_image_bytes
+from app.api.v1.media import detect_image_mime, stored_media_files_exist, validate_image_bytes
+from app.core.config import settings
+from app.models.media import Media
 
 
 @pytest.mark.parametrize(
@@ -37,3 +40,25 @@ def test_validate_image_rejects_empty_or_fake_content() -> None:
     with pytest.raises(HTTPException) as fake:
         validate_image_bytes(b"not-an-image", "image/png")
     assert fake.value.status_code == 422
+
+
+def test_stored_media_requires_original_and_thumbnail(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
+    monkeypatch.setattr(settings, "MEDIA_PUBLIC_PREFIX", "/media")
+    folder = tmp_path / "abcd"
+    folder.mkdir()
+    original = folder / "image.webp"
+    thumbnail = folder / "image_thumb.webp"
+    row = Media(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        entry_id=None,
+        url="/media/abcd/image.webp",
+        thumb_url="/media/abcd/image_thumb.webp",
+    )
+
+    assert stored_media_files_exist(row) is False
+    original.write_bytes(b"original")
+    assert stored_media_files_exist(row) is False
+    thumbnail.write_bytes(b"thumbnail")
+    assert stored_media_files_exist(row) is True
