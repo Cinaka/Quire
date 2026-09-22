@@ -179,8 +179,6 @@ async function pullAll(since: string): Promise<void> {
 
         await attachServerConflict(incoming)
         if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
-          // 即使本地版本已经成功上传，后来被另一设备的更新取代时也先留档。
-          // 这样“后编辑胜出”与“输掉版本可恢复”可以同时成立。
           await stashConflict(local, incoming)
           await db.entries.put({ ...incoming, dirty: 0 })
         }
@@ -228,9 +226,15 @@ async function noteError(kind: string, id: string, message?: string): Promise<vo
 
 async function mergeTags(rows: WireTag[]): Promise<void> {
   for (const wire of rows) {
-    if (await db.tags.get(wire.id)) continue
+    const incoming = fromWireTag(wire)
+    const local = await db.tags.get(wire.id)
+    if (local) {
+      // 未上行的本地标签不能被下行覆盖；干净标签则接受远端重命名和颜色变化。
+      if (local.dirty === 0) await db.tags.put(incoming)
+      continue
+    }
     if (await db.tags.where("name").equals(wire.name).first()) continue
-    await db.tags.put(fromWireTag(wire))
+    await db.tags.put(incoming)
   }
 }
 
@@ -238,8 +242,17 @@ async function mergeMediaMeta(rows: WireMediaMeta[]): Promise<void> {
   for (const wire of rows) {
     const patch = mediaPatchFromWire(wire)
     const local = await db.media.get(wire.id)
-    if (local) await db.media.update(wire.id, patch)
-    else {
+    if (local) {
+      if (local.dirty === 1) {
+        // 本地关联和排序仍待上传时，只补服务端图片地址，不覆盖本地真相。
+        await db.media.update(wire.id, {
+          remoteUrl: patch.remoteUrl,
+          thumbRemoteUrl: patch.thumbRemoteUrl,
+        })
+      } else {
+        await db.media.update(wire.id, patch)
+      }
+    } else {
       await db.media.put({
         id: wire.id,
         blob: new Blob([], { type: wire.mime }),
