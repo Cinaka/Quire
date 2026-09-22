@@ -10,7 +10,7 @@ import {
 import type { PushItemResult, WireMediaMeta, WireTag } from "@/api/wire"
 import { db } from "@/db/schema"
 import { utcNow } from "@/shared/time"
-import type { Entry } from "@/shared/types"
+import type { Entry, MediaItem, Tag } from "@/shared/types"
 
 const BATCH = 50
 const MAX_ERRORS = 3
@@ -66,6 +66,35 @@ async function blockedIds(): Promise<Record<string, Set<string>>> {
   return blocked
 }
 
+function sameEntryRevision(current: Entry | undefined, sent: Entry | undefined): boolean {
+  return Boolean(current && sent && current.clientUpdatedAt === sent.clientUpdatedAt)
+}
+
+function sameTagRevision(current: Tag | undefined, sent: Tag | undefined): boolean {
+  return Boolean(
+    current && sent
+      && current.name === sent.name
+      && current.color === sent.color
+      && current.createdAt === sent.createdAt,
+  )
+}
+
+function sameMediaRevision(current: MediaItem | undefined, sent: MediaItem | undefined): boolean {
+  return Boolean(
+    current && sent
+      && current.entryId === sent.entryId
+      && current.sortOrder === sent.sortOrder
+      && current.width === sent.width
+      && current.height === sent.height
+      && current.size === sent.size
+      && current.mime === sent.mime
+      && current.blob.size === sent.blob.size
+      && current.blob.type === sent.blob.type
+      && current.thumbBlob?.size === sent.thumbBlob?.size
+      && current.thumbBlob?.type === sent.thumbBlob?.type,
+  )
+}
+
 function conflictId(value: unknown): string {
   if (!value || typeof value !== "object") return ""
   const row = value as { entryId?: unknown; local?: Entry; server?: Entry }
@@ -99,7 +128,7 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
   let serverTime = ""
   let hadWork = false
   for (;;) {
-    const [blocked, purges] = await Promise.all([blockedIds(), pendingPurgeIds()])
+    const blocked = await blockedIds()
     const [allEntries, allTags, allMedia] = await Promise.all([
       db.entries.where("dirty").equals(1).toArray(),
       db.tags.where("dirty").equals(1).toArray(),
@@ -136,16 +165,25 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
       mediaMeta: mediaMeta.filter((item) => !uploadFailed.has(item.id)).map(toWireMediaMetaPush),
     })
     serverTime = result.serverTime
+    const sentEntries = new Map(entries.map((item) => [item.id, item]))
+    const sentTags = new Map(tags.map((item) => [item.id, item]))
+    const sentMedia = new Map(mediaMeta.map((item) => [item.id, item]))
     let reconciledDuplicate = false
+    let superseded = false
 
     await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
+      const currentPurges = await pendingPurgeIds()
       for (const item of result.entries) {
+        const local = await db.entries.get(item.id)
+        if (!sameEntryRevision(local, sentEntries.get(item.id))) {
+          superseded = true
+          continue
+        }
         if (item.status === "applied") {
-          if (purges.has(item.id)) await db.entries.delete(item.id)
+          if (currentPurges.has(item.id) && local?.isDeleted === 1) await db.entries.delete(item.id)
           else await db.entries.update(item.id, { dirty: 0 })
           await clearError("entry", item.id)
         } else if (item.status === "stale") {
-          const local = await db.entries.get(item.id)
           if (local) {
             await stashConflict(local)
             await db.entries.update(item.id, { dirty: 0 })
@@ -157,6 +195,11 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
         }
       }
       for (const item of result.tags) {
+        const local = await db.tags.get(item.id)
+        if (!sameTagRevision(local, sentTags.get(item.id))) {
+          superseded = true
+          continue
+        }
         if (item.status === "applied") {
           await db.tags.update(item.id, { dirty: 0 })
           await clearError("tag", item.id)
@@ -168,6 +211,11 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
         }
       }
       for (const item of result.mediaMeta) {
+        const local = await db.media.get(item.id)
+        if (!sameMediaRevision(local, sentMedia.get(item.id))) {
+          superseded = true
+          continue
+        }
         if (item.status === "applied") {
           await db.media.update(item.id, { dirty: 0 })
           await clearError("media", item.id)
@@ -177,7 +225,7 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
       }
     })
 
-    const progressed = reconciledDuplicate
+    const progressed = superseded || reconciledDuplicate
       || result.entries.some((item) => item.status === "applied" || item.status === "stale")
       || result.tags.some((item) => item.status === "applied")
       || result.mediaMeta.some((item) => item.status === "applied")
@@ -225,8 +273,6 @@ async function pullAll(since: string): Promise<void> {
         }
         await attachServerConflict(incoming)
         if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
-          // 远端删除覆盖的是一份已同步的干净副本，不属于并发编辑冲突。
-          // 正文覆盖仍留档，确保真正的双端编辑输版可以恢复。
           if (incoming.isDeleted === 0) await stashConflict(local, incoming)
           await db.entries.put({ ...incoming, dirty: 0 })
         }
