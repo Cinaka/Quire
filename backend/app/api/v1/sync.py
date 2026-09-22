@@ -149,8 +149,11 @@ async def changes(
     entries = page[:limit]
     ids = [row.id for row in entries]
     tag_rows = list((await db.execute(select(EntryTag).where(EntryTag.entry_id.in_(ids)))).scalars()) if ids else []
-    tag_ids = {row.tag_id for row in tag_rows}
-    tags = list((await db.execute(select(Tag).where(Tag.user_id == user.id, Tag.id.in_(tag_ids)))).scalars()) if tag_ids else []
+    # 标签数量通常很小，而且 Tag 尚无独立变更游标。每轮返回完整标签目录，
+    # 保证未关联到任何日记的新标签、重命名和颜色修改也能传播到其他设备。
+    tags = list((await db.execute(
+        select(Tag).where(Tag.user_id == user.id).order_by(Tag.created_at, Tag.id)
+    )).scalars())
     media = list((await db.execute(select(Media).where(Media.user_id == user.id, Media.entry_id.in_(ids)))).scalars()) if ids else []
     tag_map: dict[uuid.UUID, list[uuid.UUID]] = {entry_id: [] for entry_id in ids}
     for row in tag_rows: tag_map.setdefault(row.entry_id, []).append(row.tag_id)
