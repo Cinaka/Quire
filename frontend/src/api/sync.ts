@@ -225,7 +225,9 @@ async function pullAll(since: string): Promise<void> {
         }
         await attachServerConflict(incoming)
         if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
-          await stashConflict(local, incoming)
+          // 远端删除覆盖的是一份已同步的干净副本，不属于并发编辑冲突。
+          // 正文覆盖仍留档，确保真正的双端编辑输版可以恢复。
+          if (incoming.isDeleted === 0) await stashConflict(local, incoming)
           await db.entries.put({ ...incoming, dirty: 0 })
         }
       }

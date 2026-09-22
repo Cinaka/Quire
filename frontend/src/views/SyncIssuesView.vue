@@ -22,16 +22,25 @@
     </section>
 
     <section class="card">
-      <h2>冲突留档</h2>
-      <p v-if="!conflicts.length" class="note">暂无冲突。</p>
+      <div class="section-head conflict-head">
+        <h2>冲突留档</h2>
+        <div v-if="conflicts.length" class="bulk-actions">
+          <button type="button" :disabled="busy" @click="resolveAll('local')">全部保留本地</button>
+          <button type="button" class="danger" :disabled="busy || !hasAllServer" @click="resolveAll('server')">
+            全部采用云端
+          </button>
+        </div>
+      </div>
+      <p v-if="conflicts.length" class="note">批量操作会一次处理当前列表中的全部冲突，请先确认选择方向。</p>
+      <p v-else class="note">暂无冲突。</p>
       <article v-for="item in conflicts" :key="`${item.entryId}:${item.at}`" class="issue">
         <strong>{{ item.local.title || item.server?.title || "无题" }}</strong>
         <p>本地编辑于 {{ item.local.clientUpdatedAt }}</p>
         <p v-if="item.server">云端编辑于 {{ item.server.clientUpdatedAt }}</p>
         <p v-else>云端版本尚未拉取；可以先保留本地并重新上传。</p>
         <div class="actions">
-          <button type="button" @click="resolve(item.entryId, 'local')">保留本地</button>
-          <button v-if="item.server" type="button" class="danger" @click="resolve(item.entryId, 'server')">采用云端</button>
+          <button type="button" :disabled="busy" @click="resolve(item.entryId, 'local')">保留本地</button>
+          <button v-if="item.server" type="button" class="danger" :disabled="busy" @click="resolve(item.entryId, 'server')">采用云端</button>
         </div>
       </article>
     </section>
@@ -43,7 +52,7 @@
         <strong>{{ item.kind }} · {{ item.id }}</strong>
         <p>{{ item.message || "未知错误" }} · 已尝试 {{ item.count }} 次</p>
         <p v-if="item.paused" class="paused">已暂停自动重试，避免持续消耗网络与电量。</p>
-        <button type="button" @click="dismiss(item.kind, item.id)">
+        <button type="button" :disabled="busy" @click="dismiss(item.kind, item.id)">
           {{ item.paused ? "解除暂停并重试" : "清除记录并重试" }}
         </button>
       </article>
@@ -52,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue"
+import { computed, onMounted, ref } from "vue"
 import { useRouter } from "vue-router"
 
 import { runSync } from "@/api/sync"
@@ -63,6 +72,7 @@ const pending = ref<PendingSyncItem[]>([])
 const conflicts = ref<SyncConflict[]>([])
 const errors = ref<SyncErrorItem[]>([])
 const busy = ref(false)
+const hasAllServer = computed(() => conflicts.value.every((item) => Boolean(item.server)))
 
 function kindLabel(kind: PendingSyncItem["kind"]): string {
   return { entry: "日记", tag: "标签", media: "图片" }[kind]
@@ -85,15 +95,38 @@ async function retryAll(): Promise<void> {
 async function resolve(entryId: string, strategy: "local" | "server"): Promise<void> {
   const label = strategy === "local" ? "保留本地版本" : "采用云端版本"
   if (!window.confirm(`确定${label}？另一版本会从冲突列表移除。`)) return
-  await syncRepo.resolveConflict(entryId, strategy)
-  await runSync()
-  await load()
+  busy.value = true
+  try {
+    await syncRepo.resolveConflict(entryId, strategy)
+    await runSync()
+    await load()
+  } finally {
+    busy.value = false
+  }
+}
+
+async function resolveAll(strategy: "local" | "server"): Promise<void> {
+  const label = strategy === "local" ? "全部保留本地版本并重新上传" : "全部采用云端版本"
+  if (!window.confirm(`确定${label}？这会一次处理 ${conflicts.value.length} 条冲突。`)) return
+  busy.value = true
+  try {
+    await syncRepo.resolveAllConflicts(strategy)
+    await runSync()
+    await load()
+  } finally {
+    busy.value = false
+  }
 }
 
 async function dismiss(kind: string, id: string): Promise<void> {
-  await syncRepo.dismissError(kind, id)
-  await runSync()
-  await load()
+  busy.value = true
+  try {
+    await syncRepo.dismissError(kind, id)
+    await runSync()
+    await load()
+  } finally {
+    busy.value = false
+  }
 }
 
 onMounted(() => void load())
@@ -101,6 +134,7 @@ onMounted(() => void load())
 
 <style scoped>
 .head, .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.conflict-head { align-items: flex-start; }
 h1, h2 { margin: 0; font-family: var(--font-cn-serif); font-weight: normal; font-size: 20px; }
 .spacer { width: 32px; }
 .plain { padding: 6px 2px; border: 0; background: none; color: var(--color-ink-soft); cursor: pointer; }
@@ -110,7 +144,8 @@ h1, h2 { margin: 0; font-family: var(--font-cn-serif); font-weight: normal; font
 .issue p, .note { margin: 6px 0; color: var(--color-ink-faint); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .issue code { color: var(--color-ink-faint); font-size: 10px; overflow-wrap: anywhere; }
 .paused { color: var(--color-ji) !important; }
-.actions { display: flex; gap: 8px; }
+.actions, .bulk-actions { display: flex; gap: 8px; }
+.bulk-actions { flex-wrap: wrap; justify-content: flex-end; }
 button { padding: 7px 10px; border: 1px solid var(--line-soft); border-radius: var(--radius-card); background: transparent; color: var(--color-ink-soft); cursor: pointer; }
 button.danger { color: var(--color-ji); }
 button:disabled { opacity: 0.5; cursor: default; }

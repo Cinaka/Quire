@@ -139,6 +139,39 @@ export const localSyncRepo = {
     })
   },
 
+  async resolveAllConflicts(strategy: "local" | "server"): Promise<number> {
+    return db.transaction("rw", db.entries, db.meta, async () => {
+      const row = await db.meta.get("conflicts")
+      const raw = arrayValue<Record<string, unknown>>(row?.value)
+      const normalized = await normalizeConflicts(raw)
+      const latest = new Map<string, SyncConflict>()
+      for (const conflict of normalized) latest.set(conflict.entryId, conflict)
+
+      const resolved = new Set<string>()
+      for (const conflict of latest.values()) {
+        if (strategy === "server") {
+          if (!conflict.server) continue
+          await db.entries.put({ ...conflict.server, dirty: 0 })
+        } else {
+          const now = utcNow()
+          await db.entries.put({
+            ...conflict.local,
+            updatedAt: now,
+            clientUpdatedAt: now,
+            dirty: 1,
+          })
+        }
+        resolved.add(conflict.entryId)
+      }
+
+      await db.meta.put({
+        key: "conflicts",
+        value: raw.filter((item) => !resolved.has(rawConflictId(item))),
+      })
+      return resolved.size
+    })
+  },
+
   async dismissError(kind: string, id: string): Promise<void> {
     const row = await db.meta.get("syncErrors")
     const errors = arrayValue<SyncErrorItem>(row?.value)
