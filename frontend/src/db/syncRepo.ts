@@ -16,6 +16,7 @@ export interface SyncErrorItem {
   message?: string
   count: number
   at: string
+  paused?: boolean
 }
 
 export interface PendingSyncItem {
@@ -57,12 +58,7 @@ async function normalizeConflicts(value: unknown): Promise<SyncConflict[]> {
     const storedLocal = row.local as Entry | undefined
     const local = storedLocal ?? (await db.entries.get(id)) ?? server
     if (!local) continue
-    result.push({
-      entryId: id,
-      at: typeof row.at === "string" ? row.at : utcNow(),
-      local,
-      server,
-    })
+    result.push({ entryId: id, at: typeof row.at === "string" ? row.at : utcNow(), local, server })
   }
   return result
 }
@@ -98,21 +94,14 @@ export const localSyncRepo = {
     ])
     return [
       ...entries.map((item): PendingSyncItem => ({
-        kind: "entry",
-        id: item.id,
-        label: item.title || "无题日记",
+        kind: "entry", id: item.id, label: item.title || "无题日记",
         detail: `${item.entryDate}${item.isDeleted ? " · 待同步删除" : " · 待上传正文"}`,
       })),
       ...tags.map((item): PendingSyncItem => ({
-        kind: "tag",
-        id: item.id,
-        label: `#${item.name}`,
-        detail: "待上传标签",
+        kind: "tag", id: item.id, label: `#${item.name}`, detail: "待上传标签",
       })),
       ...media.map((item): PendingSyncItem => ({
-        kind: "media",
-        id: item.id,
-        label: `图片 ${item.id.slice(0, 8)}`,
+        kind: "media", id: item.id, label: `图片 ${item.id.slice(0, 8)}`,
         detail: `${item.entryId ? "已关联日记" : "未关联"} · ${item.size} bytes`,
       })),
     ]
@@ -132,23 +121,17 @@ export const localSyncRepo = {
     await db.transaction("rw", db.entries, db.meta, async () => {
       const row = await db.meta.get("conflicts")
       const raw = arrayValue<Record<string, unknown>>(row?.value)
-      const conflicts = await normalizeConflicts(raw)
-      const conflict = [...conflicts].reverse().find((item) => item.entryId === entryId)
+      const conflict = [...(await normalizeConflicts(raw))]
+        .reverse()
+        .find((item) => item.entryId === entryId)
       if (!conflict) return
-
       if (strategy === "server") {
         if (!conflict.server) return
         await db.entries.put({ ...conflict.server, dirty: 0 })
       } else {
         const now = utcNow()
-        await db.entries.put({
-          ...conflict.local,
-          updatedAt: now,
-          clientUpdatedAt: now,
-          dirty: 1,
-        })
+        await db.entries.put({ ...conflict.local, updatedAt: now, clientUpdatedAt: now, dirty: 1 })
       }
-
       await db.meta.put({
         key: "conflicts",
         value: raw.filter((item) => rawConflictId(item) !== entryId),

@@ -25,9 +25,35 @@ interface ConflictRecord {
   server?: Entry
 }
 
+interface ErrorRecord {
+  kind: string
+  id: string
+  message?: string
+  count: number
+  at: string
+  paused: boolean
+}
+
 async function meta(key: string): Promise<string> {
   const row = await db.meta.get(key)
   return typeof row?.value === "string" ? row.value : ""
+}
+
+async function errorRecords(): Promise<ErrorRecord[]> {
+  const row = await db.meta.get("syncErrors")
+  return Array.isArray(row?.value) ? (row.value as ErrorRecord[]) : []
+}
+
+async function blockedIds(): Promise<Record<string, Set<string>>> {
+  const blocked: Record<string, Set<string>> = {
+    entry: new Set<string>(),
+    tag: new Set<string>(),
+    media: new Set<string>(),
+  }
+  for (const item of await errorRecords()) {
+    if (item.paused && blocked[item.kind]) blocked[item.kind].add(item.id)
+  }
+  return blocked
 }
 
 function conflictId(value: unknown): string {
@@ -60,8 +86,7 @@ async function attachServerConflict(server: Entry): Promise<void> {
   const list = Array.isArray(row?.value) ? (row.value as Array<Record<string, unknown>>) : []
   const index = list.findIndex((item) => conflictId(item) === server.id)
   if (index < 0) return
-  const old = list[index] as Record<string, unknown>
-  list[index] = { ...old, entryId: server.id, server }
+  list[index] = { ...list[index], entryId: server.id, server }
   await db.meta.put({ key: "conflicts", value: list })
 }
 
@@ -69,9 +94,15 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
   let serverTime = ""
   let hadWork = false
   for (;;) {
-    const entries = await db.entries.where("dirty").equals(1).limit(BATCH).toArray()
-    const tags = await db.tags.where("dirty").equals(1).limit(BATCH).toArray()
-    const mediaMeta = await db.media.where("dirty").equals(1).limit(BATCH).toArray()
+    const blocked = await blockedIds()
+    const [allEntries, allTags, allMedia] = await Promise.all([
+      db.entries.where("dirty").equals(1).toArray(),
+      db.tags.where("dirty").equals(1).toArray(),
+      db.media.where("dirty").equals(1).toArray(),
+    ])
+    const entries = allEntries.filter((item) => !blocked.entry.has(item.id)).slice(0, BATCH)
+    const tags = allTags.filter((item) => !blocked.tag.has(item.id)).slice(0, BATCH)
+    const mediaMeta = allMedia.filter((item) => !blocked.media.has(item.id)).slice(0, BATCH)
     if (!entries.length && !tags.length && !mediaMeta.length) {
       return { serverTime, complete: true, hadWork }
     }
@@ -94,11 +125,10 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
       }
     }
 
-    const sendableMedia = mediaMeta.filter((item) => !uploadFailed.has(item.id))
     const result = await pushBatch({
       entries: entries.map(toWireEntry),
       tags: tags.map(toWireTag),
-      mediaMeta: sendableMedia.map(toWireMediaMetaPush),
+      mediaMeta: mediaMeta.filter((item) => !uploadFailed.has(item.id)).map(toWireMediaMetaPush),
     })
     serverTime = result.serverTime
     let reconciledDuplicate = false
@@ -107,24 +137,36 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
       for (const item of result.entries) {
         if (item.status === "applied") {
           await db.entries.update(item.id, { dirty: 0 })
+          await clearError("entry", item.id)
         } else if (item.status === "stale") {
           const local = await db.entries.get(item.id)
           if (local) {
             await stashConflict(local)
             await db.entries.update(item.id, { dirty: 0 })
           }
+          await clearError("entry", item.id)
         } else if (item.status === "error") {
           await noteError("entry", item.id, item.message)
         }
       }
       for (const item of result.tags) {
-        if (item.status === "applied") await db.tags.update(item.id, { dirty: 0 })
-        else if (await reconcileDuplicateTag(item)) reconciledDuplicate = true
-        else if (item.status === "error") await noteError("tag", item.id, item.message)
+        if (item.status === "applied") {
+          await db.tags.update(item.id, { dirty: 0 })
+          await clearError("tag", item.id)
+        } else if (await reconcileDuplicateTag(item)) {
+          reconciledDuplicate = true
+          await clearError("tag", item.id)
+        } else if (item.status === "error") {
+          await noteError("tag", item.id, item.message)
+        }
       }
       for (const item of result.mediaMeta) {
-        if (item.status === "applied") await db.media.update(item.id, { dirty: 0 })
-        else if (item.status === "error") await noteError("media", item.id, item.message)
+        if (item.status === "applied") {
+          await db.media.update(item.id, { dirty: 0 })
+          await clearError("media", item.id)
+        } else if (item.status === "error") {
+          await noteError("media", item.id, item.message)
+        }
       }
     })
 
@@ -133,7 +175,7 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
       result.entries.some((item) => item.status === "applied" || item.status === "stale") ||
       result.tags.some((item) => item.status === "applied") ||
       result.mediaMeta.some((item) => item.status === "applied")
-    if (!progressed) return { serverTime, complete: false, hadWork }
+    if (!progressed && uploadFailed.size === 0) return { serverTime, complete: false, hadWork }
   }
 }
 
@@ -168,7 +210,6 @@ async function pullAll(since: string): Promise<void> {
           await db.entries.put({ ...incoming, dirty: 0 })
           continue
         }
-
         if (local.dirty === 1) {
           if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
             await stashConflict(local, incoming)
@@ -176,7 +217,6 @@ async function pullAll(since: string): Promise<void> {
           }
           continue
         }
-
         await attachServerConflict(incoming)
         if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
           await stashConflict(local, incoming)
@@ -215,13 +255,18 @@ export async function runSync(): Promise<void> {
 }
 
 async function noteError(kind: string, id: string, message?: string): Promise<void> {
-  const row = await db.meta.get("syncErrors")
-  const list = Array.isArray(row?.value) ? (row.value as Array<Record<string, unknown>>) : []
-  const hit = list.find((item) => item.id === id)
-  const count = typeof hit?.count === "number" ? hit.count + 1 : 1
-  const next = list.filter((item) => item.id !== id)
-  if (count <= MAX_ERRORS) next.push({ kind, id, message, count, at: utcNow() })
+  const list = await errorRecords()
+  const hit = list.find((item) => item.kind === kind && item.id === id)
+  const count = (hit?.count ?? 0) + 1
+  const next = list.filter((item) => item.kind !== kind || item.id !== id)
+  next.push({ kind, id, message, count, at: utcNow(), paused: count >= MAX_ERRORS })
   await db.meta.put({ key: "syncErrors", value: next })
+}
+
+async function clearError(kind: string, id: string): Promise<void> {
+  const list = await errorRecords()
+  const next = list.filter((item) => item.kind !== kind || item.id !== id)
+  if (next.length !== list.length) await db.meta.put({ key: "syncErrors", value: next })
 }
 
 async function mergeTags(rows: WireTag[]): Promise<void> {
@@ -229,7 +274,6 @@ async function mergeTags(rows: WireTag[]): Promise<void> {
     const incoming = fromWireTag(wire)
     const local = await db.tags.get(wire.id)
     if (local) {
-      // 未上行的本地标签不能被下行覆盖；干净标签则接受远端重命名和颜色变化。
       if (local.dirty === 0) await db.tags.put(incoming)
       continue
     }
@@ -244,7 +288,6 @@ async function mergeMediaMeta(rows: WireMediaMeta[]): Promise<void> {
     const local = await db.media.get(wire.id)
     if (local) {
       if (local.dirty === 1) {
-        // 本地关联和排序仍待上传时，只补服务端图片地址，不覆盖本地真相。
         await db.media.update(wire.id, {
           remoteUrl: patch.remoteUrl,
           thumbRemoteUrl: patch.thumbRemoteUrl,

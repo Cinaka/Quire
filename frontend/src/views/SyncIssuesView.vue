@@ -31,9 +31,7 @@
         <p v-else>云端版本尚未拉取；可以先保留本地并重新上传。</p>
         <div class="actions">
           <button type="button" @click="resolve(item.entryId, 'local')">保留本地</button>
-          <button v-if="item.server" type="button" class="danger" @click="resolve(item.entryId, 'server')">
-            采用云端
-          </button>
+          <button v-if="item.server" type="button" class="danger" @click="resolve(item.entryId, 'server')">采用云端</button>
         </div>
       </article>
     </section>
@@ -44,7 +42,10 @@
       <article v-for="item in errors" :key="`${item.kind}:${item.id}`" class="issue">
         <strong>{{ item.kind }} · {{ item.id }}</strong>
         <p>{{ item.message || "未知错误" }} · 已尝试 {{ item.count }} 次</p>
-        <button type="button" @click="dismiss(item.kind, item.id)">清除记录并重试</button>
+        <p v-if="item.paused" class="paused">已暂停自动重试，避免持续消耗网络与电量。</p>
+        <button type="button" @click="dismiss(item.kind, item.id)">
+          {{ item.paused ? "解除暂停并重试" : "清除记录并重试" }}
+        </button>
       </article>
     </section>
   </main>
@@ -55,12 +56,7 @@ import { onMounted, ref } from "vue"
 import { useRouter } from "vue-router"
 
 import { runSync } from "@/api/sync"
-import {
-  syncRepo,
-  type PendingSyncItem,
-  type SyncConflict,
-  type SyncErrorItem,
-} from "@/repo"
+import { syncRepo, type PendingSyncItem, type SyncConflict, type SyncErrorItem } from "@/repo"
 
 const router = useRouter()
 const pending = ref<PendingSyncItem[]>([])
@@ -74,9 +70,7 @@ function kindLabel(kind: PendingSyncItem["kind"]): string {
 
 async function load(): Promise<void> {
   const [nextPending, nextConflicts, nextErrors] = await Promise.all([
-    syncRepo.pending(),
-    syncRepo.conflicts(),
-    syncRepo.errors(),
+    syncRepo.pending(), syncRepo.conflicts(), syncRepo.errors(),
   ])
   pending.value = nextPending
   conflicts.value = nextConflicts
@@ -85,12 +79,7 @@ async function load(): Promise<void> {
 
 async function retryAll(): Promise<void> {
   busy.value = true
-  try {
-    await runSync()
-    await load()
-  } finally {
-    busy.value = false
-  }
+  try { await runSync(); await load() } finally { busy.value = false }
 }
 
 async function resolve(entryId: string, strategy: "local" | "server"): Promise<void> {
@@ -120,6 +109,7 @@ h1, h2 { margin: 0; font-family: var(--font-cn-serif); font-weight: normal; font
 .issue strong { color: var(--color-ink); font-size: 15px; overflow-wrap: anywhere; }
 .issue p, .note { margin: 6px 0; color: var(--color-ink-faint); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .issue code { color: var(--color-ink-faint); font-size: 10px; overflow-wrap: anywhere; }
+.paused { color: var(--color-ji) !important; }
 .actions { display: flex; gap: 8px; }
 button { padding: 7px 10px; border: 1px solid var(--line-soft); border-radius: var(--radius-card); background: transparent; color: var(--color-ink-soft); cursor: pointer; }
 button.danger { color: var(--color-ji); }
