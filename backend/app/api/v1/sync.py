@@ -127,7 +127,14 @@ async def changes(
 ) -> Envelope[dict]:
     if since is not None and since.tzinfo is not None:
         since = since.astimezone(timezone.utc).replace(tzinfo=None)
-    query = select(DiaryEntry).where(DiaryEntry.user_id == user.id)
+
+    # 先固定本页的高水位，再执行查询。若变更恰好在 SELECT 与响应之间写入，
+    # 它的 updated_at 会晚于此高水位，因此必定留给下一轮同步，不会被游标跳过。
+    high_water = utcnow()
+    query = select(DiaryEntry).where(
+        DiaryEntry.user_id == user.id,
+        DiaryEntry.updated_at <= high_water,
+    )
     if since is not None and after_id is not None:
         query = query.where(or_(DiaryEntry.updated_at > since, and_(DiaryEntry.updated_at == since, DiaryEntry.id > after_id)))
     elif since is not None:
@@ -148,7 +155,7 @@ async def changes(
         item["updated_at"] = row.updated_at
         entry_items.append(item)
     last = entries[-1] if entries else None
-    cursor_time = last.updated_at if has_more and last is not None else utcnow()
+    cursor_time = last.updated_at if has_more and last is not None else high_water
     cursor_id = str(last.id) if has_more and last is not None else None
     return ok({
         "server_time": cursor_time, "cursor_id": cursor_id, "has_more": has_more,
