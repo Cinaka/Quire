@@ -32,14 +32,28 @@ void repo.mediaRepo
   .catch((err) => console.warn("[quire] 图片对账 / 孤儿清理失败", err))
 
 let syncTimer: number | null = null
+let retryDelay = 15_000
+const MAX_RETRY_DELAY = 5 * 60_000
 
 function scheduleSync(delay = 5_000): void {
   if (!isLoggedIn()) return
   if (syncTimer !== null) window.clearTimeout(syncTimer)
   syncTimer = window.setTimeout(() => {
     syncTimer = null
-    void runSync()
+    void runBackgroundSync()
   }, delay)
+}
+
+async function runBackgroundSync(): Promise<void> {
+  if (!isLoggedIn() || !navigator.onLine) return
+  try {
+    await runSync()
+    retryDelay = 15_000
+  } catch (error) {
+    console.warn(`[quire] 后台同步失败，将在 ${Math.round(retryDelay / 1000)} 秒后重试`, error)
+    scheduleSync(retryDelay)
+    retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY)
+  }
 }
 
 // 所有本地写操作统一触发五秒 debounce。同步引擎自己造成的 dirty 清零也会
@@ -54,8 +68,11 @@ db.media.hook("creating", () => scheduleSync())
 db.media.hook("updating", () => scheduleSync())
 db.media.hook("deleting", () => scheduleSync())
 
-if (isLoggedIn()) void runSync()
-window.addEventListener("online", () => scheduleSync(0))
+if (isLoggedIn()) scheduleSync(0)
+window.addEventListener("online", () => {
+  retryDelay = 15_000
+  scheduleSync(0)
+})
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") scheduleSync(0)
 })
