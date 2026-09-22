@@ -18,6 +18,11 @@ class User(TimestampMixin, Base):
     nickname: Mapped[str | None] = mapped_column(String(64))
     avatar: Mapped[str | None] = mapped_column(String(512))
     timezone: Mapped[str] = mapped_column(
-        String(64), nullable=False, server_default="Asia/Shanghai"
+        String(64), nullable=False, default="Asia/Shanghai", server_default="Asia/Shanghai"
     )
-    token_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    token_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
