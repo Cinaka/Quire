@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.entries import EntryRequest, to_response, upsert_entry
@@ -56,6 +56,21 @@ class PushRequest(BaseModel):
     media_meta: list[SyncMedia] = Field(default_factory=list, max_length=50)
 
 
+async def touch_entries(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    entry_ids: set[uuid.UUID],
+) -> None:
+    """让只改标签或图片的变更也进入以 Entry 为轴的增量下行。"""
+    if not entry_ids:
+        return
+    await db.execute(
+        update(DiaryEntry)
+        .where(DiaryEntry.user_id == user_id, DiaryEntry.id.in_(entry_ids))
+        .values(updated_at=utcnow())
+    )
+
+
 async def push_tag(db: AsyncSession, user: User, item: SyncTag) -> dict:
     existing = await db.scalar(select(Tag).where(Tag.id == item.id, Tag.user_id == user.id))
     duplicate = await db.scalar(select(Tag).where(Tag.user_id == user.id, Tag.name == item.name))
@@ -65,12 +80,22 @@ async def push_tag(db: AsyncSession, user: User, item: SyncTag) -> dict:
             "status": "error",
             "message": f"duplicate_tag:{duplicate.id}",
         }
+
     if existing is None:
-        existing = Tag(id=item.id, user_id=user.id, name=item.name, color=item.color)
-        db.add(existing)
+        db.add(Tag(id=item.id, user_id=user.id, name=item.name, color=item.color))
     else:
+        changed = existing.name != item.name or existing.color != item.color
         existing.name = item.name
         existing.color = item.color
+        if changed:
+            linked_ids = set(
+                (
+                    await db.scalars(
+                        select(EntryTag.entry_id).where(EntryTag.tag_id == item.id)
+                    )
+                ).all()
+            )
+            await touch_entries(db, user.id, linked_ids)
     return {"id": str(item.id), "status": "applied"}
 
 
@@ -78,6 +103,7 @@ async def push_media(db: AsyncSession, user: User, item: SyncMedia) -> dict:
     existing = await db.scalar(
         select(Media).where(Media.id == item.id, Media.user_id == user.id)
     )
+    old_entry_id = existing.entry_id if existing is not None else None
     if existing is None:
         existing = Media(
             id=item.id,
@@ -92,6 +118,8 @@ async def push_media(db: AsyncSession, user: User, item: SyncMedia) -> dict:
     existing.width = item.width
     existing.height = item.height
     existing.size = item.size
+    affected = {value for value in (old_entry_id, item.entry_id) if value is not None}
+    await touch_entries(db, user.id, affected)
     return {"id": str(item.id), "status": "applied"}
 
 
@@ -168,11 +196,7 @@ async def changes(
     ids = [row.id for row in entries]
 
     tag_rows = (
-        list(
-            (
-                await db.execute(select(EntryTag).where(EntryTag.entry_id.in_(ids)))
-            ).scalars()
-        )
+        list((await db.execute(select(EntryTag).where(EntryTag.entry_id.in_(ids)))).scalars())
         if ids
         else []
     )
