@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.media_storage import media_disk_paths, remove_media_paths
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models.media import Media
@@ -113,29 +114,40 @@ async def upload_media(
     disk_dir.mkdir(parents=True, exist_ok=True)
 
     suffix = MIME_SUFFIX[mime]
-    (disk_dir / f"{media_id}{suffix}").write_bytes(data)
+    original_path = disk_dir / f"{media_id}{suffix}"
     url = f"{settings.MEDIA_PUBLIC_PREFIX}/{relative_dir.as_posix()}/{media_id}{suffix}"
+    written_paths = [original_path]
+    committed = False
+    try:
+        original_path.write_bytes(data)
 
-    thumb_url = ""
-    if thumb_data is not None and thumb_mime is not None:
-        thumb_suffix = MIME_SUFFIX[thumb_mime]
-        (disk_dir / f"{media_id}_thumb{thumb_suffix}").write_bytes(thumb_data)
-        thumb_url = (
-            f"{settings.MEDIA_PUBLIC_PREFIX}/{relative_dir.as_posix()}"
-            f"/{media_id}_thumb{thumb_suffix}"
-        )
+        thumb_url = ""
+        if thumb_data is not None and thumb_mime is not None:
+            thumb_suffix = MIME_SUFFIX[thumb_mime]
+            thumb_path = disk_dir / f"{media_id}_thumb{thumb_suffix}"
+            written_paths.append(thumb_path)
+            thumb_path.write_bytes(thumb_data)
+            thumb_url = (
+                f"{settings.MEDIA_PUBLIC_PREFIX}/{relative_dir.as_posix()}"
+                f"/{media_id}_thumb{thumb_suffix}"
+            )
 
-    row = existing or Media(id=media_id, user_id=user.id, url=url)
-    if existing is None:
-        db.add(row)
-    row.entry_id = entry_id
-    row.sort_order = sort_order
-    row.width = width
-    row.height = height
-    row.size = len(data)
-    row.url = url
-    row.thumb_url = thumb_url
-    await db.commit()
+        row = existing or Media(id=media_id, user_id=user.id, url=url)
+        if existing is None:
+            db.add(row)
+        row.entry_id = entry_id
+        row.sort_order = sort_order
+        row.width = width
+        row.height = height
+        row.size = len(data)
+        row.url = url
+        row.thumb_url = thumb_url
+        await db.commit()
+        committed = True
+    finally:
+        if not committed:
+            remove_media_paths(written_paths)
+
     await db.refresh(row)
     return ok(to_response(row))
 
@@ -164,13 +176,8 @@ async def delete_media(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="图片不存在")
-    for public_path in (row.url, row.thumb_url or ""):
-        if not public_path:
-            continue
-        relative = public_path.removeprefix(settings.MEDIA_PUBLIC_PREFIX).lstrip("/")
-        path = Path(settings.MEDIA_ROOT) / relative
-        if path.exists():
-            path.unlink()
+    paths = media_disk_paths(row.url, row.thumb_url or "")
     await db.delete(row)
     await db.commit()
+    remove_media_paths(paths)
     return ok(None)

@@ -8,7 +8,7 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.entries import EntryRequest, to_response, upsert_entry
-from app.core.config import settings
+from app.core.media_storage import media_disk_paths, remove_media_paths
 from app.core.security import get_current_user
 from app.core.time import utcnow
 from app.db.session import get_db
@@ -57,13 +57,6 @@ async def touch_entries(db: AsyncSession, user_id: uuid.UUID, entry_ids: set[uui
         .values(updated_at=utcnow())
     )
 
-def remove_media_files(row: Media) -> None:
-    for public_path in (row.url, row.thumb_url or ""):
-        if not public_path: continue
-        relative = public_path.removeprefix(settings.MEDIA_PUBLIC_PREFIX).lstrip("/")
-        path = Path(settings.MEDIA_ROOT) / relative
-        if path.exists(): path.unlink()
-
 async def push_tag(db: AsyncSession, user: User, item: SyncTag) -> dict:
     existing = await db.scalar(select(Tag).where(Tag.id == item.id, Tag.user_id == user.id))
     duplicate = await db.scalar(select(Tag).where(Tag.user_id == user.id, Tag.name == item.name))
@@ -79,15 +72,19 @@ async def push_tag(db: AsyncSession, user: User, item: SyncTag) -> dict:
             await touch_entries(db, user.id, linked_ids)
     return {"id": str(item.id), "status": "applied"}
 
-async def push_media(db: AsyncSession, user: User, item: SyncMedia) -> dict:
+async def push_media(
+    db: AsyncSession,
+    user: User,
+    item: SyncMedia,
+) -> tuple[dict, list[Path]]:
     existing = await db.scalar(select(Media).where(Media.id == item.id, Media.user_id == user.id))
     old_entry_id = existing.entry_id if existing is not None else None
     if item.entry_id is None:
+        paths = media_disk_paths(existing.url, existing.thumb_url or "") if existing else []
         if existing is not None:
-            remove_media_files(existing)
             await db.delete(existing)
         await touch_entries(db, user.id, {old_entry_id} if old_entry_id else set())
-        return {"id": str(item.id), "status": "applied"}
+        return {"id": str(item.id), "status": "applied"}, paths
     if existing is None:
         existing = Media(id=item.id, user_id=user.id, entry_id=item.entry_id, url="", thumb_url="")
         db.add(existing)
@@ -97,13 +94,14 @@ async def push_media(db: AsyncSession, user: User, item: SyncMedia) -> dict:
     existing.height = item.height
     existing.size = item.size
     await touch_entries(db, user.id, {value for value in (old_entry_id, item.entry_id) if value})
-    return {"id": str(item.id), "status": "applied"}
+    return {"id": str(item.id), "status": "applied"}, []
 
 @router.post("/push")
 async def push(body: PushRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> Envelope[dict]:
     entries: list[dict] = []
     tags: list[dict] = []
     media_meta: list[dict] = []
+    media_paths_to_remove: list[Path] = []
     for item in body.entries:
         entry, result = await upsert_entry(db, user, item.id, EntryRequest(**item.model_dump(exclude={"id"})))
         if result == "stale":
@@ -113,8 +111,12 @@ async def push(body: PushRequest, user: User = Depends(get_current_user), db: As
             })
         else: entries.append({"id": str(item.id), "status": "applied"})
     for item in body.tags: tags.append(await push_tag(db, user, item))
-    for item in body.media_meta: media_meta.append(await push_media(db, user, item))
+    for item in body.media_meta:
+        result, paths = await push_media(db, user, item)
+        media_meta.append(result)
+        media_paths_to_remove.extend(paths)
     await db.commit()
+    remove_media_paths(media_paths_to_remove)
     return ok({"server_time": utcnow(), "entries": entries, "tags": tags, "media_meta": media_meta})
 
 @router.get("/changes")
@@ -131,7 +133,6 @@ async def changes(
     if until is not None and until.tzinfo is not None:
         until = until.astimezone(timezone.utc).replace(tzinfo=None)
 
-    # MySQL DATETIME(3) 只保存毫秒。高水位也截断到毫秒，避免游标精度高于数据列。
     now = utcnow()
     now = now.replace(microsecond=(now.microsecond // 1000) * 1000)
     high_water = until if until is not None and until <= now else now
@@ -142,15 +143,12 @@ async def changes(
     if since is not None and after_id is not None:
         query = query.where(or_(DiaryEntry.updated_at > since, and_(DiaryEntry.updated_at == since, DiaryEntry.id > after_id)))
     elif since is not None:
-        # 跨轮同步重放边界毫秒，防止查询期间同毫秒落库的变更被永久跳过。
         query = query.where(DiaryEntry.updated_at >= since)
     page = list((await db.execute(query.order_by(DiaryEntry.updated_at, DiaryEntry.id).limit(limit + 1))).scalars())
     has_more = len(page) > limit
     entries = page[:limit]
     ids = [row.id for row in entries]
     tag_rows = list((await db.execute(select(EntryTag).where(EntryTag.entry_id.in_(ids)))).scalars()) if ids else []
-    # 标签数量通常很小，而且 Tag 尚无独立变更游标。每轮返回完整标签目录，
-    # 保证未关联到任何日记的新标签、重命名和颜色修改也能传播到其他设备。
     tags = list((await db.execute(
         select(Tag).where(Tag.user_id == user.id).order_by(Tag.created_at, Tag.id)
     )).scalars())
