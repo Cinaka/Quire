@@ -16,7 +16,7 @@ const BATCH = 50
 const MAX_ERRORS = 3
 const FULL_PULL_CURSOR = "1970-01-01T00:00:00.000Z"
 const DUPLICATE_TAG_PREFIX = "duplicate_tag:"
-let running = false
+let running: Promise<void> | null = null
 
 interface ConflictRecord {
   entryId: string
@@ -297,25 +297,29 @@ async function pullAll(since: string): Promise<void> {
   await clearPendingPurges(purges)
 }
 
-export async function runSync(): Promise<void> {
-  if (running || !(await meta("ownerUserId"))) return
-  running = true
-  try {
-    const pushed = await pushAll()
-    if (!pushed.complete) return
-    const since = await meta("lastSyncAt")
-    if (!since) {
-      if (pushed.hadWork) {
-        await db.meta.put({ key: "lastSyncAt", value: FULL_PULL_CURSOR })
-        return
-      }
-      await pullAll(FULL_PULL_CURSOR)
+async function syncOnce(): Promise<void> {
+  if (!(await meta("ownerUserId"))) return
+  const pushed = await pushAll()
+  if (!pushed.complete) return
+  const since = await meta("lastSyncAt")
+  if (!since) {
+    if (pushed.hadWork) {
+      await db.meta.put({ key: "lastSyncAt", value: FULL_PULL_CURSOR })
       return
     }
-    await pullAll(since)
-  } finally {
-    running = false
+    await pullAll(FULL_PULL_CURSOR)
+    return
   }
+  await pullAll(since)
+}
+
+export function runSync(): Promise<void> {
+  if (running) return running
+  const task = syncOnce().finally(() => {
+    if (running === task) running = null
+  })
+  running = task
+  return task
 }
 
 async function noteError(kind: string, id: string, message?: string): Promise<void> {
