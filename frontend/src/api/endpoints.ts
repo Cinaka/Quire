@@ -24,6 +24,7 @@ interface RawPush {
 
 interface RawPull {
   server_time: string
+  sync_until: string
   cursor_id: string | null
   has_more: boolean
   entries: WireEntry[]
@@ -48,15 +49,18 @@ export async function pushBatch(body: PushBody): Promise<PushResult> {
 export async function pullChanges(params: {
   since: string
   afterId?: string
+  until?: string
   limit: number
 }): Promise<PullResult> {
   const d = await get<RawPull>("/sync/changes", {
     since: params.since,
     after_id: params.afterId || undefined,
+    until: params.until || undefined,
     limit: params.limit,
   })
   return {
     serverTime: d.server_time,
+    syncUntil: d.sync_until,
     cursorId: d.cursor_id ?? "",
     hasMore: Boolean(d.has_more),
     entries: d.entries ?? [],

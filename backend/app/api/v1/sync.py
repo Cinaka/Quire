@@ -121,16 +121,20 @@ async def push(body: PushRequest, user: User = Depends(get_current_user), db: As
 async def changes(
     since: datetime | None = None,
     after_id: uuid.UUID | None = None,
+    until: datetime | None = None,
     limit: int = Query(200, ge=1, le=500),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Envelope[dict]:
     if since is not None and since.tzinfo is not None:
         since = since.astimezone(timezone.utc).replace(tzinfo=None)
+    if until is not None and until.tzinfo is not None:
+        until = until.astimezone(timezone.utc).replace(tzinfo=None)
 
-    # 先固定本页的高水位，再执行查询。若变更恰好在 SELECT 与响应之间写入，
-    # 它的 updated_at 会晚于此高水位，因此必定留给下一轮同步，不会被游标跳过。
-    high_water = utcnow()
+    # MySQL DATETIME(3) 只保存毫秒。高水位也截断到毫秒，避免游标精度高于数据列。
+    now = utcnow()
+    now = now.replace(microsecond=(now.microsecond // 1000) * 1000)
+    high_water = until if until is not None and until <= now else now
     query = select(DiaryEntry).where(
         DiaryEntry.user_id == user.id,
         DiaryEntry.updated_at <= high_water,
@@ -138,7 +142,8 @@ async def changes(
     if since is not None and after_id is not None:
         query = query.where(or_(DiaryEntry.updated_at > since, and_(DiaryEntry.updated_at == since, DiaryEntry.id > after_id)))
     elif since is not None:
-        query = query.where(DiaryEntry.updated_at > since)
+        # 跨轮同步重放边界毫秒，防止查询期间同毫秒落库的变更被永久跳过。
+        query = query.where(DiaryEntry.updated_at >= since)
     page = list((await db.execute(query.order_by(DiaryEntry.updated_at, DiaryEntry.id).limit(limit + 1))).scalars())
     has_more = len(page) > limit
     entries = page[:limit]
@@ -158,7 +163,8 @@ async def changes(
     cursor_time = last.updated_at if has_more and last is not None else high_water
     cursor_id = str(last.id) if has_more and last is not None else None
     return ok({
-        "server_time": cursor_time, "cursor_id": cursor_id, "has_more": has_more,
+        "server_time": cursor_time, "sync_until": high_water,
+        "cursor_id": cursor_id, "has_more": has_more,
         "entries": entry_items,
         "tags": [{"id": row.id, "name": row.name, "color": row.color, "created_at": row.created_at} for row in tags],
         "media_meta": [{

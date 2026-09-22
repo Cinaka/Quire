@@ -252,9 +252,16 @@ async function reconcileDuplicateTag(item: PushItemResult): Promise<boolean> {
 async function pullAll(since: string): Promise<void> {
   let cursor = since
   let afterId = ""
+  let syncUntil = ""
   const purges = await pendingPurgeIds()
   for (;;) {
-    const result = await pullChanges({ since: cursor, afterId: afterId || undefined, limit: 200 })
+    const result = await pullChanges({
+      since: cursor,
+      afterId: afterId || undefined,
+      until: syncUntil || undefined,
+      limit: 200,
+    })
+    if (!syncUntil) syncUntil = result.syncUntil
     await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
       for (const wire of result.entries) {
         if (purges.has(wire.id)) continue
@@ -273,8 +280,6 @@ async function pullAll(since: string): Promise<void> {
         }
         await attachServerConflict(incoming)
         if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
-          // 只有两边都是正文版本时才需要保留输版。
-          // 远端删除和远端恢复都是明确状态转换，不应让干净副本产生伪冲突。
           if (local.isDeleted === 0 && incoming.isDeleted === 0) {
             await stashConflict(local, incoming)
           }
@@ -288,7 +293,7 @@ async function pullAll(since: string): Promise<void> {
     afterId = result.cursorId
     if (!result.hasMore) break
   }
-  await db.meta.put({ key: "lastSyncAt", value: cursor })
+  await db.meta.put({ key: "lastSyncAt", value: syncUntil || cursor })
   await clearPendingPurges(purges)
 }
 

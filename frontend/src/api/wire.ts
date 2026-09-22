@@ -53,6 +53,7 @@ export interface PushResult {
 
 export interface PullResult {
   serverTime: string
+  syncUntil: string
   cursorId: string
   hasMore: boolean
   entries: WireEntry[]
