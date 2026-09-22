@@ -18,9 +18,51 @@ const FULL_PULL_CURSOR = "1970-01-01T00:00:00.000Z"
 const DUPLICATE_TAG_PREFIX = "duplicate_tag:"
 let running = false
 
+interface ConflictRecord {
+  entryId: string
+  at: string
+  local: Entry
+  server?: Entry
+}
+
 async function meta(key: string): Promise<string> {
   const row = await db.meta.get(key)
   return typeof row?.value === "string" ? row.value : ""
+}
+
+function conflictId(value: unknown): string {
+  if (!value || typeof value !== "object") return ""
+  const row = value as { entryId?: unknown; local?: Entry; server?: Entry }
+  if (typeof row.entryId === "string") return row.entryId
+  return row.local?.id ?? row.server?.id ?? ""
+}
+
+async function stashConflict(local: Entry, server?: Entry): Promise<void> {
+  const row = await db.meta.get("conflicts")
+  const list = Array.isArray(row?.value) ? (row.value as Array<Record<string, unknown>>) : []
+  const old = list.find((item) => conflictId(item) === local.id) as
+    | { server?: Entry }
+    | undefined
+  const next: ConflictRecord = {
+    entryId: local.id,
+    at: utcNow(),
+    local: { ...local, dirty: 0 },
+    server: server ?? old?.server,
+  }
+  await db.meta.put({
+    key: "conflicts",
+    value: [...list.filter((item) => conflictId(item) !== local.id), next].slice(-100),
+  })
+}
+
+async function attachServerConflict(server: Entry): Promise<void> {
+  const row = await db.meta.get("conflicts")
+  const list = Array.isArray(row?.value) ? (row.value as Array<Record<string, unknown>>) : []
+  const index = list.findIndex((item) => conflictId(item) === server.id)
+  if (index < 0) return
+  const old = list[index] as Record<string, unknown>
+  list[index] = { ...old, entryId: server.id, server }
+  await db.meta.put({ key: "conflicts", value: list })
 }
 
 async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWork: boolean }> {
@@ -63,8 +105,18 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
 
     await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
       for (const item of result.entries) {
-        if (item.status === "applied") await db.entries.update(item.id, { dirty: 0 })
-        else if (item.status === "error") await noteError("entry", item.id, item.message)
+        if (item.status === "applied") {
+          await db.entries.update(item.id, { dirty: 0 })
+        } else if (item.status === "stale") {
+          const local = await db.entries.get(item.id)
+          if (local) {
+            // 先把输掉的本地版本完整留档，再解除 dirty 阻塞，让 pull 获取胜出的云端版本。
+            await stashConflict(local)
+            await db.entries.update(item.id, { dirty: 0 })
+          }
+        } else if (item.status === "error") {
+          await noteError("entry", item.id, item.message)
+        }
       }
       for (const item of result.tags) {
         if (item.status === "applied") await db.tags.update(item.id, { dirty: 0 })
@@ -79,7 +131,7 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
 
     const progressed =
       reconciledDuplicate ||
-      result.entries.some((item) => item.status === "applied") ||
+      result.entries.some((item) => item.status === "applied" || item.status === "stale") ||
       result.tags.some((item) => item.status === "applied") ||
       result.mediaMeta.some((item) => item.status === "applied")
     if (!progressed) return { serverTime, complete: false, hadWork }
@@ -108,18 +160,26 @@ async function pullAll(since: string): Promise<void> {
   let cursor = since
   let afterId = ""
   for (;;) {
-    const result = await pullChanges({
-      since: cursor,
-      afterId: afterId || undefined,
-      limit: 200,
-    })
+    const result = await pullChanges({ since: cursor, afterId: afterId || undefined, limit: 200 })
     await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
       for (const wire of result.entries) {
         const incoming: Entry = fromWireEntry(wire)
         const local = await db.entries.get(incoming.id)
-        if (!local) await db.entries.put({ ...incoming, dirty: 0 })
-        else if (local.dirty === 1) await stashConflict(incoming)
-        else if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
+        if (!local) {
+          await db.entries.put({ ...incoming, dirty: 0 })
+          continue
+        }
+
+        if (local.dirty === 1) {
+          if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
+            await stashConflict(local, incoming)
+            await db.entries.put({ ...incoming, dirty: 0 })
+          }
+          continue
+        }
+
+        await attachServerConflict(incoming)
+        if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
           await db.entries.put({ ...incoming, dirty: 0 })
         }
       }
@@ -162,13 +222,6 @@ async function noteError(kind: string, id: string, message?: string): Promise<vo
   const next = list.filter((item) => item.id !== id)
   if (count <= MAX_ERRORS) next.push({ kind, id, message, count, at: utcNow() })
   await db.meta.put({ key: "syncErrors", value: next })
-}
-
-async function stashConflict(incoming: Entry): Promise<void> {
-  const row = await db.meta.get("conflicts")
-  const list = Array.isArray(row?.value) ? (row.value as unknown[]) : []
-  list.push({ at: utcNow(), server: incoming })
-  await db.meta.put({ key: "conflicts", value: list.slice(-100) })
 }
 
 async function mergeTags(rows: WireTag[]): Promise<void> {

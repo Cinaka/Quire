@@ -9,12 +9,19 @@
     <section class="card">
       <h2>冲突留档</h2>
       <p v-if="!conflicts.length" class="note">暂无冲突。</p>
-      <article v-for="item in conflicts" :key="`${item.server.id}:${item.at}`" class="issue">
-        <strong>{{ item.server.title || "无题" }}</strong>
-        <p>{{ item.server.entryDate }} · 云端编辑于 {{ item.server.clientUpdatedAt }}</p>
+      <article v-for="item in conflicts" :key="`${item.entryId}:${item.at}`" class="issue">
+        <strong>{{ item.local.title || item.server?.title || "无题" }}</strong>
+        <p>本地编辑于 {{ item.local.clientUpdatedAt }}</p>
+        <p v-if="item.server">云端编辑于 {{ item.server.clientUpdatedAt }}</p>
+        <p v-else>云端版本尚未拉取；可以先保留本地并重新上传。</p>
         <div class="actions">
-          <button type="button" @click="resolve(item.server.id, 'local')">保留本地</button>
-          <button type="button" class="danger" @click="resolve(item.server.id, 'server')">
+          <button type="button" @click="resolve(item.entryId, 'local')">保留本地</button>
+          <button
+            v-if="item.server"
+            type="button"
+            class="danger"
+            @click="resolve(item.entryId, 'server')"
+          >
             采用云端
           </button>
         </div>
@@ -55,7 +62,7 @@ async function load(): Promise<void> {
 
 async function resolve(entryId: string, strategy: "local" | "server"): Promise<void> {
   const label = strategy === "local" ? "保留本地版本" : "采用云端版本"
-  if (!window.confirm(`确定${label}？另一版本仍只保留在本次冲突记录中。`)) return
+  if (!window.confirm(`确定${label}？另一版本会从冲突列表移除。`)) return
   await syncRepo.resolveConflict(entryId, strategy)
   await runSync()
   await load()
