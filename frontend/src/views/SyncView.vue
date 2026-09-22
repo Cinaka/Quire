@@ -21,15 +21,20 @@
           {{ busy ? "正在同步……" : "立即同步" }}
         </button>
         <button
-          v-if="status.conflictCount || status.errorCount"
+          v-if="status.dirtyTotal || status.conflictCount || status.errorCount"
           type="button"
           class="secondary"
           :disabled="busy"
           @click="router.push('/sync/issues')"
         >
-          处理冲突与错误
+          查看待处理项、冲突与错误
         </button>
-        <button type="button" class="secondary" :disabled="busy" @click="router.push('/sync/sessions')">
+        <button
+          type="button"
+          class="secondary"
+          :disabled="busy"
+          @click="router.push('/sync/sessions')"
+        >
           管理登录设备
         </button>
         <button type="button" class="secondary" :disabled="busy" @click="signOut">
@@ -84,10 +89,15 @@ async function syncNow(): Promise<void> {
   try {
     await runSync()
     await refresh()
-    message.value = status.value.dirtyTotal
-      ? `仍有 ${status.value.dirtyTotal} 项待处理，请查看同步错误。`
-      : "同步完成。"
-    failed.value = status.value.dirtyTotal > 0
+    if (status.value.dirtyTotal) {
+      message.value = `仍有 ${status.value.dirtyTotal} 项待处理，可打开下方问题页面查看。`
+      failed.value = true
+    } else if (status.value.conflictCount || status.value.errorCount) {
+      message.value = "数据已传输，但仍有冲突或错误记录需要确认。"
+      failed.value = true
+    } else {
+      message.value = "同步完成。"
+    }
   } catch (error) {
     failed.value = true
     message.value = `同步失败：${(error as Error).message}`
