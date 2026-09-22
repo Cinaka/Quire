@@ -3,21 +3,39 @@ import type { MediaItem } from "@/shared/types"
 import { localMediaRepo } from "./mediaRepo"
 import { db } from "./schema"
 
+function isImageBlob(blob: Blob | null | undefined): blob is Blob {
+  return Boolean(blob && blob.size > 0 && blob.type.toLowerCase().startsWith("image/"))
+}
+
 async function download(url: string): Promise<Blob | null> {
   if (!url || !navigator.onLine) return null
   try {
     const response = await fetch(url, { credentials: "same-origin" })
-    if (!response.ok) return null
-    return await response.blob()
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
+    if (!response.ok || !contentType.startsWith("image/")) return null
+    const blob = await response.blob()
+    return isImageBlob(blob) ? blob : null
   } catch {
     return null
   }
 }
 
 async function ensureOriginal(item: MediaItem): Promise<MediaItem> {
-  if (item.blob.size > 0 || !item.remoteUrl) return item
+  if (isImageBlob(item.blob)) return item
+  if (!item.remoteUrl) return item
+
   const blob = await download(item.remoteUrl)
-  if (!blob) return item
+  if (!blob) {
+    // 旧版开发代理可能把 index.html 缓存成 text/html Blob。清掉错误缓存，
+    // 保留 remoteUrl，下一次联网读取时仍会继续尝试修复。
+    if (item.blob.size > 0) {
+      const empty = new Blob([], { type: item.mime || "image/png" })
+      await db.media.update(item.id, { blob: empty, thumbBlob: null, size: 0 })
+      return { ...item, blob: empty, thumbBlob: null, size: 0 }
+    }
+    return item
+  }
+
   await db.media.update(item.id, {
     blob,
     mime: blob.type || item.mime,
@@ -26,10 +44,7 @@ async function ensureOriginal(item: MediaItem): Promise<MediaItem> {
   return { ...item, blob, mime: blob.type || item.mime, size: blob.size }
 }
 
-/**
- * P2 图片三级回退：本地 Blob → 云端地址并回填 → 缺图占位。
- * 页面仍只使用 mediaRepo，不需要知道图片来自本机还是服务器。
- */
+/** 本地 Blob → 云端图片并回填 → 缺图占位。 */
 export const localFirstMediaRepo = {
   ...localMediaRepo,
 
@@ -41,7 +56,7 @@ export const localFirstMediaRepo = {
   async getThumb(id: string): Promise<Blob | undefined> {
     const item = await localMediaRepo.get(id)
     if (!item) return undefined
-    if (item.thumbBlob) return item.thumbBlob
+    if (isImageBlob(item.thumbBlob)) return item.thumbBlob
 
     if (item.thumbRemoteUrl) {
       const thumb = await download(item.thumbRemoteUrl)
@@ -52,7 +67,8 @@ export const localFirstMediaRepo = {
     }
 
     const ready = await ensureOriginal(item)
-    if (ready.blob.size === 0) return undefined
-    return localMediaRepo.getThumb(id)
+    if (!isImageBlob(ready.blob)) return undefined
+    const thumb = await localMediaRepo.getThumb(id)
+    return isImageBlob(thumb) ? thumb : ready.blob
   },
 }
