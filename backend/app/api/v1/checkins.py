@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from zoneinfo import ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -14,7 +14,7 @@ from app.db.session import get_db
 from app.models.checkin import Checkin
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
-from app.services.checkins import account_local_date, current_streak
+from app.services.checkins import account_local_date, current_streak, month_bounds
 
 router = APIRouter(prefix="/checkins", tags=["checkins"])
 
@@ -23,6 +23,15 @@ class TodayCheckinResponse(BaseModel):
     checkin_date: date
     checked_in: bool
     created: bool
+    current_streak: int
+
+
+class MonthCheckinResponse(BaseModel):
+    year: int
+    month: int
+    checkin_dates: list[date]
+    today: date
+    checked_in_today: bool
     current_streak: int
 
 
@@ -76,6 +85,48 @@ async def checkin_today(
     )
 
 
+async def get_month_checkins(
+    db: AsyncSession,
+    user: User,
+    year: int,
+    month: int,
+    *,
+    now: datetime | None = None,
+) -> MonthCheckinResponse:
+    """读取指定月份签到日期及账号当前签到状态。"""
+    user_id: uuid.UUID = user.id
+    today = account_local_date(user.timezone, now=now)
+    start, end = month_bounds(year, month)
+
+    month_rows = await db.execute(
+        select(Checkin.checkin_date)
+        .where(
+            Checkin.user_id == user_id,
+            Checkin.checkin_date >= start,
+            Checkin.checkin_date < end,
+        )
+        .order_by(Checkin.checkin_date.asc())
+    )
+    checkin_dates = list(month_rows.scalars())
+
+    streak_rows = await db.execute(
+        select(Checkin.checkin_date).where(
+            Checkin.user_id == user_id,
+            Checkin.checkin_date <= today,
+        )
+    )
+    streak_dates = list(streak_rows.scalars())
+
+    return MonthCheckinResponse(
+        year=year,
+        month=month,
+        checkin_dates=checkin_dates,
+        today=today,
+        checked_in_today=today in set(streak_dates),
+        current_streak=current_streak(streak_dates, today),
+    )
+
+
 @router.post("/today")
 async def post_today_checkin(
     user: User = Depends(get_current_user),
@@ -83,6 +134,20 @@ async def post_today_checkin(
 ) -> Envelope[TodayCheckinResponse]:
     try:
         result = await checkin_today(db, user)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(status_code=422, detail="账号时区无效") from exc
+    return ok(result)
+
+
+@router.get("/month")
+async def get_month_checkin_summary(
+    year: int = Query(..., ge=1970, le=9998),
+    month: int = Query(..., ge=1, le=12),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Envelope[MonthCheckinResponse]:
+    try:
+        result = await get_month_checkins(db, user, year, month)
     except ZoneInfoNotFoundError as exc:
         raise HTTPException(status_code=422, detail="账号时区无效") from exc
     return ok(result)
