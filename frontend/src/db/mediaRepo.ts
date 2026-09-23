@@ -78,7 +78,7 @@ export const localMediaRepo = {
    * 并维护 orphanedAt。包含在册与断简：断简图片仍保持关联，恢复不丢。
    *
    * 启动时先 reconcileAll() 再 purgeOrphans()（见 main.ts）：对账只负责
-   * “打上变孤儿的时刻”，真正删除至少要等 24 小时后的下一次启动。
+   * “打上变孤儿的时刻”，真正删除至少要等 24 小时后的下一次维护。
    */
   async reconcileAll(): Promise<number> {
     const entries = await db.entries.toArray()
@@ -103,7 +103,7 @@ export const localMediaRepo = {
         const next = expected.get(id)
         const wantEntryId = next?.entryId ?? ""
         const wantSortOrder = next?.sortOrder ?? 0
-        // 已经是孤儿的保持原有 orphanedAt，不要每次启动都刷新时间戳，
+        // 已经是孤儿的保持原有 orphanedAt，不要每次维护都刷新时间戳，
         // 否则窗口永远走不完，孤儿永不被清。?? item.createdAt 是历史数据
         // （E1 上线前已是孤儿、无 orphanedAt）的入口，行为与今天一致。
         const wantOrphanedAt = next ? null : (item.orphanedAt ?? item.createdAt)
@@ -191,17 +191,16 @@ export const localMediaRepo = {
 
   /**
    * 清理孤儿图片：用户贴了图但最后没保存，或者贴完又删掉了。
-   * 建议在应用启动时跑一次，只清超过 24 小时的，避免误删正在编辑的内容。
+   * 只清超过 24 小时且云端删除已确认（dirty=0）的记录。
    *
-   * 判据是 orphanedAt（变成孤儿的时刻），不是 createdAt。两者在 E 之前等价；
-   * E1 对账与 E2 attach 引入“追溯性变孤儿”后，继续用 createdAt 会把一周前
-   * 贴、今天刚从正文删掉的图在下次启动就直接删光，撤销窗口为零。
+   * dirty=1 的孤儿即使已过期也必须保留：它是待发送给服务端的删除墓碑。
+   * 若设备离线超过 24 小时就先删本地行，服务端原图将永远失去清理信号。
    */
   async purgeOrphans(olderThanHours = 24): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanHours * 3600_000).toISOString()
     const orphans = await db.media.where("entryId").equals("").toArray()
     const stale = orphans
-      .filter((m) => (m.orphanedAt ?? m.createdAt) < cutoff)
+      .filter((m) => m.dirty === 0 && (m.orphanedAt ?? m.createdAt) < cutoff)
       .map((m) => m.id)
     if (stale.length) await db.media.bulkDelete(stale)
     return stale.length
