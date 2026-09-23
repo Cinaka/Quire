@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -36,6 +37,7 @@ class MediaResponse(BaseModel):
     mime: str
     url: str
     thumb_url: str
+    created_at: datetime
 
 
 def detect_image_mime(data: bytes) -> str | None:
@@ -83,6 +85,7 @@ def to_response(row: Media) -> MediaResponse:
         mime=SUFFIX_MIME.get(Path(row.url).suffix.lower(), "application/octet-stream"),
         url=row.url,
         thumb_url=row.thumb_url or "",
+        created_at=row.created_at,
     )
 
 
@@ -168,13 +171,18 @@ async def upload_media(
 @router.get("")
 async def list_media(
     entry_id: uuid.UUID | None = None,
+    since: datetime | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Envelope[list[MediaResponse]]:
+    if since is not None and since.tzinfo is not None:
+        since = since.astimezone(timezone.utc).replace(tzinfo=None)
     query = select(Media).where(Media.user_id == user.id)
     if entry_id:
         query = query.where(Media.entry_id == entry_id)
-    rows = list((await db.execute(query.order_by(Media.created_at))).scalars())
+    if since:
+        query = query.where(Media.created_at > since)
+    rows = list((await db.execute(query.order_by(Media.created_at, Media.id))).scalars())
     return ok([to_response(row) for row in rows])
 
 

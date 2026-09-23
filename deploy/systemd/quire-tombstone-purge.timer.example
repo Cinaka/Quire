@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Quire tombstone cleanup daily
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=quire-tombstone-purge.service
+
+[Install]
+WantedBy=timers.target

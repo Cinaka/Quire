@@ -6,6 +6,7 @@
 
 - `frontend/`：Vue 3、TypeScript、Vite 前端。
 - `backend/`：FastAPI、SQLAlchemy、Alembic 后端。
+- `deploy/`：Nginx 与 systemd 生产部署模板。
 - `doc/`：产品定案、实施清单与验证脚本。
 
 ## 前置环境
@@ -90,13 +91,18 @@ cd backend
 python -m app.jobs.purge_tombstones
 ```
 
-可用 `--days` 和 `--batch-size` 调整保留期与批次，例如：
+生产环境应使用 `deploy/systemd/quire-tombstone-purge.*.example` 模板配置每日定时任务。命令只处理超过保留期的墓碑，并在数据库事务成功后删除关联原图和缩略图。
 
-```bash
-python -m app.jobs.purge_tombstones --days 180 --batch-size 500
-```
+## 生产部署模板
 
-生产环境应使用 cron 或 systemd timer 每日执行一次。命令只处理超过保留期的墓碑，并在数据库事务成功后删除关联原图和缩略图。
+仓库提供：
+
+- `deploy/nginx/quire.conf.example`：前端 SPA、`/api/` 反向代理和 `/media/` 静态目录；
+- `deploy/systemd/quire-api.service.example`：单进程 FastAPI 服务；
+- `deploy/systemd/quire-tombstone-purge.service.example`：墓碑清理命令；
+- `deploy/systemd/quire-tombstone-purge.timer.example`：每日清理定时器。
+
+使用前必须把示例域名、代码路径、Conda Python 路径、Linux 用户与媒体目录替换为服务器实际值。生产 HTTPS 配置由证书工具生成，并应确保 Refresh Cookie 使用 `Secure`。
 
 ## 字体授权与重建
 
