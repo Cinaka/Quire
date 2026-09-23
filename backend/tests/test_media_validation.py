@@ -7,7 +7,11 @@ from fastapi import HTTPException
 os.environ.setdefault("MYSQL_PASSWORD", "test-only")
 os.environ.setdefault("JWT_SECRET", "test-only-secret")
 
-from app.api.v1.media import detect_image_mime, stored_media_files_exist, validate_image_bytes
+from app.api.v1.media import (
+    detect_image_mime,
+    stored_media_files_exist,
+    validate_image_bytes,
+)
 from app.core.config import settings
 from app.models.media import Media
 

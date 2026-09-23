@@ -1,5 +1,5 @@
-from collections import defaultdict, deque
 import time
+from collections import defaultdict, deque
 
 from fastapi import HTTPException
 
