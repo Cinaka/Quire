@@ -47,6 +47,7 @@
     </section>
 
     <button
+      v-if="!loggedIn"
       class="sign-in"
       type="button"
       title="前往云笺"
@@ -101,6 +102,7 @@
 import { computed, onMounted, ref, watch } from "vue"
 import { useRouter } from "vue-router"
 
+import { isLoggedIn } from "@/api/session"
 import AlmanacCard from "@/components/AlmanacCard.vue"
 import BambooSlipEmpty from "@/components/BambooSlipEmpty.vue"
 import HomeDateNavigator from "@/components/HomeDateNavigator.vue"
@@ -120,6 +122,7 @@ const recent = ref<EntryListItem[]>([])
 const imageCountByEntry = ref<Record<string, number>>({})
 const monthDays = ref(0)
 const notice = ref("")
+const loggedIn = ref(isLoggedIn())
 let loadSeq = 0
 
 const dayNum = computed(() => Number(selectedDate.value.slice(8, 10)))
