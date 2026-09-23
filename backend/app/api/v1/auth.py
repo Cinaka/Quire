@@ -145,7 +145,11 @@ async def login(
     login_rate_limiter.check(rate_key)
 
     user = await db.scalar(select(User).where(User.email == email))
-    if user is None or not user.password_hash or not verify_password(body.password, user.password_hash):
+    if (
+        user is None
+        or not user.password_hash
+        or not verify_password(body.password, user.password_hash)
+    ):
         login_rate_limiter.fail(rate_key)
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
 

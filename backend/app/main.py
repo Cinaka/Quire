@@ -39,18 +39,33 @@ async def log_requests(request: Request, call_next):
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exc_handler(_: Request, exc: StarletteHTTPException):
-    return JSONResponse(status_code=exc.status_code, content={"code": exc.status_code, "message": str(exc.detail), "data": None})
+    content = {
+        "code": exc.status_code,
+        "message": str(exc.detail),
+        "data": None,
+    }
+    return JSONResponse(status_code=exc.status_code, content=content)
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exc_handler(_: Request, exc: RequestValidationError):
-    return JSONResponse(status_code=422, content=jsonable_encoder({"code": 422, "message": "参数校验失败", "data": exc.errors()}))
+    content = {
+        "code": 422,
+        "message": "参数校验失败",
+        "data": exc.errors(),
+    }
+    return JSONResponse(status_code=422, content=jsonable_encoder(content))
 
 
 @app.exception_handler(Exception)
 async def unhandled_exc_handler(_: Request, exc: Exception):
     logger.exception("unhandled error: %s", exc)
-    return JSONResponse(status_code=500, content={"code": 500, "message": "服务器内部错误", "data": None})
+    content = {
+        "code": 500,
+        "message": "服务器内部错误",
+        "data": None,
+    }
+    return JSONResponse(status_code=500, content=content)
 
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)

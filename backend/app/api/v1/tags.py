@@ -33,8 +33,12 @@ def to_response(tag: Tag) -> TagResponse:
 
 
 @router.get("")
-async def list_tags(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> Envelope[list[TagResponse]]:
-    rows = list((await db.execute(select(Tag).where(Tag.user_id == user.id).order_by(Tag.name))).scalars())
+async def list_tags(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Envelope[list[TagResponse]]:
+    query = select(Tag).where(Tag.user_id == user.id).order_by(Tag.name)
+    rows = list((await db.execute(query)).scalars())
     return ok([to_response(row) for row in rows])
 
 

@@ -4,6 +4,11 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "ASYNC", "DTZ"]
+ignore = [
+  "UP017", # timezone.utc 与 UTC 等价，保留兼容且不影响 UTC 语义。
+  "UP046", # Pydantic 泛型暂保留 TypeVar/Generic 写法。
+  "UP047",
+]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = [
@@ -19,4 +24,7 @@ extend-immutable-calls = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["DTZ001"]
+"app/api/v1/sessions.py" = ["N815"] # 已发布给前端的 camelCase 会话契约。
+"app/db/mixins.py" = ["N811"]
+"app/models/*.py" = ["N811"] # SQLAlchemy DATETIME 的可读类型别名。
+"tests/**/*.py" = ["DTZ001"] # 覆盖 MySQL UTC-naive 时间语义。
