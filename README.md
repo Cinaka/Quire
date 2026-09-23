@@ -1,11 +1,12 @@
 # 青简 Quire
 
-青简是一款以本地优先为原则的日记应用。当前 **P1** 的日记、图片、标签和设置只保存在浏览器 IndexedDB；`backend/` 中的 MySQL 五表为 **P2** 接入准备，P1 前端不会把日记同步到后端。
+青简是一款以本地优先为原则的日记应用。当前 P2 已接入 FastAPI、MySQL、账号体系与多设备同步；浏览器 IndexedDB 仍是当前设备的权威副本，服务端用于安全备份与多设备中转。
 
 ## 目录
 
 - `frontend/`：Vue 3、TypeScript、Vite 前端。
-- `backend/`：FastAPI、SQLAlchemy、Alembic 后端骨架。
+- `backend/`：FastAPI、SQLAlchemy、Alembic 后端。
+- `deploy/`：Nginx 与 systemd 生产部署模板。
 - `doc/`：产品定案、实施清单与验证脚本。
 
 ## 前置环境
@@ -13,7 +14,7 @@
 - Node.js 与 npm（前端统一使用 npm）。
 - Conda 环境 `quire`，Python 3.12。
 - MySQL 8.0。
-- 不需要 Docker；P1 不需要 Redis，`REDIS_ENABLED=false`。
+- 不需要 Docker；P2 仍不启用 Redis，`REDIS_ENABLED=false`。
 
 MySQL 必须使用：
 
@@ -77,11 +78,31 @@ npm run build
 
 ## 本地数据、备份与离线边界
 
-P1 数据位于当前浏览器配置文件的 IndexedDB。清理站点数据、浏览器数据或更换浏览器配置文件会导致数据丢失。
-
-请通过“设置 → 防蠹”导出备份；恢复入口也在“防蠹”中。导出的备份文件应另行妥善保存。
+数据位于当前浏览器配置文件的 IndexedDB，并通过登录账号同步到服务端。清理站点数据前仍建议通过“设置 → 防蠹”导出 JSON 备份。
 
 页面和所需资源已经加载后，本地写日记、筛选、编辑、删除、恢复与导出流程可以不依赖网络。当前没有 Service Worker，因此首次离线打开或离线强制刷新不保证可用。
+
+## 服务端墓碑维护
+
+软删除日记会在服务端保留墓碑，避免长期离线设备让已删除内容重新出现。默认保留 180 天，之后通过以下幂等命令分批物理清理：
+
+```bash
+cd backend
+python -m app.jobs.purge_tombstones
+```
+
+生产环境应使用 `deploy/systemd/quire-tombstone-purge.*.example` 模板配置每日定时任务。命令只处理超过保留期的墓碑，并在数据库事务成功后删除关联原图和缩略图。
+
+## 生产部署模板
+
+仓库提供：
+
+- `deploy/nginx/quire.conf.example`：前端 SPA、`/api/` 反向代理和 `/media/` 静态目录；
+- `deploy/systemd/quire-api.service.example`：单进程 FastAPI 服务；
+- `deploy/systemd/quire-tombstone-purge.service.example`：墓碑清理命令；
+- `deploy/systemd/quire-tombstone-purge.timer.example`：每日清理定时器。
+
+使用前必须把示例域名、代码路径、Conda Python 路径、Linux 用户与媒体目录替换为服务器实际值。生产 HTTPS 配置由证书工具生成，并应确保 Refresh Cookie 使用 `Secure`。
 
 ## 字体授权与重建
 
@@ -101,7 +122,8 @@ npm run build
 ```bash
 conda activate quire
 cd backend
-python -m pytest tests/test_exception_handlers.py -q
+python -m compileall -q app
+python -m pytest -q
 python -m ruff check app tests
 ```
 

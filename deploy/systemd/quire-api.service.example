@@ -1,0 +1,23 @@
+[Unit]
+Description=Quire FastAPI service
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quire
+Group=quire
+WorkingDirectory=/srv/quire/backend
+EnvironmentFile=/srv/quire/backend/.env
+ExecStart=/opt/anaconda3/envs/quire/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/quire/media
+
+[Install]
+WantedBy=multi-user.target

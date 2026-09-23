@@ -46,7 +46,13 @@
       </div>
     </section>
 
-    <button class="sign-in" type="button" disabled title="登录后可用">
+    <button
+      v-if="!loggedIn"
+      class="sign-in"
+      type="button"
+      title="前往云笺"
+      @click="router.push('/sync')"
+    >
       <span>上名青简</span>
       <small>登录后可用</small>
     </button>
@@ -96,6 +102,7 @@
 import { computed, onMounted, ref, watch } from "vue"
 import { useRouter } from "vue-router"
 
+import { isLoggedIn } from "@/api/session"
 import AlmanacCard from "@/components/AlmanacCard.vue"
 import BambooSlipEmpty from "@/components/BambooSlipEmpty.vue"
 import HomeDateNavigator from "@/components/HomeDateNavigator.vue"
@@ -115,6 +122,7 @@ const recent = ref<EntryListItem[]>([])
 const imageCountByEntry = ref<Record<string, number>>({})
 const monthDays = ref(0)
 const notice = ref("")
+const loggedIn = ref(isLoggedIn())
 let loadSeq = 0
 
 const dayNum = computed(() => Number(selectedDate.value.slice(8, 10)))
@@ -340,7 +348,13 @@ onMounted(() => {
   font-family: var(--font-cn-serif);
   font-size: var(--text-body);
   line-height: var(--leading-body);
-  cursor: not-allowed;
+  cursor: pointer;
+}
+
+.sign-in:hover,
+.sign-in:focus-visible {
+  border-color: color-mix(in srgb, var(--color-bamboo) 55%, transparent);
+  color: var(--color-bamboo);
 }
 
 .sign-in small {

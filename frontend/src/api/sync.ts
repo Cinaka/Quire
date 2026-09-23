@@ -1,6 +1,4 @@
-// src/api/sync.ts —— 唯一的同步入口。上层只调 runSync()，不碰内部函数。
-import { db } from "@/db/schema"
-import { pullChanges, pushBatch } from "@/api/endpoints"
+import { pullChanges, pushBatch, uploadMedia } from "@/api/endpoints"
 import {
   fromWireEntry,
   fromWireTag,
@@ -9,176 +7,410 @@ import {
   toWireMediaMetaPush,
   toWireTag,
 } from "@/api/mappers"
-import type { WireMediaMeta, WireTag } from "@/api/wire"
+import type { PushItemResult, WireMediaMeta, WireTag } from "@/api/wire"
+import { db } from "@/db/schema"
 import { utcNow } from "@/shared/time"
-import type { Entry } from "@/shared/types"
+import type { Entry, MediaItem, Tag } from "@/shared/types"
 
 const BATCH = 50
 const MAX_ERRORS = 3
+const CONFLICT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+const FULL_PULL_CURSOR = "1970-01-01T00:00:00.000Z"
+const DUPLICATE_TAG_PREFIX = "duplicate_tag:"
+let running: Promise<void> | null = null
 
-let running = false
+interface ConflictRecord {
+  entryId: string
+  at: string
+  local: Entry
+  server?: Entry
+}
+
+interface ErrorRecord {
+  kind: string
+  id: string
+  message?: string
+  count: number
+  at: string
+  paused: boolean
+}
 
 async function meta(key: string): Promise<string> {
   const row = await db.meta.get(key)
   return typeof row?.value === "string" ? row.value : ""
 }
 
-/** 上行：把所有 dirty=1 的记录分批推上去。返回服务端时间。 */
-async function pushAll(): Promise<string> {
-  let serverTime = ""
-  for (;;) {
-    const entries = await db.entries.where("dirty").equals(1).limit(BATCH).toArray()
-    const tags = await db.tags.where("dirty").equals(1).limit(BATCH).toArray()
-    const mediaMeta = await db.media.where("dirty").equals(1).limit(BATCH).toArray()
-    if (!entries.length && !tags.length && !mediaMeta.length) break
-
-    // 三类都要过映射层。裸传本地行会撞两件事：字段名是 camel 的（Tag.createdAt
-    // 对不上 created_at），以及 MediaItem 里带 blob / thumbBlob。
-    const res = await pushBatch({
-      entries: entries.map(toWireEntry),
-      tags: tags.map(toWireTag),
-      mediaMeta: mediaMeta.map(toWireMediaMetaPush),
-    })
-    serverTime = res.serverTime
-
-    // 逐条处理：只有 applied 才清 dirty。stale 留给随后的 pull 仲裁。
-    await db.transaction("rw", db.entries, db.tags, db.media, async () => {
-      for (const r of res.entries) {
-        if (r.status === "applied") await db.entries.update(r.id, { dirty: 0 })
-        else if (r.status === "error") await noteError("entry", r.id, r.message)
-      }
-      for (const r of res.tags) {
-        if (r.status === "applied") await db.tags.update(r.id, { dirty: 0 })
-      }
-      for (const r of res.mediaMeta) {
-        if (r.status === "applied") await db.media.update(r.id, { dirty: 0 })
-      }
-    })
-
-    // 全批都不是 applied 说明没有推进，跳出避免死循环。
-    // 必须三类一起看：只看 entries 的话，「只有标签脏了」的那一轮会被误判成没推进。
-    const progressed =
-      res.entries.some((r) => r.status === "applied") ||
-      res.tags.some((r) => r.status === "applied") ||
-      res.mediaMeta.some((r) => r.status === "applied")
-    if (!progressed) break
-  }
-  return serverTime
+async function errorRecords(): Promise<ErrorRecord[]> {
+  const row = await db.meta.get("syncErrors")
+  return Array.isArray(row?.value) ? (row.value as ErrorRecord[]) : []
 }
 
-/** 下行：拉增量。dirty=1 的本地记录一律不覆盖。 */
-async function pullAll(since: string): Promise<string> {
-  let cursor = since
+async function pendingPurgeIds(): Promise<Set<string>> {
+  const row = await db.meta.get("pendingPurges")
+  return new Set(Array.isArray(row?.value) ? (row.value as string[]) : [])
+}
+
+async function clearPendingPurges(ids: Set<string>): Promise<void> {
+  if (!ids.size) return
+  const current = await pendingPurgeIds()
+  for (const id of ids) current.delete(id)
+  await db.meta.put({ key: "pendingPurges", value: [...current] })
+}
+
+async function blockedIds(): Promise<Record<string, Set<string>>> {
+  const blocked: Record<string, Set<string>> = {
+    entry: new Set<string>(), tag: new Set<string>(), media: new Set<string>(),
+  }
+  for (const item of await errorRecords()) {
+    if (item.paused && blocked[item.kind]) blocked[item.kind].add(item.id)
+  }
+  return blocked
+}
+
+function sameEntryRevision(current: Entry | undefined, sent: Entry | undefined): boolean {
+  return Boolean(current && sent && current.clientUpdatedAt === sent.clientUpdatedAt)
+}
+
+function sameTagRevision(current: Tag | undefined, sent: Tag | undefined): boolean {
+  return Boolean(
+    current && sent
+      && current.name === sent.name
+      && current.color === sent.color
+      && current.createdAt === sent.createdAt,
+  )
+}
+
+function sameMediaRevision(current: MediaItem | undefined, sent: MediaItem | undefined): boolean {
+  return Boolean(
+    current && sent
+      && current.entryId === sent.entryId
+      && current.sortOrder === sent.sortOrder
+      && current.width === sent.width
+      && current.height === sent.height
+      && current.size === sent.size
+      && current.mime === sent.mime
+      && current.blob.size === sent.blob.size
+      && current.blob.type === sent.blob.type
+      && current.thumbBlob?.size === sent.thumbBlob?.size
+      && current.thumbBlob?.type === sent.thumbBlob?.type,
+  )
+}
+
+function entryPayloadDiffers(local: Entry, incoming: Entry): boolean {
+  return local.entryDate !== incoming.entryDate
+    || local.sortOrder !== incoming.sortOrder
+    || local.title !== incoming.title
+    || JSON.stringify(local.content) !== JSON.stringify(incoming.content)
+    || local.contentText !== incoming.contentText
+    || local.mood !== incoming.mood
+    || local.weather !== incoming.weather
+    || [...local.tagIds].sort().join("\u0000") !== [...incoming.tagIds].sort().join("\u0000")
+    || local.fromScheduleId !== incoming.fromScheduleId
+    || local.deletedAt !== incoming.deletedAt
+    || local.isDeleted !== incoming.isDeleted
+}
+
+function conflictId(value: unknown): string {
+  if (!value || typeof value !== "object") return ""
+  const row = value as { entryId?: unknown; local?: Entry; server?: Entry }
+  if (typeof row.entryId === "string") return row.entryId
+  return row.local?.id ?? row.server?.id ?? ""
+}
+
+function activeConflictRecords(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return []
+  const cutoff = Date.now() - CONFLICT_RETENTION_MS
+  return (value as Array<Record<string, unknown>>).filter((item) => {
+    if (typeof item.at !== "string") return true
+    const timestamp = Date.parse(item.at)
+    return Number.isNaN(timestamp) || timestamp >= cutoff
+  })
+}
+
+async function stashConflict(local: Entry, server?: Entry): Promise<void> {
+  const row = await db.meta.get("conflicts")
+  const list = activeConflictRecords(row?.value)
+  const old = list.find((item) => conflictId(item) === local.id) as { server?: Entry } | undefined
+  const next: ConflictRecord = {
+    entryId: local.id, at: utcNow(), local: { ...local, dirty: 0 }, server: server ?? old?.server,
+  }
+  await db.meta.put({
+    key: "conflicts",
+    value: [...list.filter((item) => conflictId(item) !== local.id), next].slice(-100),
+  })
+}
+
+async function attachServerConflict(server: Entry): Promise<void> {
+  const row = await db.meta.get("conflicts")
+  const list = activeConflictRecords(row?.value)
+  const index = list.findIndex((item) => conflictId(item) === server.id)
+  if (index < 0) {
+    if (Array.isArray(row?.value) && list.length !== row.value.length) {
+      await db.meta.put({ key: "conflicts", value: list })
+    }
+    return
+  }
+  list[index] = { ...list[index], entryId: server.id, server }
+  await db.meta.put({ key: "conflicts", value: list })
+}
+
+async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWork: boolean }> {
+  let serverTime = ""
+  let hadWork = false
   for (;;) {
-    const res = await pullChanges({ since: cursor, limit: 200 })
+    const blocked = await blockedIds()
+    const [allEntries, allTags, allMedia] = await Promise.all([
+      db.entries.where("dirty").equals(1).toArray(),
+      db.tags.where("dirty").equals(1).toArray(),
+      db.media.where("dirty").equals(1).toArray(),
+    ])
+    const entries = allEntries.filter((item) => !blocked.entry.has(item.id)).slice(0, BATCH)
+    const tags = allTags.filter((item) => !blocked.tag.has(item.id)).slice(0, BATCH)
+    const mediaMeta = allMedia.filter((item) => !blocked.media.has(item.id)).slice(0, BATCH)
+    if (!entries.length && !tags.length && !mediaMeta.length) {
+      return { serverTime, complete: true, hadWork }
+    }
+    hadWork = true
+
+    const uploadFailed = new Set<string>()
+    for (const media of mediaMeta) {
+      if (!media.entryId || media.blob.size === 0) continue
+      try {
+        await uploadMedia(media.id, media.blob, {
+          thumb: media.thumbBlob,
+          entryId: media.entryId,
+          sortOrder: media.sortOrder,
+          width: media.width,
+          height: media.height,
+        })
+      } catch (error) {
+        uploadFailed.add(media.id)
+        await noteError("media", media.id, (error as Error).message)
+      }
+    }
+
+    const result = await pushBatch({
+      entries: entries.map(toWireEntry),
+      tags: tags.map(toWireTag),
+      mediaMeta: mediaMeta.filter((item) => !uploadFailed.has(item.id)).map(toWireMediaMetaPush),
+    })
+    serverTime = result.serverTime
+    const sentEntries = new Map(entries.map((item) => [item.id, item]))
+    const sentTags = new Map(tags.map((item) => [item.id, item]))
+    const sentMedia = new Map(mediaMeta.map((item) => [item.id, item]))
+    let reconciledDuplicate = false
+    let superseded = false
 
     await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
-      for (const wire of res.entries) {
+      const currentPurges = await pendingPurgeIds()
+      for (const item of result.entries) {
+        const local = await db.entries.get(item.id)
+        if (!sameEntryRevision(local, sentEntries.get(item.id))) {
+          superseded = true
+          continue
+        }
+        if (item.status === "applied") {
+          if (currentPurges.has(item.id) && local?.isDeleted === 1) await db.entries.delete(item.id)
+          else await db.entries.update(item.id, { dirty: 0 })
+          await clearError("entry", item.id)
+        } else if (item.status === "stale") {
+          if (local) {
+            await stashConflict(local)
+            await db.entries.update(item.id, { dirty: 0 })
+          }
+          await clearPendingPurges(new Set([item.id]))
+          await clearError("entry", item.id)
+        } else if (item.status === "error") {
+          await noteError("entry", item.id, item.message)
+        }
+      }
+      for (const item of result.tags) {
+        const local = await db.tags.get(item.id)
+        if (!sameTagRevision(local, sentTags.get(item.id))) {
+          superseded = true
+          continue
+        }
+        if (item.status === "applied") {
+          await db.tags.update(item.id, { dirty: 0 })
+          await clearError("tag", item.id)
+        } else if (await reconcileDuplicateTag(item)) {
+          reconciledDuplicate = true
+          await clearError("tag", item.id)
+        } else if (item.status === "error") {
+          await noteError("tag", item.id, item.message)
+        }
+      }
+      for (const item of result.mediaMeta) {
+        const local = await db.media.get(item.id)
+        if (!sameMediaRevision(local, sentMedia.get(item.id))) {
+          superseded = true
+          continue
+        }
+        if (item.status === "applied") {
+          await db.media.update(item.id, { dirty: 0 })
+          await clearError("media", item.id)
+        } else if (item.status === "error") {
+          await noteError("media", item.id, item.message)
+        }
+      }
+    })
+
+    const progressed = superseded || reconciledDuplicate
+      || result.entries.some((item) => item.status === "applied" || item.status === "stale")
+      || result.tags.some((item) => item.status === "applied")
+      || result.mediaMeta.some((item) => item.status === "applied")
+    if (!progressed && uploadFailed.size === 0) return { serverTime, complete: false, hadWork }
+  }
+}
+
+async function reconcileDuplicateTag(item: PushItemResult): Promise<boolean> {
+  if (item.status !== "error" || !item.message?.startsWith(DUPLICATE_TAG_PREFIX)) return false
+  const canonicalId = item.message.slice(DUPLICATE_TAG_PREFIX.length)
+  if (!canonicalId || canonicalId === item.id) return false
+  const affected = await db.entries.where("tagIds").equals(item.id).toArray()
+  for (const entry of affected) {
+    const now = utcNow()
+    await db.entries.update(entry.id, {
+      tagIds: [...new Set(entry.tagIds.map((id) => (id === item.id ? canonicalId : id)))],
+      updatedAt: now, clientUpdatedAt: now, dirty: 1,
+    })
+  }
+  await db.tags.delete(item.id)
+  return true
+}
+
+async function pullAll(since: string): Promise<void> {
+  let cursor = since
+  let afterId = ""
+  let syncUntil = ""
+  const purges = await pendingPurgeIds()
+  for (;;) {
+    const result = await pullChanges({
+      since: cursor,
+      afterId: afterId || undefined,
+      until: syncUntil || undefined,
+      limit: 200,
+    })
+    if (!syncUntil) syncUntil = result.syncUntil
+    await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
+      for (const wire of result.entries) {
+        if (purges.has(wire.id)) continue
         const incoming: Entry = fromWireEntry(wire)
         const local = await db.entries.get(incoming.id)
-
         if (!local) {
           await db.entries.put({ ...incoming, dirty: 0 })
           continue
         }
-        // 规则 3：本地有未同步改动，服务端版本只进冲突缓冲。
         if (local.dirty === 1) {
-          await stashConflict(incoming)
+          if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
+            if (entryPayloadDiffers(local, incoming)) await stashConflict(local, incoming)
+            await db.entries.put({ ...incoming, dirty: 0 })
+          }
           continue
         }
-        // 规则 1 与 2：client_updated_at 大的赢；相等则本地赢（不写）。
+        await attachServerConflict(incoming)
         if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
+          if (
+            local.isDeleted === 0
+            && incoming.isDeleted === 0
+            && entryPayloadDiffers(local, incoming)
+          ) {
+            await stashConflict(local, incoming)
+          }
           await db.entries.put({ ...incoming, dirty: 0 })
         }
       }
-      // tags 只新增不删；media 只更新元数据与 remoteUrl，Blob 永不被下行覆盖。
-      await mergeTags(res.tags)
-      await mergeMediaMeta(res.mediaMeta)
+      await mergeTags(result.tags)
+      await mergeMediaMeta(result.mediaMeta)
     })
-
-    cursor = res.serverTime
-    if (!res.hasMore) break
+    cursor = result.serverTime
+    afterId = result.cursorId
+    if (!result.hasMore) break
   }
-  await db.meta.put({ key: "lastSyncAt", value: cursor })
-  return cursor
+  await db.meta.put({ key: "lastSyncAt", value: syncUntil || cursor })
+  await clearPendingPurges(purges)
 }
 
-export async function runSync(): Promise<void> {
-  if (running) return
-  if (!(await meta("ownerUserId"))) return // 游客态不同步
-  running = true
-  try {
-    const serverTime = await pushAll()
-    const since = await meta("lastSyncAt")
-
-    // 硬约束第 1 条：bootstrap（lastSyncAt 为空）这一轮只 push。
-    // 游标先写成本次 push 的服务端时间，下一轮才开始 pull。
-    if (!since) {
-      await db.meta.put({ key: "lastSyncAt", value: serverTime || utcNow() })
+async function syncOnce(): Promise<void> {
+  if (!(await meta("ownerUserId"))) return
+  const pushed = await pushAll()
+  if (!pushed.complete) return
+  const since = await meta("lastSyncAt")
+  if (!since) {
+    if (pushed.hadWork) {
+      await db.meta.put({ key: "lastSyncAt", value: FULL_PULL_CURSOR })
       return
     }
-    await pullAll(since)
-  } finally {
-    running = false
+    await pullAll(FULL_PULL_CURSOR)
+    return
   }
+  await pullAll(since)
+}
+
+export function runSync(): Promise<void> {
+  if (running) return running
+  const task = syncOnce().finally(() => {
+    if (running === task) running = null
+  })
+  running = task
+  return task
 }
 
 async function noteError(kind: string, id: string, message?: string): Promise<void> {
-  const row = await db.meta.get("syncErrors")
-  const list = Array.isArray(row?.value) ? (row.value as Array<Record<string, unknown>>) : []
-  const hit = list.find((x) => x.id === id)
-  const count = typeof hit?.count === "number" ? hit.count + 1 : 1
-  const next = list.filter((x) => x.id !== id)
-  if (count <= MAX_ERRORS) next.push({ kind, id, message, count, at: utcNow() })
+  const list = await errorRecords()
+  const hit = list.find((item) => item.kind === kind && item.id === id)
+  const count = (hit?.count ?? 0) + 1
+  const next = list.filter((item) => item.kind !== kind || item.id !== id)
+  next.push({ kind, id, message, count, at: utcNow(), paused: count >= MAX_ERRORS })
   await db.meta.put({ key: "syncErrors", value: next })
 }
 
-async function stashConflict(incoming: Entry): Promise<void> {
-  const row = await db.meta.get("conflicts")
-  const list = Array.isArray(row?.value) ? (row.value as unknown[]) : []
-  list.push({ at: utcNow(), server: incoming })
-  await db.meta.put({ key: "conflicts", value: list.slice(-100) })
+async function clearError(kind: string, id: string): Promise<void> {
+  const list = await errorRecords()
+  const next = list.filter((item) => item.kind !== kind || item.id !== id)
+  if (next.length !== list.length) await db.meta.put({ key: "syncErrors", value: next })
 }
 
-/**
- * 标签：只新增，永不删、永不改名（《数据模型字段详解》第四节）。
- * 所以同 id 就是同一条，不需要比时间、也不需要 update。
- */
 async function mergeTags(rows: WireTag[]): Promise<void> {
-  for (const w of rows) {
-    if (await db.tags.get(w.id)) continue
-    // 同名不同 id：不在下行里处理。它由 push 的 409 分支做归并（第三节 4 小节），
-    // 因为只有那里才知道要把本地哪些 entry 的 tagIds 改指向。
-    if (await db.tags.where("name").equals(w.name).first()) continue
-    await db.tags.put(fromWireTag(w))
+  for (const wire of rows) {
+    const incoming = fromWireTag(wire)
+    const local = await db.tags.get(wire.id)
+    if (local) {
+      if (local.dirty === 0) await db.tags.put(incoming)
+      continue
+    }
+    if (await db.tags.where("name").equals(wire.name).first()) continue
+    await db.tags.put(incoming)
   }
 }
 
-/**
- * 图片：只写元数据与远端地址，blob / thumbBlob 一个字节都不动。
- * 下行覆盖本地 Blob 等于用网络图换掉原图，既慢又可能降质。
- */
 async function mergeMediaMeta(rows: WireMediaMeta[]): Promise<void> {
-  for (const w of rows) {
-    const patch = mediaPatchFromWire(w)
-    const local = await db.media.get(w.id)
+  for (const wire of rows) {
+    const patch = mediaPatchFromWire(wire)
+    const local = await db.media.get(wire.id)
     if (local) {
-      await db.media.update(w.id, patch)
-      continue
+      if (local.dirty === 1) {
+        await db.media.update(wire.id, {
+          remoteUrl: patch.remoteUrl,
+          thumbRemoteUrl: patch.thumbRemoteUrl,
+        })
+      } else {
+        await db.media.update(wire.id, patch)
+      }
+    } else {
+      await db.media.put({
+        id: wire.id,
+        blob: new Blob([], { type: wire.mime }),
+        thumbBlob: null,
+        mime: wire.mime,
+        width: wire.width,
+        height: wire.height,
+        size: wire.size,
+        createdAt: wire.created_at,
+        dirty: 0,
+        orphanedAt: null,
+        ...patch,
+      })
     }
-    // 本地没有这张（新设备）：先只落元数据占位，真正的 Blob 由
-    // LocalImageView 的三级回退按需回填（第五节）。0 字节 = 尚未回填。
-    await db.media.put({
-      id: w.id,
-      blob: new Blob([], { type: w.mime }),
-      thumbBlob: null,
-      mime: w.mime,
-      width: w.width,
-      height: w.height,
-      size: w.size,
-      createdAt: w.created_at,
-      dirty: 0,
-      ...patch,
-    })
   }
 }

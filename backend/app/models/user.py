@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import String
+from sqlalchemy import Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, UUIDBinary
@@ -17,7 +17,12 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[str | None] = mapped_column(String(255))
     nickname: Mapped[str | None] = mapped_column(String(64))
     avatar: Mapped[str | None] = mapped_column(String(512))
-    # 服务端定时任务（日程提醒推送、连续签到判定）依赖此字段，P1 用不到但必须现在建好
     timezone: Mapped[str] = mapped_column(
-        String(64), nullable=False, server_default="Asia/Shanghai"
+        String(64), nullable=False, default="Asia/Shanghai", server_default="Asia/Shanghai"
+    )
+    token_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
     )

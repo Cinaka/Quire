@@ -13,6 +13,7 @@ venv/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
+/backend/media/
 
 # 环境与密钥
 .env
