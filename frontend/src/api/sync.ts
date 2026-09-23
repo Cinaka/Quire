@@ -95,6 +95,20 @@ function sameMediaRevision(current: MediaItem | undefined, sent: MediaItem | und
   )
 }
 
+function entryPayloadDiffers(local: Entry, incoming: Entry): boolean {
+  return local.entryDate !== incoming.entryDate
+    || local.sortOrder !== incoming.sortOrder
+    || local.title !== incoming.title
+    || JSON.stringify(local.content) !== JSON.stringify(incoming.content)
+    || local.contentText !== incoming.contentText
+    || local.mood !== incoming.mood
+    || local.weather !== incoming.weather
+    || [...local.tagIds].sort().join("\u0000") !== [...incoming.tagIds].sort().join("\u0000")
+    || local.fromScheduleId !== incoming.fromScheduleId
+    || local.deletedAt !== incoming.deletedAt
+    || local.isDeleted !== incoming.isDeleted
+}
+
 function conflictId(value: unknown): string {
   if (!value || typeof value !== "object") return ""
   const row = value as { entryId?: unknown; local?: Entry; server?: Entry }
@@ -273,14 +287,18 @@ async function pullAll(since: string): Promise<void> {
         }
         if (local.dirty === 1) {
           if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
-            await stashConflict(local, incoming)
+            if (entryPayloadDiffers(local, incoming)) await stashConflict(local, incoming)
             await db.entries.put({ ...incoming, dirty: 0 })
           }
           continue
         }
         await attachServerConflict(incoming)
         if (incoming.clientUpdatedAt > local.clientUpdatedAt) {
-          if (local.isDeleted === 0 && incoming.isDeleted === 0) {
+          if (
+            local.isDeleted === 0
+            && incoming.isDeleted === 0
+            && entryPayloadDiffers(local, incoming)
+          ) {
             await stashConflict(local, incoming)
           }
           await db.entries.put({ ...incoming, dirty: 0 })
