@@ -14,6 +14,7 @@ import type { Entry, MediaItem, Tag } from "@/shared/types"
 
 const BATCH = 50
 const MAX_ERRORS = 3
+const CONFLICT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const FULL_PULL_CURSOR = "1970-01-01T00:00:00.000Z"
 const DUPLICATE_TAG_PREFIX = "duplicate_tag:"
 let running: Promise<void> | null = null
@@ -116,9 +117,19 @@ function conflictId(value: unknown): string {
   return row.local?.id ?? row.server?.id ?? ""
 }
 
+function activeConflictRecords(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return []
+  const cutoff = Date.now() - CONFLICT_RETENTION_MS
+  return (value as Array<Record<string, unknown>>).filter((item) => {
+    if (typeof item.at !== "string") return true
+    const timestamp = Date.parse(item.at)
+    return Number.isNaN(timestamp) || timestamp >= cutoff
+  })
+}
+
 async function stashConflict(local: Entry, server?: Entry): Promise<void> {
   const row = await db.meta.get("conflicts")
-  const list = Array.isArray(row?.value) ? (row.value as Array<Record<string, unknown>>) : []
+  const list = activeConflictRecords(row?.value)
   const old = list.find((item) => conflictId(item) === local.id) as { server?: Entry } | undefined
   const next: ConflictRecord = {
     entryId: local.id, at: utcNow(), local: { ...local, dirty: 0 }, server: server ?? old?.server,
@@ -131,9 +142,14 @@ async function stashConflict(local: Entry, server?: Entry): Promise<void> {
 
 async function attachServerConflict(server: Entry): Promise<void> {
   const row = await db.meta.get("conflicts")
-  const list = Array.isArray(row?.value) ? (row.value as Array<Record<string, unknown>>) : []
+  const list = activeConflictRecords(row?.value)
   const index = list.findIndex((item) => conflictId(item) === server.id)
-  if (index < 0) return
+  if (index < 0) {
+    if (Array.isArray(row?.value) && list.length !== row.value.length) {
+      await db.meta.put({ key: "conflicts", value: list })
+    }
+    return
+  }
   list[index] = { ...list[index], entryId: server.id, server }
   await db.meta.put({ key: "conflicts", value: list })
 }
