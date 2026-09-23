@@ -19,18 +19,32 @@ setUnauthorizedHandler(() => {
   if (router.currentRoute.value.name !== "auth") void router.push({ name: "auth" })
 })
 
-void repo.mediaRepo
-  .reconcileAll()
-  .then((reconciled) => repo.mediaRepo.purgeOrphans().then((purged) => ({ reconciled, purged })))
-  .then(({ reconciled, purged }) => {
+const MEDIA_MAINTENANCE_INTERVAL = 6 * 60 * 60_000
+let mediaMaintenanceRunning = false
+let lastMediaMaintenance = 0
+
+async function runMediaMaintenance(force = false): Promise<void> {
+  if (mediaMaintenanceRunning) return
+  if (!force && Date.now() - lastMediaMaintenance < MEDIA_MAINTENANCE_INTERVAL) return
+  mediaMaintenanceRunning = true
+  try {
+    const reconciled = await repo.mediaRepo.reconcileAll()
+    const purged = await repo.mediaRepo.purgeOrphans()
+    lastMediaMaintenance = Date.now()
     if (import.meta.env.DEV && reconciled > 0) {
       console.info(`[quire] 已校正 ${reconciled} 条图片关联`)
     }
     if (import.meta.env.DEV && purged > 0) {
       console.info(`[quire] 已清理 ${purged} 张孤儿图片`)
     }
-  })
-  .catch((err) => console.warn("[quire] 图片对账 / 孤儿清理失败", err))
+  } catch (error) {
+    console.warn("[quire] 图片对账 / 孤儿清理失败", error)
+  } finally {
+    mediaMaintenanceRunning = false
+  }
+}
+
+void runMediaMaintenance(true)
 
 let syncTimer: number | null = null
 let retryDelay = 15_000
@@ -85,10 +99,16 @@ window.addEventListener("online", () => {
   scheduleSync(0)
 })
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") scheduleSync(0)
+  if (document.visibilityState === "visible") {
+    scheduleSync(0)
+    void runMediaMaintenance()
+  }
 })
 window.setInterval(() => {
-  if (document.visibilityState === "visible") scheduleSync(0)
+  if (document.visibilityState === "visible") {
+    scheduleSync(0)
+    void runMediaMaintenance()
+  }
 }, 5 * 60_000)
 
 if (import.meta.env.DEV) {
