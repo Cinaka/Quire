@@ -7,6 +7,8 @@ import {
   type TodayCheckin,
 } from "@/api/checkins"
 
+const REVALIDATE_GAP_MS = 1_000
+
 export function useCheckins() {
   const summary = ref<MonthCheckinSummary | null>(null)
   const loading = ref(false)
@@ -18,6 +20,7 @@ export function useCheckins() {
   const activeMonth = ref<number | null>(null)
   let loadSeq = 0
   let submitSeq = 0
+  let lastRevalidateAt = 0
 
   const checkedInToday = computed(() => summary.value?.checkedInToday ?? false)
   const currentStreak = computed(() => summary.value?.currentStreak ?? 0)
@@ -32,13 +35,6 @@ export function useCheckins() {
     stale.value = summary.value !== null
     error.value = "当前处于离线状态，联网后可继续签到。"
   }
-
-  function markOnline(): void {
-    offline.value = false
-  }
-
-  window.addEventListener("offline", markOffline)
-  window.addEventListener("online", markOnline)
 
   async function load(year: number, month: number): Promise<void> {
     const mine = ++loadSeq
@@ -66,6 +62,35 @@ export function useCheckins() {
       if (mine === loadSeq) loading.value = false
     }
   }
+
+  function revalidateActive(force = false): void {
+    const year = activeYear.value
+    const month = activeMonth.value
+    if (year === null || month === null || checkingIn.value || !navigator.onLine) return
+
+    const now = Date.now()
+    if (!force && now - lastRevalidateAt < REVALIDATE_GAP_MS) return
+    lastRevalidateAt = now
+    void load(year, month)
+  }
+
+  function markOnline(): void {
+    offline.value = false
+    revalidateActive(true)
+  }
+
+  function handleVisibilityChange(): void {
+    if (document.visibilityState === "visible") revalidateActive()
+  }
+
+  function handleWindowFocus(): void {
+    revalidateActive()
+  }
+
+  window.addEventListener("offline", markOffline)
+  window.addEventListener("online", markOnline)
+  window.addEventListener("focus", handleWindowFocus)
+  document.addEventListener("visibilitychange", handleVisibilityChange)
 
   function applyTodayResult(result: TodayCheckin): void {
     const current = summary.value
@@ -115,6 +140,7 @@ export function useCheckins() {
   function reset(): void {
     loadSeq += 1
     submitSeq += 1
+    lastRevalidateAt = 0
     summary.value = null
     loading.value = false
     checkingIn.value = false
@@ -129,6 +155,8 @@ export function useCheckins() {
     submitSeq += 1
     window.removeEventListener("offline", markOffline)
     window.removeEventListener("online", markOnline)
+    window.removeEventListener("focus", handleWindowFocus)
+    document.removeEventListener("visibilitychange", handleVisibilityChange)
   })
 
   return {
@@ -142,6 +170,7 @@ export function useCheckins() {
     currentStreak,
     checkinDates,
     load,
+    revalidateActive,
     submitToday,
     reset,
   }
