@@ -24,7 +24,6 @@
       <ul v-if="dateEntries.length" class="entry-list">
         <li v-for="entry in dateEntries" :key="entry.id" @click="open(entry.id)">
           <span class="entry-title">{{ entry.title || "无题" }}</span>
-          <!-- 摘要位只放真文本；整篇只有图时才显示「N 张图片」并弱化 -->
           <span class="entry-preview" :class="{ faint: !hasText(entry) }">{{ preview(entry) }}</span>
           <span
             v-if="imageCountByEntry[entry.id]"
@@ -149,7 +148,7 @@ const {
   error: checkinError,
   checkedInToday,
   currentStreak,
-  load: loadCheckinMonth,
+  loadCurrent: loadCurrentCheckins,
   submitToday,
 } = useCheckins()
 
@@ -161,16 +160,10 @@ const writeLabel = computed(() => {
   return dateEntries.value.length ? "再刻一简" : "刻一简"
 })
 
-/** 是否有真正写下的文字。L2 之后图片不再进 contentText，所以这就是可靠判据。 */
 function hasText(entry: EntryListItem): boolean {
   return entry.contentText.trim().length > 0
 }
 
-/**
- * 首页摘要：真文本优先，纯图日记退回「N 张图片」。
- * entryExcerpt 已经把换行与连续空白折成单空格，这里只负责截断。
- * 这个结果仅用于展示，绝不写回 contentText（铁律 1）。
- */
 function preview(entry: EntryListItem): string {
   const value = entryExcerpt(entry.contentText, imageCountByEntry.value[entry.id] ?? 0)
   return value.length > 40 ? `${value.slice(0, 40)}…` : value
@@ -188,13 +181,9 @@ async function load(): Promise<void> {
 
   const prefix = date.slice(0, 7)
   const counts = await entryRepo.countByDate(`${prefix}-01`, `${prefix}-31`)
-
-  // 两个列表可能有重叠（今天刚写的也在近作里），去重后一次取张数。
-  // 只读 Entry JSON 与 media 主键，不载入任何 Blob。
-  const ids = [...new Set([...minePage.items, ...latest.items].map((e) => e.id))]
+  const ids = [...new Set([...minePage.items, ...latest.items].map((entry) => entry.id))]
   const imageCounts = await mediaRepo.countByEntries(ids)
 
-  // 沿用同一个 loadSeq 守卫：快速连点日期时，旧请求不得盖回新日期的数据。
   if (mine !== loadSeq) return
 
   almanac.value = nextAlmanac
@@ -205,7 +194,7 @@ async function load(): Promise<void> {
 }
 
 function loadCheckins(): Promise<void> {
-  return loadCheckinMonth(Number(today.slice(0, 4)), Number(today.slice(5, 7)))
+  return loadCurrentCheckins()
 }
 
 function showBlockedNotice(): void {
@@ -322,15 +311,11 @@ onMounted(() => {
   text-overflow: ellipsis;
 }
 
-/* 「4 张图片」不是用户写的字。首页摘要本来就是弱色，
-   这里再压一档并去掉与真文本相同的观感 */
 .entry-preview.faint {
   font-style: normal;
   opacity: 0.75;
 }
 
-/* 徽标推到行尾：margin-left auto 而不是给 preview 加 flex: 1，
-   这样标题与摘要的现有截断行为一点都不用改 */
 .img-badge {
   display: inline-flex;
   flex: none;
