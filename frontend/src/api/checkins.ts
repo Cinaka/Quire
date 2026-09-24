@@ -60,9 +60,10 @@ export async function checkInToday(): Promise<TodayCheckin> {
 }
 
 export async function getMonthCheckins(
-  year: number,
-  month: number,
+  year?: number,
+  month?: number,
 ): Promise<MonthCheckinSummary> {
-  const data = await get<RawMonthCheckinSummary>("/checkins/month", { year, month })
+  const params = year === undefined || month === undefined ? undefined : { year, month }
+  const data = await get<RawMonthCheckinSummary>("/checkins/month", params)
   return toMonthCheckinSummary(data)
 }

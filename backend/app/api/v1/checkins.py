@@ -88,15 +88,17 @@ async def checkin_today(
 async def get_month_checkins(
     db: AsyncSession,
     user: User,
-    year: int,
-    month: int,
+    year: int | None,
+    month: int | None,
     *,
     now: datetime | None = None,
 ) -> MonthCheckinResponse:
-    """读取指定月份签到日期及账号当前签到状态。"""
+    """读取指定月份；年月均省略时读取账号时区下的当前月。"""
     user_id: uuid.UUID = user.id
     today = account_local_date(user.timezone, now=now)
-    start, end = month_bounds(year, month)
+    target_year = year if year is not None else today.year
+    target_month = month if month is not None else today.month
+    start, end = month_bounds(target_year, target_month)
 
     month_rows = await db.execute(
         select(Checkin.checkin_date)
@@ -118,8 +120,8 @@ async def get_month_checkins(
     streak_dates = list(streak_rows.scalars())
 
     return MonthCheckinResponse(
-        year=year,
-        month=month,
+        year=target_year,
+        month=target_month,
         checkin_dates=checkin_dates,
         today=today,
         checked_in_today=today in set(streak_dates),
@@ -141,11 +143,13 @@ async def post_today_checkin(
 
 @router.get("/month")
 async def get_month_checkin_summary(
-    year: int = Query(..., ge=1970, le=9998),
-    month: int = Query(..., ge=1, le=12),
+    year: int | None = Query(None, ge=1970, le=9998),
+    month: int | None = Query(None, ge=1, le=12),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Envelope[MonthCheckinResponse]:
+    if (year is None) != (month is None):
+        raise HTTPException(status_code=422, detail="year 与 month 必须同时提供")
     try:
         result = await get_month_checkins(db, user, year, month)
     except ZoneInfoNotFoundError as exc:

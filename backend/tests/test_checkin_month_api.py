@@ -42,6 +42,28 @@ def test_month_summary_returns_sorted_dates_and_current_status() -> None:
     assert response.current_streak == 3
 
 
+def test_current_month_defaults_to_account_timezone() -> None:
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                scalar_rows(TODAY),
+                scalar_rows(date(2026, 9, 22), TODAY),
+            ]
+        )
+    )
+    user = SimpleNamespace(id=USER_ID, timezone="Asia/Shanghai")
+
+    response = asyncio.run(get_month_checkins(db, user, None, None, now=NOW))
+
+    assert response.year == 2026
+    assert response.month == 9
+    assert response.today == TODAY
+    assert response.checked_in_today is True
+    first_query = str(db.execute.await_args_list[0].args[0])
+    assert "checkins.checkin_date >=" in first_query
+    assert "checkins.checkin_date <" in first_query
+
+
 def test_historical_month_keeps_today_status_independent() -> None:
     db = SimpleNamespace(
         execute=AsyncMock(

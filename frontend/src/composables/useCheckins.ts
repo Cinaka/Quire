@@ -18,6 +18,7 @@ export function useCheckins() {
   const error = ref("")
   const activeYear = ref<number | null>(null)
   const activeMonth = ref<number | null>(null)
+  let followsCurrentMonth = false
   let loadSeq = 0
   let submitSeq = 0
   let lastRevalidateAt = 0
@@ -36,10 +37,17 @@ export function useCheckins() {
     error.value = "当前处于离线状态，联网后可继续签到。"
   }
 
-  async function load(year: number, month: number): Promise<void> {
+  async function requestMonth(
+    year: number | undefined,
+    month: number | undefined,
+    followCurrent: boolean,
+  ): Promise<void> {
     const mine = ++loadSeq
-    activeYear.value = year
-    activeMonth.value = month
+    followsCurrentMonth = followCurrent
+    if (year !== undefined && month !== undefined) {
+      activeYear.value = year
+      activeMonth.value = month
+    }
 
     if (!navigator.onLine) {
       markOffline()
@@ -52,6 +60,8 @@ export function useCheckins() {
       const next = await getMonthCheckins(year, month)
       if (mine !== loadSeq) return
       summary.value = next
+      activeYear.value = next.year
+      activeMonth.value = next.month
       stale.value = false
       offline.value = false
     } catch (value) {
@@ -63,6 +73,14 @@ export function useCheckins() {
     }
   }
 
+  function load(year: number, month: number): Promise<void> {
+    return requestMonth(year, month, false)
+  }
+
+  function loadCurrent(): Promise<void> {
+    return requestMonth(undefined, undefined, true)
+  }
+
   function revalidateActive(force = false): void {
     const year = activeYear.value
     const month = activeMonth.value
@@ -71,7 +89,11 @@ export function useCheckins() {
     const now = Date.now()
     if (!force && now - lastRevalidateAt < REVALIDATE_GAP_MS) return
     lastRevalidateAt = now
-    void load(year, month)
+    if (followsCurrentMonth) {
+      void loadCurrent()
+    } else {
+      void load(year, month)
+    }
   }
 
   function markOnline(): void {
@@ -127,9 +149,13 @@ export function useCheckins() {
       if (mine !== submitSeq) return
       applyTodayResult(result)
 
-      const year = activeYear.value ?? Number(result.checkinDate.slice(0, 4))
-      const month = activeMonth.value ?? Number(result.checkinDate.slice(5, 7))
-      await load(year, month)
+      if (followsCurrentMonth) {
+        await loadCurrent()
+      } else {
+        const year = activeYear.value ?? Number(result.checkinDate.slice(0, 4))
+        const month = activeMonth.value ?? Number(result.checkinDate.slice(5, 7))
+        await load(year, month)
+      }
     } catch (value) {
       if (mine === submitSeq) error.value = errorMessage(value)
     } finally {
@@ -141,6 +167,7 @@ export function useCheckins() {
     loadSeq += 1
     submitSeq += 1
     lastRevalidateAt = 0
+    followsCurrentMonth = false
     summary.value = null
     loading.value = false
     checkingIn.value = false
@@ -170,6 +197,7 @@ export function useCheckins() {
     currentStreak,
     checkinDates,
     load,
+    loadCurrent,
     revalidateActive,
     submitToday,
     reset,
