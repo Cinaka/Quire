@@ -17,6 +17,7 @@ export function useCheckins() {
   const activeYear = ref<number | null>(null)
   const activeMonth = ref<number | null>(null)
   let loadSeq = 0
+  let submitSeq = 0
 
   const checkedInToday = computed(() => summary.value?.checkedInToday ?? false)
   const currentStreak = computed(() => summary.value?.currentStreak ?? 0)
@@ -93,24 +94,27 @@ export function useCheckins() {
       return
     }
 
+    const mine = ++submitSeq
     checkingIn.value = true
     error.value = ""
     try {
       const result = await checkInToday()
+      if (mine !== submitSeq) return
       applyTodayResult(result)
 
       const year = activeYear.value ?? Number(result.checkinDate.slice(0, 4))
       const month = activeMonth.value ?? Number(result.checkinDate.slice(5, 7))
       await load(year, month)
     } catch (value) {
-      error.value = errorMessage(value)
+      if (mine === submitSeq) error.value = errorMessage(value)
     } finally {
-      checkingIn.value = false
+      if (mine === submitSeq) checkingIn.value = false
     }
   }
 
   function reset(): void {
     loadSeq += 1
+    submitSeq += 1
     summary.value = null
     loading.value = false
     checkingIn.value = false
@@ -122,6 +126,7 @@ export function useCheckins() {
 
   onScopeDispose(() => {
     loadSeq += 1
+    submitSeq += 1
     window.removeEventListener("offline", markOffline)
     window.removeEventListener("online", markOnline)
   })
