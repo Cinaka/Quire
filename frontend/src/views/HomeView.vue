@@ -46,8 +46,21 @@
       </div>
     </section>
 
+    <CheckinCard
+      v-if="loggedIn"
+      :summary="checkinSummary"
+      :loading="checkinLoading"
+      :checking-in="checkingIn"
+      :offline="checkinOffline"
+      :stale="checkinStale"
+      :error="checkinError"
+      :checked-in-today="checkedInToday"
+      :current-streak="currentStreak"
+      @submit="submitToday"
+      @retry="loadCheckins"
+    />
     <button
-      v-if="!loggedIn"
+      v-else
       class="sign-in"
       type="button"
       title="前往云笺"
@@ -105,7 +118,9 @@ import { useRouter } from "vue-router"
 import { isLoggedIn } from "@/api/session"
 import AlmanacCard from "@/components/AlmanacCard.vue"
 import BambooSlipEmpty from "@/components/BambooSlipEmpty.vue"
+import CheckinCard from "@/components/CheckinCard.vue"
 import HomeDateNavigator from "@/components/HomeDateNavigator.vue"
+import { useCheckins } from "@/composables/useCheckins"
 import { entryRepo, mediaRepo } from "@/repo"
 import { getAlmanac, type AlmanacDay } from "@/shared/almanac"
 import { entryExcerpt } from "@/shared/entryMeta"
@@ -124,6 +139,19 @@ const monthDays = ref(0)
 const notice = ref("")
 const loggedIn = ref(isLoggedIn())
 let loadSeq = 0
+
+const {
+  summary: checkinSummary,
+  loading: checkinLoading,
+  checkingIn,
+  offline: checkinOffline,
+  stale: checkinStale,
+  error: checkinError,
+  checkedInToday,
+  currentStreak,
+  load: loadCheckinMonth,
+  submitToday,
+} = useCheckins()
 
 const dayNum = computed(() => Number(selectedDate.value.slice(8, 10)))
 const monthLabel = computed(() => `${Number(selectedDate.value.slice(5, 7))} 月`)
@@ -176,6 +204,10 @@ async function load(): Promise<void> {
   monthDays.value = Object.keys(counts).length
 }
 
+function loadCheckins(): Promise<void> {
+  return loadCheckinMonth(Number(today.slice(0, 4)), Number(today.slice(5, 7)))
+}
+
 function showBlockedNotice(): void {
   notice.value = "预简（待刻）尚未开放，暂只能刻已至之日"
 }
@@ -195,6 +227,7 @@ watch(selectedDate, () => {
 
 onMounted(() => {
   void load()
+  if (loggedIn.value) void loadCheckins()
 })
 </script>
 
