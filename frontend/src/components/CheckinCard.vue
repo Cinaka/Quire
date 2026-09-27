@@ -1,5 +1,9 @@
 <template>
-  <section class="checkin-card" aria-labelledby="checkin-title">
+  <section
+    class="checkin-card"
+    aria-labelledby="checkin-title"
+    :aria-busy="loading || checkingIn"
+  >
     <div class="checkin-head">
       <div>
         <p id="checkin-title" class="title">上名青简</p>
@@ -20,6 +24,9 @@
       </button>
     </div>
 
+    <p v-if="successMessage" class="success" role="status" aria-live="polite">
+      {{ successMessage }}
+    </p>
     <p v-if="stale" class="hint">当前展示的是上次读取结果</p>
     <p v-if="error" class="error" role="status">
       {{ error }}
@@ -85,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, onScopeDispose, ref, watch } from "vue"
 
 import type { MonthCheckinSummary } from "@/api/checkins"
 import type { LocalDate } from "@/shared/types"
@@ -109,6 +116,10 @@ const emit = defineEmits<{
 
 const weekLabels = ["日", "一", "二", "三", "四", "五", "六"]
 const checkedDates = computed(() => new Set(props.summary?.checkinDates ?? []))
+const successMessage = ref("")
+let hasInitialSummary = false
+let successTimer: ReturnType<typeof setTimeout> | null = null
+
 const isCurrentMonth = computed(() => {
   if (!props.summary) return true
   return props.summary.today.startsWith(
@@ -138,6 +149,25 @@ const cells = computed<Array<LocalDate | null>>(() => {
   return result
 })
 
+watch(
+  () => props.summary,
+  (next, previous) => {
+    if (!next) return
+    if (!hasInitialSummary) {
+      hasInitialSummary = true
+      return
+    }
+    if (!next.checkedInToday || previous?.checkedInToday) return
+
+    successMessage.value = `今日已上名，当前连续 ${next.currentStreak} 日。`
+    if (successTimer) clearTimeout(successTimer)
+    successTimer = setTimeout(() => {
+      successMessage.value = ""
+      successTimer = null
+    }, 4_000)
+  },
+)
+
 function shiftMonth(offset: -1 | 1): void {
   if (!props.summary || props.loading || props.offline) return
   if (offset === 1 && isCurrentMonth.value) return
@@ -158,6 +188,10 @@ function dayLabel(value: LocalDate): string {
   const today = value === props.summary?.today ? "，今天" : ""
   return `${Number(value.slice(5, 7))} 月 ${Number(value.slice(8, 10))} 日${today}${checked}`
 }
+
+onScopeDispose(() => {
+  if (successTimer) clearTimeout(successTimer)
+})
 </script>
 
 <style scoped>
@@ -180,6 +214,7 @@ function dayLabel(value: LocalDate): string {
 .title,
 .streak,
 .hint,
+.success,
 .error {
   margin: 0;
 }
@@ -193,6 +228,7 @@ function dayLabel(value: LocalDate): string {
 
 .streak,
 .hint,
+.success,
 .error,
 .weekday,
 .day,
@@ -223,6 +259,11 @@ function dayLabel(value: LocalDate): string {
   background: transparent;
   color: var(--color-ink-faint);
   cursor: default;
+}
+
+.success {
+  margin-top: 8px;
+  color: var(--color-bamboo);
 }
 
 .error {
