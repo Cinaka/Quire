@@ -14,6 +14,7 @@
               : "每日一记，留名青简"
           }}
         </p>
+        <p v-if="summary" class="total">累计上名 {{ summary.totalCheckins }} 日</p>
       </div>
       <button
         type="button"
@@ -213,6 +214,7 @@ onScopeDispose(() => {
 
 .title,
 .streak,
+.total,
 .hint,
 .success,
 .error {
@@ -227,6 +229,7 @@ onScopeDispose(() => {
 }
 
 .streak,
+.total,
 .hint,
 .success,
 .error,
@@ -238,6 +241,7 @@ onScopeDispose(() => {
 }
 
 .streak,
+.total,
 .hint {
   margin-top: 3px;
   color: var(--color-ink-faint);
