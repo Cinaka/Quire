@@ -1,8 +1,9 @@
 import uuid
 from datetime import timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +32,16 @@ class RegisterRequest(BaseModel):
     email: str = Field(min_length=3, max_length=128)
     password: str = Field(min_length=8, max_length=128)
     timezone: str = Field(default="Asia/Shanghai", max_length=64)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        timezone_name = value.strip()
+        try:
+            ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("必须是有效的 IANA 时区") from exc
+        return timezone_name
 
 
 class LoginRequest(BaseModel):
