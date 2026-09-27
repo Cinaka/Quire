@@ -41,6 +41,8 @@ def test_checkin_today_creates_one_server_owned_record() -> None:
     assert response.checked_in is True
     assert response.created is True
     assert response.current_streak == 2
+    assert response.longest_streak == 2
+    assert response.total_checkins == 2
     row = db.add.call_args.args[0]
     assert isinstance(row, Checkin)
     assert row.user_id == USER_ID
@@ -67,6 +69,8 @@ def test_checkin_today_replays_existing_record_without_writing() -> None:
 
     assert response.created is False
     assert response.current_streak == 1
+    assert response.longest_streak == 1
+    assert response.total_checkins == 1
     db.add.assert_not_called()
     db.flush.assert_not_awaited()
     db.commit.assert_not_awaited()
@@ -91,6 +95,8 @@ def test_checkin_today_treats_unique_race_as_idempotent_success() -> None:
     assert response.checked_in is True
     assert response.created is False
     assert response.current_streak == 1
+    assert response.longest_streak == 1
+    assert response.total_checkins == 1
     db.rollback.assert_awaited_once()
     db.commit.assert_not_awaited()
 

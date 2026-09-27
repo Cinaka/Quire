@@ -25,6 +25,7 @@ class TodayCheckinResponse(BaseModel):
     created: bool
     current_streak: int
     longest_streak: int
+    total_checkins: int
 
 
 class MonthCheckinResponse(BaseModel):
@@ -35,6 +36,7 @@ class MonthCheckinResponse(BaseModel):
     checked_in_today: bool
     current_streak: int
     longest_streak: int
+    total_checkins: int
 
 
 async def checkin_today(
@@ -73,7 +75,7 @@ async def checkin_today(
             Checkin.checkin_date <= today,
         )
     )
-    checkin_dates = list(rows.scalars())
+    checkin_dates = set(rows.scalars())
     if created:
         await db.commit()
 
@@ -83,6 +85,7 @@ async def checkin_today(
         created=created,
         current_streak=current_streak(checkin_dates, today),
         longest_streak=longest_streak(checkin_dates),
+        total_checkins=len(checkin_dates),
     )
 
 
@@ -118,16 +121,17 @@ async def get_month_checkins(
             Checkin.checkin_date <= today,
         )
     )
-    streak_dates = list(streak_rows.scalars())
+    streak_dates = set(streak_rows.scalars())
 
     return MonthCheckinResponse(
         year=target_year,
         month=target_month,
         checkin_dates=checkin_dates,
         today=today,
-        checked_in_today=today in set(streak_dates),
+        checked_in_today=today in streak_dates,
         current_streak=current_streak(streak_dates, today),
         longest_streak=longest_streak(streak_dates),
+        total_checkins=len(streak_dates),
     )
 
 

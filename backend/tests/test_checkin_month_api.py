@@ -40,6 +40,8 @@ def test_month_summary_returns_sorted_dates_and_current_status() -> None:
     assert response.today == TODAY
     assert response.checked_in_today is True
     assert response.current_streak == 3
+    assert response.longest_streak == 3
+    assert response.total_checkins == 3
 
 
 def test_current_month_defaults_to_account_timezone() -> None:
@@ -59,6 +61,8 @@ def test_current_month_defaults_to_account_timezone() -> None:
     assert response.month == 9
     assert response.today == TODAY
     assert response.checked_in_today is True
+    assert response.longest_streak == 2
+    assert response.total_checkins == 2
     first_query = str(db.execute.await_args_list[0].args[0])
     assert "checkins.checkin_date >=" in first_query
     assert "checkins.checkin_date <" in first_query
@@ -81,6 +85,8 @@ def test_historical_month_keeps_today_status_independent() -> None:
     assert response.today == TODAY
     assert response.checked_in_today is False
     assert response.current_streak == 2
+    assert response.longest_streak == 2
+    assert response.total_checkins == 2
 
 
 def test_month_summary_queries_are_scoped_to_current_user() -> None:
