@@ -1,8 +1,9 @@
+import logging
 import uuid
 from datetime import date, datetime
 from zoneinfo import ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -17,6 +18,7 @@ from app.schemas.envelope import Envelope, ok
 from app.services.checkins import account_local_date, current_streak, longest_streak, month_bounds
 
 router = APIRouter(prefix="/checkins", tags=["checkins"])
+logger = logging.getLogger(__name__)
 
 
 class TodayCheckinResponse(BaseModel):
@@ -137,6 +139,8 @@ async def get_month_checkins(
 
 @router.post("/today")
 async def post_today_checkin(
+    response: Response,
+    idempotency_key: uuid.UUID | None = Header(default=None, alias="X-Idempotency-Key"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Envelope[TodayCheckinResponse]:
@@ -144,6 +148,16 @@ async def post_today_checkin(
         result = await checkin_today(db, user)
     except ZoneInfoNotFoundError as exc:
         raise HTTPException(status_code=422, detail="账号时区无效") from exc
+
+    if idempotency_key is not None:
+        key = str(idempotency_key)
+        response.headers["X-Idempotency-Key"] = key
+        logger.info(
+            "daily check-in user=%s idempotency_key=%s created=%s",
+            user.id,
+            key,
+            result.created,
+        )
     return ok(result)
 
 

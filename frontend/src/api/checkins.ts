@@ -1,6 +1,6 @@
 import type { LocalDate } from "@/shared/types"
 
-import { get, post } from "./request"
+import { get, http, type Envelope } from "./request"
 
 export interface TodayCheckin {
   checkinDate: LocalDate
@@ -67,8 +67,13 @@ function toMonthCheckinSummary(raw: RawMonthCheckinSummary): MonthCheckinSummary
 }
 
 export async function checkInToday(): Promise<TodayCheckin> {
-  const data = await post<RawTodayCheckin>("/checkins/today")
-  return toTodayCheckin(data)
+  const idempotencyKey = crypto.randomUUID()
+  const response = await http.post<Envelope<RawTodayCheckin>>(
+    "/checkins/today",
+    undefined,
+    { headers: { "X-Idempotency-Key": idempotencyKey } },
+  )
+  return toTodayCheckin(response.data.data)
 }
 
 export async function getMonthCheckins(
