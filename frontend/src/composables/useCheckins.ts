@@ -6,6 +6,7 @@ import {
   type MonthCheckinSummary,
   type TodayCheckin,
 } from "@/api/checkins"
+import { cacheCheckinMonth, readCachedCheckinMonth } from "@/api/checkinCache"
 
 const REVALIDATE_GAP_MS = 1_000
 
@@ -31,10 +32,20 @@ export function useCheckins() {
     return value instanceof Error && value.message ? value.message : "签到状态读取失败，请稍后重试。"
   }
 
+  function restoreCached(year?: number, month?: number): boolean {
+    const cached = readCachedCheckinMonth(year, month)
+    if (!cached) return false
+    summary.value = cached
+    activeYear.value = cached.year
+    activeMonth.value = cached.month
+    stale.value = true
+    return true
+  }
+
   function markOffline(): void {
     offline.value = true
     stale.value = summary.value !== null
-    error.value = "当前处于离线状态，联网后可继续签到。"
+    error.value = "当前处于离线状态，展示结果可能不是最新；联网后可继续签到。"
   }
 
   async function requestMonth(
@@ -50,6 +61,7 @@ export function useCheckins() {
     }
 
     if (!navigator.onLine) {
+      restoreCached(year, month)
       markOffline()
       return
     }
@@ -64,8 +76,10 @@ export function useCheckins() {
       activeMonth.value = next.month
       stale.value = false
       offline.value = false
+      cacheCheckinMonth(next)
     } catch (value) {
       if (mine !== loadSeq) return
+      restoreCached(year, month)
       stale.value = summary.value !== null
       error.value = errorMessage(value)
     } finally {
@@ -131,6 +145,8 @@ export function useCheckins() {
       today: result.checkinDate,
       checkedInToday: result.checkedIn,
       currentStreak: result.currentStreak,
+      longestStreak: result.longestStreak,
+      totalCheckins: result.totalCheckins,
     }
   }
 
