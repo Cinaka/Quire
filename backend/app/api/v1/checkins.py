@@ -14,7 +14,7 @@ from app.db.session import get_db
 from app.models.checkin import Checkin
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
-from app.services.checkins import account_local_date, current_streak, month_bounds
+from app.services.checkins import account_local_date, current_streak, longest_streak, month_bounds
 
 router = APIRouter(prefix="/checkins", tags=["checkins"])
 
@@ -24,6 +24,7 @@ class TodayCheckinResponse(BaseModel):
     checked_in: bool
     created: bool
     current_streak: int
+    longest_streak: int
 
 
 class MonthCheckinResponse(BaseModel):
@@ -33,6 +34,7 @@ class MonthCheckinResponse(BaseModel):
     today: date
     checked_in_today: bool
     current_streak: int
+    longest_streak: int
 
 
 async def checkin_today(
@@ -55,8 +57,6 @@ async def checkin_today(
             await db.flush()
             created = True
         except IntegrityError:
-            # 两台设备并发签到时，唯一约束只允许一个请求写入；另一个请求
-            # 回滚失败事务并读取胜出记录，仍以幂等成功响应。
             await db.rollback()
             existing = await db.scalar(
                 select(Checkin).where(
@@ -73,7 +73,7 @@ async def checkin_today(
             Checkin.checkin_date <= today,
         )
     )
-    streak = current_streak(rows.scalars(), today)
+    checkin_dates = list(rows.scalars())
     if created:
         await db.commit()
 
@@ -81,7 +81,8 @@ async def checkin_today(
         checkin_date=today,
         checked_in=True,
         created=created,
-        current_streak=streak,
+        current_streak=current_streak(checkin_dates, today),
+        longest_streak=longest_streak(checkin_dates),
     )
 
 
@@ -126,6 +127,7 @@ async def get_month_checkins(
         today=today,
         checked_in_today=today in set(streak_dates),
         current_streak=current_streak(streak_dates, today),
+        longest_streak=longest_streak(streak_dates),
     )
 
 

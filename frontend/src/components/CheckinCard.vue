@@ -4,7 +4,11 @@
       <div>
         <p id="checkin-title" class="title">上名青简</p>
         <p class="streak">
-          {{ summary ? `已连续 ${currentStreak} 日` : "每日一记，留名青简" }}
+          {{
+            summary
+              ? `已连续 ${currentStreak} 日 · 最长 ${summary.longestStreak} 日`
+              : "每日一记，留名青简"
+          }}
         </p>
       </div>
       <button
@@ -24,7 +28,11 @@
       </button>
     </p>
 
-    <div v-if="summary" class="calendar" :aria-label="`${summary.year} 年 ${summary.month} 月签到日历`">
+    <div
+      v-if="summary"
+      class="calendar"
+      :aria-label="`${summary.year} 年 ${summary.month} 月签到日历`"
+    >
       <span v-for="label in weekLabels" :key="label" class="weekday">{{ label }}</span>
       <span
         v-for="(cell, index) in cells"

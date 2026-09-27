@@ -7,6 +7,7 @@ export interface TodayCheckin {
   checkedIn: boolean
   created: boolean
   currentStreak: number
+  longestStreak: number
 }
 
 export interface MonthCheckinSummary {
@@ -16,6 +17,7 @@ export interface MonthCheckinSummary {
   today: LocalDate
   checkedInToday: boolean
   currentStreak: number
+  longestStreak: number
 }
 
 interface RawTodayCheckin {
@@ -23,6 +25,7 @@ interface RawTodayCheckin {
   checked_in: boolean
   created: boolean
   current_streak: number
+  longest_streak: number
 }
 
 interface RawMonthCheckinSummary {
@@ -32,6 +35,7 @@ interface RawMonthCheckinSummary {
   today: LocalDate
   checked_in_today: boolean
   current_streak: number
+  longest_streak: number
 }
 
 function toTodayCheckin(raw: RawTodayCheckin): TodayCheckin {
@@ -40,6 +44,7 @@ function toTodayCheckin(raw: RawTodayCheckin): TodayCheckin {
     checkedIn: Boolean(raw.checked_in),
     created: Boolean(raw.created),
     currentStreak: raw.current_streak,
+    longestStreak: raw.longest_streak,
   }
 }
 
@@ -51,6 +56,7 @@ function toMonthCheckinSummary(raw: RawMonthCheckinSummary): MonthCheckinSummary
     today: raw.today,
     checkedInToday: Boolean(raw.checked_in_today),
     currentStreak: raw.current_streak,
+    longestStreak: raw.longest_streak,
   }
 }
 

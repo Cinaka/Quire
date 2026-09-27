@@ -3,7 +3,12 @@ from zoneinfo import ZoneInfoNotFoundError
 
 import pytest
 
-from app.services.checkins import account_local_date, current_streak, month_bounds
+from app.services.checkins import (
+    account_local_date,
+    current_streak,
+    longest_streak,
+    month_bounds,
+)
 
 
 def test_account_local_date_uses_account_timezone() -> None:
@@ -46,6 +51,23 @@ def test_current_streak_deduplicates_dates_and_ignores_future_dates() -> None:
     days = [date(2026, 9, 22), date(2026, 9, 22), date(2026, 9, 24)]
 
     assert current_streak(days, date(2026, 9, 23)) == 1
+
+
+def test_longest_streak_finds_best_historical_run() -> None:
+    days = [
+        date(2026, 9, 1),
+        date(2026, 9, 2),
+        date(2026, 9, 5),
+        date(2026, 9, 6),
+        date(2026, 9, 7),
+    ]
+
+    assert longest_streak(days) == 3
+
+
+def test_longest_streak_deduplicates_and_handles_empty_history() -> None:
+    assert longest_streak([]) == 0
+    assert longest_streak([date(2026, 9, 1), date(2026, 9, 1)]) == 1
 
 
 def test_month_bounds_are_left_closed_and_right_open() -> None:

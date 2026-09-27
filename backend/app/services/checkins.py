@@ -30,6 +30,21 @@ def current_streak(checkin_dates: Iterable[date], today: date) -> int:
     return streak
 
 
+def longest_streak(checkin_dates: Iterable[date]) -> int:
+    """计算去重后的历史最长连续签到天数。"""
+    days = sorted(set(checkin_dates))
+    longest = 0
+    running = 0
+    previous: date | None = None
+
+    for day in days:
+        running = running + 1 if previous and day == previous + timedelta(days=1) else 1
+        longest = max(longest, running)
+        previous = day
+
+    return longest
+
+
 def month_bounds(year: int, month: int) -> tuple[date, date]:
     """返回月份查询的左闭右开日期边界。"""
     start = date(year, month, 1)
