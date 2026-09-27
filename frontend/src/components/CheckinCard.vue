@@ -30,12 +30,33 @@
 
     <template v-if="summary">
       <div class="month-nav">
-        <button type="button" aria-label="查看上个月" @click="shiftMonth(-1)">‹</button>
-        <span>{{ summary.year }} 年 {{ summary.month }} 月 · 上名 {{ summary.checkinDates.length }} 日</span>
+        <button
+          type="button"
+          aria-label="查看上个月"
+          :disabled="loading || offline"
+          @click="shiftMonth(-1)"
+        >
+          ‹
+        </button>
+        <div class="month-label">
+          <span>
+            {{ summary.year }} 年 {{ summary.month }} 月 · 上名
+            {{ summary.checkinDates.length }} 日
+          </span>
+          <button
+            v-if="!isCurrentMonth"
+            type="button"
+            class="back-current"
+            :disabled="loading || offline"
+            @click="goToCurrentMonth"
+          >
+            回到本月
+          </button>
+        </div>
         <button
           type="button"
           aria-label="查看下个月"
-          :disabled="isCurrentMonth"
+          :disabled="loading || offline || isCurrentMonth"
           @click="shiftMonth(1)"
         >
           ›
@@ -118,12 +139,18 @@ const cells = computed<Array<LocalDate | null>>(() => {
 })
 
 function shiftMonth(offset: -1 | 1): void {
-  if (!props.summary || (offset === 1 && isCurrentMonth.value)) return
+  if (!props.summary || props.loading || props.offline) return
+  if (offset === 1 && isCurrentMonth.value) return
   const monthIndex = props.summary.year * 12 + props.summary.month - 1 + offset
   const year = Math.floor(monthIndex / 12)
   const month = (monthIndex % 12) + 1
   if (year < 1970 || year > 9998) return
   emit("monthChange", year, month)
+}
+
+function goToCurrentMonth(): void {
+  if (!props.summary || isCurrentMonth.value || props.loading || props.offline) return
+  emit("monthChange", Number(props.summary.today.slice(0, 4)), Number(props.summary.today.slice(5, 7)))
 }
 
 function dayLabel(value: LocalDate): string {
@@ -218,7 +245,13 @@ function dayLabel(value: LocalDate): string {
   color: var(--color-ink-soft);
 }
 
-.month-nav button {
+.month-label {
+  display: grid;
+  gap: 2px;
+  text-align: center;
+}
+
+.month-nav > button {
   width: 30px;
   height: 30px;
   border: 1px solid color-mix(in srgb, var(--color-ink-faint) 24%, transparent);
@@ -233,6 +266,15 @@ function dayLabel(value: LocalDate): string {
   color: var(--color-ink-faint);
   cursor: default;
   opacity: 0.35;
+}
+
+.back-current {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-bamboo);
+  font: inherit;
+  cursor: pointer;
 }
 
 .calendar {
