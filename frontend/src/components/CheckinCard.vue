@@ -28,27 +28,37 @@
       </button>
     </p>
 
-    <div
-      v-if="summary"
-      class="calendar"
-      :aria-label="`${summary.year} 年 ${summary.month} 月签到日历`"
-    >
-      <span v-for="label in weekLabels" :key="label" class="weekday">{{ label }}</span>
-      <span
-        v-for="(cell, index) in cells"
-        :key="cell ?? `blank-${index}`"
-        class="day"
-        :class="{
-          blank: cell === null,
-          checked: cell !== null && checkedDates.has(cell),
-          today: cell === summary.today,
-          future: cell !== null && cell > summary.today,
-        }"
-        :aria-label="cell ? dayLabel(cell) : undefined"
-      >
-        {{ cell ? Number(cell.slice(8, 10)) : "" }}
-      </span>
-    </div>
+    <template v-if="summary">
+      <div class="month-nav">
+        <button type="button" aria-label="查看上个月" @click="shiftMonth(-1)">‹</button>
+        <span>{{ summary.year }} 年 {{ summary.month }} 月 · 上名 {{ summary.checkinDates.length }} 日</span>
+        <button
+          type="button"
+          aria-label="查看下个月"
+          :disabled="isCurrentMonth"
+          @click="shiftMonth(1)"
+        >
+          ›
+        </button>
+      </div>
+      <div class="calendar" :aria-label="`${summary.year} 年 ${summary.month} 月签到日历`">
+        <span v-for="label in weekLabels" :key="label" class="weekday">{{ label }}</span>
+        <span
+          v-for="(cell, index) in cells"
+          :key="cell ?? `blank-${index}`"
+          class="day"
+          :class="{
+            blank: cell === null,
+            checked: cell !== null && checkedDates.has(cell),
+            today: cell === summary.today,
+            future: cell !== null && cell > summary.today,
+          }"
+          :aria-label="cell ? dayLabel(cell) : undefined"
+        >
+          {{ cell ? Number(cell.slice(8, 10)) : "" }}
+        </span>
+      </div>
+    </template>
     <p v-else-if="loading" class="hint" role="status">正在展开签到册……</p>
   </section>
 </template>
@@ -70,13 +80,20 @@ const props = defineProps<{
   currentStreak: number
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   submit: []
   retry: []
+  monthChange: [year: number, month: number]
 }>()
 
 const weekLabels = ["日", "一", "二", "三", "四", "五", "六"]
 const checkedDates = computed(() => new Set(props.summary?.checkinDates ?? []))
+const isCurrentMonth = computed(() => {
+  if (!props.summary) return true
+  return props.summary.today.startsWith(
+    `${props.summary.year}-${String(props.summary.month).padStart(2, "0")}`,
+  )
+})
 
 const buttonLabel = computed(() => {
   if (props.checkingIn) return "正在上名……"
@@ -100,6 +117,15 @@ const cells = computed<Array<LocalDate | null>>(() => {
   return result
 })
 
+function shiftMonth(offset: -1 | 1): void {
+  if (!props.summary || (offset === 1 && isCurrentMonth.value)) return
+  const monthIndex = props.summary.year * 12 + props.summary.month - 1 + offset
+  const year = Math.floor(monthIndex / 12)
+  const month = (monthIndex % 12) + 1
+  if (year < 1970 || year > 9998) return
+  emit("monthChange", year, month)
+}
+
 function dayLabel(value: LocalDate): string {
   const checked = checkedDates.value.has(value) ? "，已签到" : "，未签到"
   const today = value === props.summary?.today ? "，今天" : ""
@@ -116,7 +142,8 @@ function dayLabel(value: LocalDate): string {
   background: var(--color-paper-deep);
 }
 
-.checkin-head {
+.checkin-head,
+.month-nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -141,7 +168,8 @@ function dayLabel(value: LocalDate): string {
 .hint,
 .error,
 .weekday,
-.day {
+.day,
+.month-nav {
   font-size: var(--text-caption);
   line-height: var(--leading-caption);
 }
@@ -185,11 +213,33 @@ function dayLabel(value: LocalDate): string {
   cursor: pointer;
 }
 
+.month-nav {
+  margin-top: 12px;
+  color: var(--color-ink-soft);
+}
+
+.month-nav button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--color-ink-faint) 24%, transparent);
+  border-radius: var(--radius-card);
+  background: transparent;
+  color: var(--color-bamboo);
+  font-size: var(--text-section);
+  cursor: pointer;
+}
+
+.month-nav button:disabled {
+  color: var(--color-ink-faint);
+  cursor: default;
+  opacity: 0.35;
+}
+
 .calendar {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 5px;
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .weekday,
