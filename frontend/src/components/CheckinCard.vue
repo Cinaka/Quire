@@ -8,11 +8,7 @@
       <div>
         <p id="checkin-title" class="title">上名青简</p>
         <p class="streak">
-          {{
-            summary
-              ? `已连续 ${currentStreak} 日 · 最长 ${summary.longestStreak} 日`
-              : "每日一记，留名青简"
-          }}
+          {{ summary ? `已连续 ${currentStreak} 日 · 最长 ${summary.longestStreak} 日` : "每日一记，留名青简" }}
         </p>
         <p v-if="summary" class="total">累计上名 {{ summary.totalCheckins }} 日</p>
         <p v-if="summary" class="timezone">按 {{ summary.timezone }} 记日</p>
@@ -26,15 +22,11 @@
       </button>
     </div>
 
-    <p v-if="successMessage" class="success" role="status" aria-live="polite">
-      {{ successMessage }}
-    </p>
+    <p v-if="successMessage" class="success" role="status" aria-live="polite">{{ successMessage }}</p>
     <p v-if="stale" class="hint">当前展示的是上次读取结果</p>
     <p v-if="error" class="error" role="status">
       {{ error }}
-      <button v-if="!offline" type="button" class="retry" @click="$emit('retry')">
-        重试
-      </button>
+      <button v-if="!offline" type="button" class="retry" @click="$emit('retry')">重试</button>
     </p>
 
     <template v-if="summary">
@@ -42,7 +34,10 @@
         <button type="button" aria-label="查看上个月" :disabled="loading || offline" @click="shiftMonth(-1)">‹</button>
         <div class="month-label">
           <span>{{ summary.year }} 年 {{ summary.month }} 月 · 上名 {{ summary.checkinDates.length }} 日</span>
-          <button v-if="!isCurrentMonth" type="button" class="back-current" :disabled="loading || offline" @click="goToCurrentMonth">回到本月</button>
+          <span class="month-actions">
+            <button v-if="!isCurrentMonth" type="button" class="text-action" :disabled="loading || offline" @click="goToCurrentMonth">回到本月</button>
+            <button type="button" class="text-action" :disabled="loading || offline" @click="$emit('retry')">刷新</button>
+          </span>
         </div>
         <button type="button" aria-label="查看下个月" :disabled="loading || offline || isCurrentMonth" @click="shiftMonth(1)">›</button>
       </div>
@@ -145,9 +140,10 @@ onScopeDispose(() => { if (successTimer) clearTimeout(successTimer) })
 .retry { margin-left: 6px; padding: 0; border: none; background: none; color: var(--color-bamboo); text-decoration: underline; cursor: pointer; }
 .month-nav { margin-top: 12px; color: var(--color-ink-soft); }
 .month-label { display: grid; gap: 2px; text-align: center; }
+.month-actions { display: flex; justify-content: center; gap: 10px; }
 .month-nav > button { width: 30px; height: 30px; border: 1px solid color-mix(in srgb, var(--color-ink-faint) 24%, transparent); border-radius: var(--radius-card); background: transparent; color: var(--color-bamboo); font-size: var(--text-section); cursor: pointer; }
 .month-nav button:disabled { color: var(--color-ink-faint); cursor: default; opacity: 0.35; }
-.back-current { padding: 0; border: none; background: none; color: var(--color-bamboo); font: inherit; cursor: pointer; }
+.text-action { padding: 0; border: none; background: none; color: var(--color-bamboo); font: inherit; cursor: pointer; }
 .calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; margin-top: 8px; }
 .weekday, .day { display: grid; min-height: 28px; place-items: center; color: var(--color-ink-faint); font-variant-numeric: tabular-nums; }
 .day { border: 1px solid transparent; border-radius: 4px; }

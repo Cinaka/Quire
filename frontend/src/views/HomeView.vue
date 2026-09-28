@@ -4,11 +4,7 @@
       <div class="date-block">
         <div class="day-number">{{ dayNum }}</div>
         <div class="month-weekday">{{ monthLabel }} · {{ almanac?.weekday }}</div>
-        <HomeDateNavigator
-          v-model="selectedDate"
-          :max="today"
-          @blocked="showBlockedNotice"
-        />
+        <HomeDateNavigator v-model="selectedDate" :max="today" @blocked="showBlockedNotice" />
       </div>
       <button type="button" class="plain" @click="router.push('/settings')">设置</button>
     </header>
@@ -17,31 +13,18 @@
     <AlmanacCard v-if="almanac" :key="selectedDate" :almanac="almanac" />
 
     <section class="mt-6">
-      <h2 v-if="dateEntries.length" class="section-title">
-        {{ selectedDate === today ? "今日已记" : "当日已记" }} {{ dateEntries.length }} 篇
-      </h2>
+      <h2 v-if="dateEntries.length" class="section-title">{{ selectedDate === today ? "今日已记" : "当日已记" }} {{ dateEntries.length }} 篇</h2>
       <ul v-if="dateEntries.length" class="entry-list">
         <li v-for="entry in dateEntries" :key="entry.id" @click="open(entry.id)">
           <span class="entry-title">{{ entry.title || "无题" }}</span>
           <span class="entry-preview" :class="{ faint: !hasText(entry) }">{{ preview(entry) }}</span>
-          <span
-            v-if="imageCountByEntry[entry.id]"
-            class="img-badge"
-            :aria-label="`${imageCountByEntry[entry.id]} 张图片`"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <rect x="3" y="5" width="18" height="14" rx="2" />
-              <circle cx="8.5" cy="10" r="1.5" />
-              <path d="M21 16l-5-5-9 8" />
-            </svg>
+          <span v-if="imageCountByEntry[entry.id]" class="img-badge" :aria-label="`${imageCountByEntry[entry.id]} 张图片`">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="8.5" cy="10" r="1.5" /><path d="M21 16l-5-5-9 8" /></svg>
             {{ imageCountByEntry[entry.id] }}
           </span>
         </li>
       </ul>
-      <div v-else class="empty-state">
-        <BambooSlipEmpty />
-        <p class="empty empty-hand">今日无事，也可留白</p>
-      </div>
+      <div v-else class="empty-state"><BambooSlipEmpty /><p class="empty empty-hand">今日无事，也可留白</p></div>
     </section>
 
     <CheckinCard
@@ -55,46 +38,24 @@
       :checked-in-today="checkedInToday"
       :current-streak="currentStreak"
       @submit="submitToday"
-      @retry="loadCheckins"
+      @retry="refreshActiveCheckins"
       @month-change="loadCheckinMonth"
     />
-    <button
-      v-else
-      class="sign-in"
-      type="button"
-      title="前往云笺"
-      @click="router.push('/sync')"
-    >
-      <span>上名青简</span>
-      <small>登录后可用</small>
+    <button v-else class="sign-in" type="button" title="前往云笺" @click="router.push('/sync')">
+      <span>上名青简</span><small>登录后可用</small>
     </button>
 
     <section class="mt-6">
       <div class="sec-head">
         <h2 class="section-title">近作</h2>
-        <button
-          v-if="recent.length"
-          type="button"
-          class="plain accent"
-          @click="router.push('/list')"
-        >
-          成编
-        </button>
+        <button v-if="recent.length" type="button" class="plain accent" @click="router.push('/list')">成编</button>
       </div>
       <ul v-if="recent.length" class="entry-list">
         <li v-for="entry in recent" :key="entry.id" @click="open(entry.id)">
           <span class="entry-date">{{ entry.entryDate.slice(5) }}</span>
           <span class="entry-title">{{ entry.title || "无题" }}</span>
-          <span
-            v-if="imageCountByEntry[entry.id]"
-            class="img-badge"
-            :aria-label="`${imageCountByEntry[entry.id]} 张图片`"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <rect x="3" y="5" width="18" height="14" rx="2" />
-              <circle cx="8.5" cy="10" r="1.5" />
-              <path d="M21 16l-5-5-9 8" />
-            </svg>
+          <span v-if="imageCountByEntry[entry.id]" class="img-badge" :aria-label="`${imageCountByEntry[entry.id]} 张图片`">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="8.5" cy="10" r="1.5" /><path d="M21 16l-5-5-9 8" /></svg>
             {{ imageCountByEntry[entry.id] }}
           </span>
         </li>
@@ -103,17 +64,13 @@
     </section>
 
     <footer class="footer">{{ Number(selectedDate.slice(5, 7)) }} 月已记 {{ monthDays }} 天</footer>
-
-    <button type="button" class="write-fab" :aria-label="writeLabel" @click="write">
-      {{ writeLabel }}
-    </button>
+    <button type="button" class="write-fab" :aria-label="writeLabel" @click="write">{{ writeLabel }}</button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue"
 import { useRouter } from "vue-router"
-
 import { isLoggedIn } from "@/api/session"
 import AlmanacCard from "@/components/AlmanacCard.vue"
 import BambooSlipEmpty from "@/components/BambooSlipEmpty.vue"
@@ -149,33 +106,22 @@ const {
   currentStreak,
   load: loadCheckinMonth,
   loadCurrent: loadCurrentCheckins,
+  revalidateActive: revalidateActiveCheckins,
   submitToday,
 } = useCheckins()
 
 const dayNum = computed(() => Number(selectedDate.value.slice(8, 10)))
 const monthLabel = computed(() => `${Number(selectedDate.value.slice(5, 7))} 月`)
-const writeLabel = computed(() => {
-  if (selectedDate.value !== today) return "补记一简"
-  return dateEntries.value.length ? "再刻一简" : "刻一简"
-})
+const writeLabel = computed(() => selectedDate.value !== today ? "补记一简" : dateEntries.value.length ? "再刻一简" : "刻一简")
 
-function hasText(entry: EntryListItem): boolean {
-  return entry.contentText.trim().length > 0
-}
-
-function preview(entry: EntryListItem): string {
-  const value = entryExcerpt(entry.contentText, imageCountByEntry.value[entry.id] ?? 0)
-  return value.length > 40 ? `${value.slice(0, 40)}…` : value
-}
+function hasText(entry: EntryListItem): boolean { return entry.contentText.trim().length > 0 }
+function preview(entry: EntryListItem): string { const value = entryExcerpt(entry.contentText, imageCountByEntry.value[entry.id] ?? 0); return value.length > 40 ? `${value.slice(0, 40)}…` : value }
 
 async function load(): Promise<void> {
   const mine = ++loadSeq
   const date = selectedDate.value
   const nextAlmanac = getAlmanac(date)
-  const [minePage, latest] = await Promise.all([
-    entryRepo.list({ dateFrom: date, dateTo: date, pageSize: 50 }),
-    entryRepo.list({ pageSize: 5, order: "entryDateDesc" }),
-  ])
+  const [minePage, latest] = await Promise.all([entryRepo.list({ dateFrom: date, dateTo: date, pageSize: 50 }), entryRepo.list({ pageSize: 5, order: "entryDateDesc" })])
   const prefix = date.slice(0, 7)
   const counts = await entryRepo.countByDate(`${prefix}-01`, `${prefix}-31`)
   const ids = [...new Set([...minePage.items, ...latest.items].map((entry) => entry.id))]
@@ -188,31 +134,13 @@ async function load(): Promise<void> {
   monthDays.value = Object.keys(counts).length
 }
 
-function loadCheckins(): Promise<void> {
-  return loadCurrentCheckins()
-}
-
-function showBlockedNotice(): void {
-  notice.value = "预简（待刻）尚未开放，暂只能刻已至之日"
-}
-
-function write(): void {
-  void router.push({ path: "/entry/new", query: { date: selectedDate.value } })
-}
-
-function open(id: string): void {
-  void router.push(`/entry/${id}`)
-}
-
-watch(selectedDate, () => {
-  notice.value = ""
-  void load()
-})
-
-onMounted(() => {
-  void load()
-  if (loggedIn.value) void loadCheckins()
-})
+function loadCheckins(): Promise<void> { return loadCurrentCheckins() }
+function refreshActiveCheckins(): void { revalidateActiveCheckins(true) }
+function showBlockedNotice(): void { notice.value = "预简（待刻）尚未开放，暂只能刻已至之日" }
+function write(): void { void router.push({ path: "/entry/new", query: { date: selectedDate.value } }) }
+function open(id: string): void { void router.push(`/entry/${id}`) }
+watch(selectedDate, () => { notice.value = ""; void load() })
+onMounted(() => { void load(); if (loggedIn.value) void loadCheckins() })
 </script>
 
 <style scoped>
