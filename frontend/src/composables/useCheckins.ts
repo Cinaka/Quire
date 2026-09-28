@@ -1,14 +1,15 @@
 import { computed, onScopeDispose, ref } from "vue"
 
+import { cacheCheckinMonth, readCachedCheckinMonth } from "@/api/checkinCache"
 import {
   checkInToday,
   getMonthCheckins,
   type MonthCheckinSummary,
   type TodayCheckin,
 } from "@/api/checkins"
-import { cacheCheckinMonth, readCachedCheckinMonth } from "@/api/checkinCache"
 
 const REVALIDATE_GAP_MS = 1_000
+const CHECKIN_CHANNEL = "quire-checkins"
 
 export function useCheckins() {
   const summary = ref<MonthCheckinSummary | null>(null)
@@ -19,6 +20,7 @@ export function useCheckins() {
   const error = ref("")
   const activeYear = ref<number | null>(null)
   const activeMonth = ref<number | null>(null)
+  const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(CHECKIN_CHANNEL)
   let followsCurrentMonth = false
   let loadSeq = 0
   let submitSeq = 0
@@ -110,6 +112,13 @@ export function useCheckins() {
     }
   }
 
+  function handleCheckinMessage(event: MessageEvent<unknown>): void {
+    const message = event.data
+    if (!message || typeof message !== "object") return
+    if ((message as { type?: unknown }).type !== "checked-in") return
+    revalidateActive(true)
+  }
+
   function markOnline(): void {
     offline.value = false
     revalidateActive(true)
@@ -127,6 +136,7 @@ export function useCheckins() {
   window.addEventListener("online", markOnline)
   window.addEventListener("focus", handleWindowFocus)
   document.addEventListener("visibilitychange", handleVisibilityChange)
+  channel?.addEventListener("message", handleCheckinMessage)
 
   function applyTodayResult(result: TodayCheckin): void {
     const current = summary.value
@@ -164,6 +174,7 @@ export function useCheckins() {
       const result = await checkInToday()
       if (mine !== submitSeq) return
       applyTodayResult(result)
+      channel?.postMessage({ type: "checked-in", checkinDate: result.checkinDate })
 
       if (followsCurrentMonth) {
         await loadCurrent()
@@ -200,6 +211,8 @@ export function useCheckins() {
     window.removeEventListener("online", markOnline)
     window.removeEventListener("focus", handleWindowFocus)
     document.removeEventListener("visibilitychange", handleVisibilityChange)
+    channel?.removeEventListener("message", handleCheckinMessage)
+    channel?.close()
   })
 
   return {
