@@ -1,5 +1,6 @@
 import { db } from "@/db/schema"
 
+import { clearCheckinCache, currentCheckinCacheOwner } from "./checkinCache"
 import { del, get, post } from "./request"
 import { clearAccessToken, getAccessToken, setAccessToken } from "./tokenStore"
 
@@ -60,9 +61,11 @@ export async function refreshSession(): Promise<string> {
 }
 
 export async function logout(): Promise<void> {
+  const checkinCacheOwner = currentCheckinCacheOwner()
   try {
     await post<null>("/auth/logout")
   } finally {
+    clearCheckinCache(checkinCacheOwner)
     clearAccessToken()
   }
 }

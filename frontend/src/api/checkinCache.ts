@@ -58,6 +58,23 @@ function readSummary(key: string): MonthCheckinSummary | null {
   }
 }
 
+export function currentCheckinCacheOwner(): string {
+  return accountId()
+}
+
+export function clearCheckinCache(userId = accountId()): void {
+  if (!userId) return
+  const prefix = `${accountPrefix(userId)}:`
+  try {
+    for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = sessionStorage.key(index)
+      if (key?.startsWith(prefix)) sessionStorage.removeItem(key)
+    }
+  } catch {
+    // 清理缓存失败不能阻止退出登录与清除访问令牌。
+  }
+}
+
 export function readCachedCheckinMonth(
   year?: number,
   month?: number,
