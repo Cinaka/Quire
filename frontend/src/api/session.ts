@@ -4,6 +4,8 @@ import { clearCheckinCache, currentCheckinCacheOwner } from "./checkinCache"
 import { del, get, post } from "./request"
 import { clearAccessToken, getAccessToken, setAccessToken } from "./tokenStore"
 
+const DEFAULT_TIMEZONE = "Asia/Shanghai"
+
 export interface SessionUser {
   id: string
   email: string | null
@@ -29,6 +31,14 @@ interface RefreshResponse {
   expires_in: number
 }
 
+function detectedTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone?.trim() || DEFAULT_TIMEZONE
+  } catch {
+    return DEFAULT_TIMEZONE
+  }
+}
+
 export function isLoggedIn(): boolean {
   return getAccessToken() !== ""
 }
@@ -47,7 +57,7 @@ export async function login(email: string, password: string): Promise<SessionUse
 export async function register(
   email: string,
   password: string,
-  timezone = Intl.DateTimeFormat().resolvedOptions().timeZone,
+  timezone = detectedTimezone(),
 ): Promise<SessionUser> {
   const data = await post<AuthResponse>("/auth/register", { email, password, timezone })
   setAccessToken(data.access_token)
