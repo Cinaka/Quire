@@ -21,6 +21,7 @@ export interface MonthCheckinSummary {
   currentStreak: number
   longestStreak: number
   totalCheckins: number
+  updatedAt: number
 }
 
 interface RawTodayCheckin {
@@ -66,6 +67,7 @@ function toMonthCheckinSummary(raw: RawMonthCheckinSummary): MonthCheckinSummary
     currentStreak: raw.current_streak,
     longestStreak: raw.longest_streak,
     totalCheckins: raw.total_checkins,
+    updatedAt: Date.now(),
   }
 }
 

@@ -1,33 +1,18 @@
 <template>
-  <section
-    class="checkin-card"
-    aria-labelledby="checkin-title"
-    :aria-busy="loading || checkingIn"
-  >
+  <section class="checkin-card" aria-labelledby="checkin-title" :aria-busy="loading || checkingIn">
     <div class="checkin-head">
       <div>
         <p id="checkin-title" class="title">上名青简</p>
-        <p class="streak">
-          {{ summary ? `已连续 ${currentStreak} 日 · 最长 ${summary.longestStreak} 日` : "每日一记，留名青简" }}
-        </p>
+        <p class="streak">{{ summary ? `已连续 ${currentStreak} 日 · 最长 ${summary.longestStreak} 日` : "每日一记，留名青简" }}</p>
         <p v-if="summary" class="total">累计上名 {{ summary.totalCheckins }} 日</p>
-        <p v-if="summary" class="timezone">按 {{ summary.timezone }} 记日</p>
+        <p v-if="summary" class="timezone">按 {{ summary.timezone }} 记日 · 更新于 {{ updatedLabel }}</p>
       </div>
-      <button
-        type="button"
-        :disabled="loading || checkingIn || checkedInToday || offline"
-        @click="$emit('submit')"
-      >
-        {{ buttonLabel }}
-      </button>
+      <button type="button" :disabled="loading || checkingIn || checkedInToday || offline" @click="$emit('submit')">{{ buttonLabel }}</button>
     </div>
 
     <p v-if="successMessage" class="success" role="status" aria-live="polite">{{ successMessage }}</p>
     <p v-if="stale" class="hint">当前展示的是上次读取结果</p>
-    <p v-if="error" class="error" role="status">
-      {{ error }}
-      <button v-if="!offline" type="button" class="retry" @click="$emit('retry')">重试</button>
-    </p>
+    <p v-if="error" class="error" role="status">{{ error }} <button v-if="!offline" type="button" class="retry" @click="$emit('retry')">重试</button></p>
 
     <template v-if="summary">
       <div class="month-nav">
@@ -43,13 +28,7 @@
       </div>
       <div class="calendar" :aria-label="`${summary.year} 年 ${summary.month} 月签到日历`">
         <span v-for="label in weekLabels" :key="label" class="weekday">{{ label }}</span>
-        <span
-          v-for="(cell, index) in cells"
-          :key="cell ?? `blank-${index}`"
-          class="day"
-          :class="{ blank: cell === null, checked: cell !== null && checkedDates.has(cell), today: cell === summary.today, future: cell !== null && cell > summary.today }"
-          :aria-label="cell ? dayLabel(cell) : undefined"
-        >{{ cell ? Number(cell.slice(8, 10)) : "" }}</span>
+        <span v-for="(cell, index) in cells" :key="cell ?? `blank-${index}`" class="day" :class="{ blank: cell === null, checked: cell !== null && checkedDates.has(cell), today: cell === summary.today, future: cell !== null && cell > summary.today }" :aria-label="cell ? dayLabel(cell) : undefined">{{ cell ? Number(cell.slice(8, 10)) : "" }}</span>
       </div>
     </template>
     <p v-else-if="loading" class="hint" role="status">正在展开签到册……</p>
@@ -69,26 +48,15 @@ const successMessage = ref("")
 let hasInitialSummary = false
 let successTimer: ReturnType<typeof setTimeout> | null = null
 
-const isCurrentMonth = computed(() => {
-  if (!props.summary) return true
-  return props.summary.today.startsWith(`${props.summary.year}-${String(props.summary.month).padStart(2, "0")}`)
-})
-
-const buttonLabel = computed(() => {
-  if (props.checkingIn) return "正在上名……"
-  if (props.checkedInToday) return "今日已上名"
-  if (props.offline) return "离线不可签到"
-  if (props.loading) return "读取中……"
-  return "上名青简"
-})
+const isCurrentMonth = computed(() => props.summary ? props.summary.today.startsWith(`${props.summary.year}-${String(props.summary.month).padStart(2, "0")}`) : true)
+const updatedLabel = computed(() => props.summary ? new Date(props.summary.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "")
+const buttonLabel = computed(() => props.checkingIn ? "正在上名……" : props.checkedInToday ? "今日已上名" : props.offline ? "离线不可签到" : props.loading ? "读取中……" : "上名青简")
 
 const cells = computed<Array<LocalDate | null>>(() => {
   if (!props.summary) return []
   const { year, month } = props.summary
-  const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay()
-  const days = new Date(Date.UTC(year, month, 0)).getUTCDate()
-  const result: Array<LocalDate | null> = Array.from({ length: firstWeekday }, () => null)
-  for (let day = 1; day <= days; day += 1) result.push(`${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`)
+  const result: Array<LocalDate | null> = Array.from({ length: new Date(Date.UTC(year, month - 1, 1)).getUTCDay() }, () => null)
+  for (let day = 1; day <= new Date(Date.UTC(year, month, 0)).getUTCDate(); day += 1) result.push(`${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`)
   return result
 })
 
@@ -102,26 +70,21 @@ watch(() => props.summary, (next, previous) => {
 })
 
 function shiftMonth(offset: -1 | 1): void {
-  if (!props.summary || props.loading || props.offline) return
-  if (offset === 1 && isCurrentMonth.value) return
+  if (!props.summary || props.loading || props.offline || (offset === 1 && isCurrentMonth.value)) return
   const monthIndex = props.summary.year * 12 + props.summary.month - 1 + offset
   const year = Math.floor(monthIndex / 12)
   const month = (monthIndex % 12) + 1
-  if (year < 1970 || year > 9998) return
-  emit("monthChange", year, month)
+  if (year >= 1970 && year <= 9998) emit("monthChange", year, month)
 }
-
 function goToCurrentMonth(): void {
   if (!props.summary || isCurrentMonth.value || props.loading || props.offline) return
   emit("monthChange", Number(props.summary.today.slice(0, 4)), Number(props.summary.today.slice(5, 7)))
 }
-
 function dayLabel(value: LocalDate): string {
   const checked = checkedDates.value.has(value) ? "，已签到" : "，未签到"
   const today = value === props.summary?.today ? "，今天" : ""
   return `${Number(value.slice(5, 7))} 月 ${Number(value.slice(8, 10))} 日${today}${checked}`
 }
-
 onScopeDispose(() => { if (successTimer) clearTimeout(successTimer) })
 </script>
 
