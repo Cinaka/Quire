@@ -9,6 +9,7 @@ import {
 } from "@/api/checkins"
 
 const REVALIDATE_GAP_MS = 1_000
+const REVALIDATE_INTERVAL_MS = 60_000
 const CHECKIN_CHANNEL = "quire-checkins"
 
 export function useCheckins() {
@@ -100,7 +101,15 @@ export function useCheckins() {
   function revalidateActive(force = false): void {
     const year = activeYear.value
     const month = activeMonth.value
-    if (year === null || month === null || checkingIn.value || !navigator.onLine) return
+    if (
+      year === null ||
+      month === null ||
+      loading.value ||
+      checkingIn.value ||
+      !navigator.onLine
+    ) {
+      return
+    }
 
     const now = Date.now()
     if (!force && now - lastRevalidateAt < REVALIDATE_GAP_MS) return
@@ -132,11 +141,19 @@ export function useCheckins() {
     revalidateActive()
   }
 
+  function handlePeriodicRevalidation(): void {
+    if (document.visibilityState === "visible") revalidateActive()
+  }
+
   window.addEventListener("offline", markOffline)
   window.addEventListener("online", markOnline)
   window.addEventListener("focus", handleWindowFocus)
   document.addEventListener("visibilitychange", handleVisibilityChange)
   channel?.addEventListener("message", handleCheckinMessage)
+  const revalidateTimer = window.setInterval(
+    handlePeriodicRevalidation,
+    REVALIDATE_INTERVAL_MS,
+  )
 
   function applyTodayResult(result: TodayCheckin): void {
     const current = summary.value
@@ -213,6 +230,7 @@ export function useCheckins() {
     document.removeEventListener("visibilitychange", handleVisibilityChange)
     channel?.removeEventListener("message", handleCheckinMessage)
     channel?.close()
+    window.clearInterval(revalidateTimer)
   })
 
   return {
