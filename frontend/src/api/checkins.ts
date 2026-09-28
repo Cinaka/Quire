@@ -16,6 +16,7 @@ export interface MonthCheckinSummary {
   month: number
   checkinDates: LocalDate[]
   today: LocalDate
+  timezone: string
   checkedInToday: boolean
   currentStreak: number
   longestStreak: number
@@ -36,6 +37,7 @@ interface RawMonthCheckinSummary {
   month: number
   checkin_dates: LocalDate[]
   today: LocalDate
+  timezone: string
   checked_in_today: boolean
   current_streak: number
   longest_streak: number
@@ -59,6 +61,7 @@ function toMonthCheckinSummary(raw: RawMonthCheckinSummary): MonthCheckinSummary
     month: raw.month,
     checkinDates: raw.checkin_dates ?? [],
     today: raw.today,
+    timezone: raw.timezone,
     checkedInToday: Boolean(raw.checked_in_today),
     currentStreak: raw.current_streak,
     longestStreak: raw.longest_streak,

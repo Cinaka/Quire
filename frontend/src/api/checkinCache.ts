@@ -40,6 +40,7 @@ function isSummary(value: unknown): value is MonthCheckinSummary {
     Number.isInteger(item.month) &&
     Array.isArray(item.checkinDates) &&
     typeof item.today === "string" &&
+    typeof item.timezone === "string" &&
     typeof item.checkedInToday === "boolean" &&
     Number.isInteger(item.currentStreak) &&
     Number.isInteger(item.longestStreak) &&

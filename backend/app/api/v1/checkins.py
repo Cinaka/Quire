@@ -35,6 +35,7 @@ class MonthCheckinResponse(BaseModel):
     month: int
     checkin_dates: list[date]
     today: date
+    timezone: str
     checked_in_today: bool
     current_streak: int
     longest_streak: int
@@ -130,6 +131,7 @@ async def get_month_checkins(
         month=target_month,
         checkin_dates=checkin_dates,
         today=today,
+        timezone=user.timezone,
         checked_in_today=today in streak_dates,
         current_streak=current_streak(streak_dates, today),
         longest_streak=longest_streak(streak_dates),
