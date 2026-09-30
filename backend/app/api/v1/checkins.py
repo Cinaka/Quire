@@ -113,10 +113,11 @@ async def get_month_checkins(
             Checkin.user_id == user_id,
             Checkin.checkin_date >= start,
             Checkin.checkin_date < end,
+            Checkin.checkin_date <= today,
         )
         .order_by(Checkin.checkin_date.asc())
     )
-    checkin_dates = list(month_rows.scalars())
+    checkin_dates = [day for day in month_rows.scalars() if day <= today]
 
     streak_rows = await db.execute(
         select(Checkin.checkin_date).where(
