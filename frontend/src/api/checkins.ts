@@ -85,7 +85,10 @@ export async function getMonthCheckins(
   year?: number,
   month?: number,
 ): Promise<MonthCheckinSummary> {
-  const params = year === undefined || month === undefined ? undefined : { year, month }
+  if ((year === undefined) !== (month === undefined)) {
+    throw new TypeError("year 与 month 必须同时提供")
+  }
+  const params = year === undefined ? undefined : { year, month }
   const data = await get<RawMonthCheckinSummary>("/checkins/month", params)
   return toMonthCheckinSummary(data)
 }
