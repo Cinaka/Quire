@@ -7,6 +7,7 @@ import {
   type MonthCheckinSummary,
   type TodayCheckin,
 } from "@/api/checkins"
+import { ACCESS_TOKEN_KEY, accessTokenSubject } from "@/api/tokenStore"
 
 const REVALIDATE_GAP_MS = 1_000
 const REVALIDATE_INTERVAL_MS = 60_000
@@ -23,6 +24,7 @@ export function useCheckins() {
   const activeYear = ref<number | null>(null)
   const activeMonth = ref<number | null>(null)
   const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(CHECKIN_CHANNEL)
+  let activeUserId = accessTokenSubject()
   let followsCurrentMonth = false
   let loadSeq = 0
   let submitSeq = 0
@@ -52,24 +54,11 @@ export function useCheckins() {
     error.value = "当前处于离线状态，展示结果可能不是最新；联网后可继续签到。"
   }
 
-  async function requestMonth(
-    year: number | undefined,
-    month: number | undefined,
-    followCurrent: boolean,
-  ): Promise<void> {
+  async function requestMonth(year: number | undefined, month: number | undefined, followCurrent: boolean): Promise<void> {
     const mine = ++loadSeq
     followsCurrentMonth = followCurrent
-    if (year !== undefined && month !== undefined) {
-      activeYear.value = year
-      activeMonth.value = month
-    }
-
-    if (!navigator.onLine) {
-      restoreCached(year, month)
-      markOffline()
-      return
-    }
-
+    if (year !== undefined && month !== undefined) { activeYear.value = year; activeMonth.value = month }
+    if (!navigator.onLine) { restoreCached(year, month); markOffline(); return }
     loading.value = true
     error.value = ""
     try {
@@ -91,27 +80,13 @@ export function useCheckins() {
     }
   }
 
-  function load(year: number, month: number): Promise<void> {
-    return requestMonth(year, month, false)
-  }
-
-  function loadCurrent(): Promise<void> {
-    return requestMonth(undefined, undefined, true)
-  }
+  function load(year: number, month: number): Promise<void> { return requestMonth(year, month, false) }
+  function loadCurrent(): Promise<void> { return requestMonth(undefined, undefined, true) }
 
   function revalidateActive(force = false): void {
     const year = activeYear.value
     const month = activeMonth.value
-    if (
-      year === null ||
-      month === null ||
-      loading.value ||
-      checkingIn.value ||
-      !navigator.onLine
-    ) {
-      return
-    }
-
+    if (year === null || month === null || loading.value || checkingIn.value || !navigator.onLine) return
     const now = Date.now()
     if (!force && now - lastRevalidateAt < REVALIDATE_GAP_MS) return
     lastRevalidateAt = now
@@ -121,8 +96,7 @@ export function useCheckins() {
 
   function handleCheckinMessage(event: MessageEvent<unknown>): void {
     const message = event.data
-    if (!message || typeof message !== "object") return
-    if ((message as { type?: unknown }).type !== "checked-in") return
+    if (!message || typeof message !== "object" || (message as { type?: unknown }).type !== "checked-in") return
     revalidateActive(true)
   }
 
@@ -131,79 +105,50 @@ export function useCheckins() {
     revalidateActive(true)
   }
 
+  function handleAccountChange(event: StorageEvent): void {
+    if (event.key !== ACCESS_TOKEN_KEY) return
+    const nextUserId = accessTokenSubject(event.newValue ?? "")
+    if (nextUserId === activeUserId) return
+    activeUserId = nextUserId
+    reset()
+    if (nextUserId && navigator.onLine) void loadCurrent()
+  }
+
   function broadcastCheckin(checkinDate: string): void {
-    if (channel) {
-      channel.postMessage({ type: "checked-in", checkinDate })
-      return
-    }
+    if (channel) { channel.postMessage({ type: "checked-in", checkinDate }); return }
     try {
-      localStorage.setItem(
-        CHECKIN_STORAGE_EVENT,
-        JSON.stringify({ checkinDate, emittedAt: Date.now() }),
-      )
+      localStorage.setItem(CHECKIN_STORAGE_EVENT, JSON.stringify({ checkinDate, emittedAt: Date.now() }))
       localStorage.removeItem(CHECKIN_STORAGE_EVENT)
     } catch {
       // 跨标签页通知失败不影响服务端签到结果与焦点刷新兜底。
     }
   }
 
-  function markOnline(): void {
-    offline.value = false
-    revalidateActive(true)
-  }
-
-  function handleVisibilityChange(): void {
-    if (document.visibilityState === "visible") revalidateActive()
-  }
-
-  function handleWindowFocus(): void {
-    revalidateActive()
-  }
-
-  function handlePeriodicRevalidation(): void {
-    if (document.visibilityState === "visible") revalidateActive()
-  }
+  function markOnline(): void { offline.value = false; revalidateActive(true) }
+  function handleVisibilityChange(): void { if (document.visibilityState === "visible") revalidateActive() }
+  function handleWindowFocus(): void { revalidateActive() }
+  function handlePeriodicRevalidation(): void { if (document.visibilityState === "visible") revalidateActive() }
 
   window.addEventListener("offline", markOffline)
   window.addEventListener("online", markOnline)
   window.addEventListener("focus", handleWindowFocus)
+  window.addEventListener("storage", handleAccountChange)
   document.addEventListener("visibilitychange", handleVisibilityChange)
   if (channel) channel.addEventListener("message", handleCheckinMessage)
   else window.addEventListener("storage", handleStorageEvent)
-  const revalidateTimer = window.setInterval(
-    handlePeriodicRevalidation,
-    REVALIDATE_INTERVAL_MS,
-  )
+  const revalidateTimer = window.setInterval(handlePeriodicRevalidation, REVALIDATE_INTERVAL_MS)
 
   function applyTodayResult(result: TodayCheckin): void {
     const current = summary.value
     if (!current) return
-
     const prefix = `${current.year}-${String(current.month).padStart(2, "0")}`
-    const dates = current.checkinDates.includes(result.checkinDate)
-      ? current.checkinDates
-      : result.checkinDate.startsWith(prefix)
-        ? [...current.checkinDates, result.checkinDate].sort()
-        : current.checkinDates
-
-    summary.value = {
-      ...current,
-      checkinDates: dates,
-      today: result.checkinDate,
-      checkedInToday: result.checkedIn,
-      currentStreak: result.currentStreak,
-      longestStreak: result.longestStreak,
-      totalCheckins: result.totalCheckins,
-    }
+    const dates = current.checkinDates.includes(result.checkinDate) ? current.checkinDates : result.checkinDate.startsWith(prefix) ? [...current.checkinDates, result.checkinDate].sort() : current.checkinDates
+    summary.value = { ...current, checkinDates: dates, today: result.checkinDate, checkedInToday: result.checkedIn, currentStreak: result.currentStreak, longestStreak: result.longestStreak, totalCheckins: result.totalCheckins }
   }
 
   async function submitToday(): Promise<void> {
     if (checkingIn.value || checkedInToday.value) return
-    if (!navigator.onLine) {
-      markOffline()
-      return
-    }
-
+    if (!navigator.onLine) { markOffline(); return }
     const mine = ++submitSeq
     checkingIn.value = true
     error.value = ""
@@ -212,14 +157,8 @@ export function useCheckins() {
       if (mine !== submitSeq) return
       applyTodayResult(result)
       broadcastCheckin(result.checkinDate)
-
-      if (followsCurrentMonth) {
-        await loadCurrent()
-      } else {
-        const year = activeYear.value ?? Number(result.checkinDate.slice(0, 4))
-        const month = activeMonth.value ?? Number(result.checkinDate.slice(5, 7))
-        await load(year, month)
-      }
+      if (followsCurrentMonth) await loadCurrent()
+      else await load(activeYear.value ?? Number(result.checkinDate.slice(0, 4)), activeMonth.value ?? Number(result.checkinDate.slice(5, 7)))
     } catch (value) {
       if (mine === submitSeq) error.value = errorMessage(value)
     } finally {
@@ -247,30 +186,12 @@ export function useCheckins() {
     window.removeEventListener("offline", markOffline)
     window.removeEventListener("online", markOnline)
     window.removeEventListener("focus", handleWindowFocus)
+    window.removeEventListener("storage", handleAccountChange)
     document.removeEventListener("visibilitychange", handleVisibilityChange)
-    if (channel) {
-      channel.removeEventListener("message", handleCheckinMessage)
-      channel.close()
-    } else {
-      window.removeEventListener("storage", handleStorageEvent)
-    }
+    if (channel) { channel.removeEventListener("message", handleCheckinMessage); channel.close() }
+    else window.removeEventListener("storage", handleStorageEvent)
     window.clearInterval(revalidateTimer)
   })
 
-  return {
-    summary,
-    loading,
-    checkingIn,
-    offline,
-    stale,
-    error,
-    checkedInToday,
-    currentStreak,
-    checkinDates,
-    load,
-    loadCurrent,
-    revalidateActive,
-    submitToday,
-    reset,
-  }
+  return { summary, loading, checkingIn, offline, stale, error, checkedInToday, currentStreak, checkinDates, load, loadCurrent, revalidateActive, submitToday, reset }
 }

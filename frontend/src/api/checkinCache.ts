@@ -1,5 +1,5 @@
 import type { MonthCheckinSummary } from "./checkins"
-import { getAccessToken } from "./tokenStore"
+import { accessTokenSubject } from "./tokenStore"
 
 const CACHE_PREFIX = "quire_checkin_months_v1"
 const MAX_CACHED_MONTHS = 6
@@ -7,20 +7,6 @@ const MAX_CACHED_MONTHS = 6
 interface CacheIndexItem {
   key: string
   savedAt: number
-}
-
-function accountId(): string {
-  const token = getAccessToken()
-  const encoded = token.split(".")[1]
-  if (!encoded) return ""
-  try {
-    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/")
-    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")
-    const payload = JSON.parse(atob(padded)) as { sub?: unknown }
-    return typeof payload.sub === "string" ? payload.sub : ""
-  } catch {
-    return ""
-  }
 }
 
 function accountPrefix(userId: string): string { return `${CACHE_PREFIX}:${userId}` }
@@ -42,9 +28,9 @@ function readSummary(key: string): MonthCheckinSummary | null {
   }
 }
 
-export function currentCheckinCacheOwner(): string { return accountId() }
+export function currentCheckinCacheOwner(): string { return accessTokenSubject() }
 
-export function clearCheckinCache(userId = accountId()): void {
+export function clearCheckinCache(userId = accessTokenSubject()): void {
   if (!userId) return
   const prefix = `${accountPrefix(userId)}:`
   try {
@@ -58,7 +44,7 @@ export function clearCheckinCache(userId = accountId()): void {
 }
 
 export function readCachedCheckinMonth(year?: number, month?: number): MonthCheckinSummary | null {
-  const userId = accountId()
+  const userId = accessTokenSubject()
   if (!userId) return null
   if (year !== undefined && month !== undefined) return readSummary(monthKey(userId, year, month))
   const currentKey = sessionStorage.getItem(`${accountPrefix(userId)}:current`)
@@ -66,7 +52,7 @@ export function readCachedCheckinMonth(year?: number, month?: number): MonthChec
 }
 
 export function cacheCheckinMonth(summary: MonthCheckinSummary): void {
-  const userId = accountId()
+  const userId = accessTokenSubject()
   if (!userId) return
   const prefix = accountPrefix(userId)
   const key = monthKey(userId, summary.year, summary.month)

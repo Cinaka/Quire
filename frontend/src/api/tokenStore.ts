@@ -4,7 +4,7 @@
  * key 只有 quire_access_token 一个。旧名 qingjian_access_token 已在 P2 彻底删除，
  * 不做兼容读取：P1 阶段从未登录、从未写过这个 key，localStorage 里不存在旧值。
  */
-const ACCESS_TOKEN_KEY = "quire_access_token"
+export const ACCESS_TOKEN_KEY = "quire_access_token"
 
 let cached: string | null = null
 
@@ -12,6 +12,19 @@ export function getAccessToken(): string {
   if (cached !== null) return cached
   cached = localStorage.getItem(ACCESS_TOKEN_KEY) ?? ""
   return cached
+}
+
+export function accessTokenSubject(token = getAccessToken()): string {
+  const encoded = token.split(".")[1]
+  if (!encoded) return ""
+  try {
+    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/")
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")
+    const payload = JSON.parse(atob(padded)) as { sub?: unknown }
+    return typeof payload.sub === "string" ? payload.sub : ""
+  } catch {
+    return ""
+  }
 }
 
 export function setAccessToken(token: string): void {
