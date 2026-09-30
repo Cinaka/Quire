@@ -14,6 +14,24 @@ const REVALIDATE_INTERVAL_MS = 60_000
 const CHECKIN_CHANNEL = "quire-checkins"
 const CHECKIN_STORAGE_EVENT = "quire_checkin_refresh_event"
 
+interface CheckinRefreshMessage {
+  type: "checked-in"
+  userId: string
+  checkinDate: string
+  emittedAt: number
+}
+
+function isCheckinRefreshMessage(value: unknown): value is CheckinRefreshMessage {
+  if (!value || typeof value !== "object") return false
+  const message = value as Partial<CheckinRefreshMessage>
+  return (
+    message.type === "checked-in" &&
+    typeof message.userId === "string" &&
+    typeof message.checkinDate === "string" &&
+    typeof message.emittedAt === "number"
+  )
+}
+
 export function useCheckins() {
   const summary = ref<MonthCheckinSummary | null>(null)
   const loading = ref(false)
@@ -95,14 +113,19 @@ export function useCheckins() {
   }
 
   function handleCheckinMessage(event: MessageEvent<unknown>): void {
-    const message = event.data
-    if (!message || typeof message !== "object" || (message as { type?: unknown }).type !== "checked-in") return
+    if (!isCheckinRefreshMessage(event.data) || event.data.userId !== activeUserId) return
     revalidateActive(true)
   }
 
   function handleStorageEvent(event: StorageEvent): void {
     if (event.key !== CHECKIN_STORAGE_EVENT || !event.newValue) return
-    revalidateActive(true)
+    try {
+      const message: unknown = JSON.parse(event.newValue)
+      if (!isCheckinRefreshMessage(message) || message.userId !== activeUserId) return
+      revalidateActive(true)
+    } catch {
+      // 忽略格式异常或其他应用写入的 storage 事件。
+    }
   }
 
   function handleAccountChange(event: StorageEvent): void {
@@ -115,9 +138,16 @@ export function useCheckins() {
   }
 
   function broadcastCheckin(checkinDate: string): void {
-    if (channel) { channel.postMessage({ type: "checked-in", checkinDate }); return }
+    if (!activeUserId) return
+    const message: CheckinRefreshMessage = {
+      type: "checked-in",
+      userId: activeUserId,
+      checkinDate,
+      emittedAt: Date.now(),
+    }
+    if (channel) { channel.postMessage(message); return }
     try {
-      localStorage.setItem(CHECKIN_STORAGE_EVENT, JSON.stringify({ checkinDate, emittedAt: Date.now() }))
+      localStorage.setItem(CHECKIN_STORAGE_EVENT, JSON.stringify(message))
       localStorage.removeItem(CHECKIN_STORAGE_EVENT)
     } catch {
       // 跨标签页通知失败不影响服务端签到结果与焦点刷新兜底。
