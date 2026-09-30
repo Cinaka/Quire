@@ -5,6 +5,7 @@ import { del, get, post } from "./request"
 import { clearAccessToken, getAccessToken, setAccessToken } from "./tokenStore"
 
 const DEFAULT_TIMEZONE = "Asia/Shanghai"
+const SESSION_EVENT_KEY = "quire_session_event"
 
 export interface SessionUser {
   id: string
@@ -31,12 +32,47 @@ interface RefreshResponse {
   expires_in: number
 }
 
+interface LogoutEvent {
+  type: "logout"
+  userId: string
+  emittedAt: number
+}
+
 function detectedTimezone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone?.trim() || DEFAULT_TIMEZONE
   } catch {
     return DEFAULT_TIMEZONE
   }
+}
+
+function broadcastLogout(userId: string): void {
+  try {
+    localStorage.setItem(
+      SESSION_EVENT_KEY,
+      JSON.stringify({ type: "logout", userId, emittedAt: Date.now() } satisfies LogoutEvent),
+    )
+    localStorage.removeItem(SESSION_EVENT_KEY)
+  } catch {
+    // 跨标签页通知失败不影响当前标签页退出。
+  }
+}
+
+export function onRemoteLogout(listener: () => void): () => void {
+  const handleStorage = (event: StorageEvent): void => {
+    if (event.key !== SESSION_EVENT_KEY || !event.newValue) return
+    try {
+      const message = JSON.parse(event.newValue) as Partial<LogoutEvent>
+      if (message.type !== "logout" || typeof message.userId !== "string") return
+      clearCheckinCache(message.userId)
+      clearAccessToken()
+      listener()
+    } catch {
+      // 忽略格式异常或其他应用写入的 storage 事件。
+    }
+  }
+  window.addEventListener("storage", handleStorage)
+  return () => window.removeEventListener("storage", handleStorage)
 }
 
 export function isLoggedIn(): boolean {
@@ -77,6 +113,7 @@ export async function logout(): Promise<void> {
   } finally {
     clearCheckinCache(checkinCacheOwner)
     clearAccessToken()
+    broadcastLogout(checkinCacheOwner)
   }
 }
 

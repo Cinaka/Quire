@@ -24,4 +24,8 @@ export function clearAccessToken(): void {
   setAccessToken("")
 }
 
+window.addEventListener("storage", (event) => {
+  if (event.key === ACCESS_TOKEN_KEY) cached = event.newValue ?? ""
+})
+
 /** refresh token 不在这里——它是 httpOnly Cookie，JS 读不到也不该读。 */

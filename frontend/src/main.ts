@@ -3,7 +3,7 @@ import "@/styles/index.css"
 import { createApp } from "vue"
 
 import { setUnauthorizedHandler } from "@/api/request"
-import { isLoggedIn } from "@/api/session"
+import { isLoggedIn, onRemoteLogout } from "@/api/session"
 import { runSync } from "@/api/sync"
 import { emitBackgroundSync } from "@/api/syncEvents"
 import { db } from "@/db/schema"
@@ -16,6 +16,10 @@ app.use(router)
 app.mount("#app")
 
 setUnauthorizedHandler(() => {
+  if (router.currentRoute.value.name !== "auth") void router.push({ name: "auth" })
+})
+
+onRemoteLogout(() => {
   if (router.currentRoute.value.name !== "auth") void router.push({ name: "auth" })
 })
 
@@ -80,8 +84,6 @@ async function runBackgroundSync(): Promise<void> {
   }
 }
 
-// 所有本地写操作统一触发五秒 debounce。同步引擎自己造成的 dirty 清零也会
-// 触发一次，但下一轮没有待推数据，会立即结束，不会形成请求风暴。
 db.entries.hook("creating", () => scheduleSync())
 db.entries.hook("updating", () => scheduleSync())
 db.entries.hook("deleting", () => scheduleSync())
