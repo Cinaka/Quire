@@ -1,3 +1,5 @@
+import { v4 as uuidv4 } from "uuid"
+
 import type { LocalDate } from "@/shared/types"
 
 import { get, http, type Envelope } from "./request"
@@ -72,7 +74,7 @@ function toMonthCheckinSummary(raw: RawMonthCheckinSummary): MonthCheckinSummary
 }
 
 export async function checkInToday(): Promise<TodayCheckin> {
-  const idempotencyKey = crypto.randomUUID()
+  const idempotencyKey = uuidv4()
   const response = await http.post<Envelope<RawTodayCheckin>>(
     "/checkins/today",
     undefined,
