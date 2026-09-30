@@ -11,6 +11,7 @@ import {
 const REVALIDATE_GAP_MS = 1_000
 const REVALIDATE_INTERVAL_MS = 60_000
 const CHECKIN_CHANNEL = "quire-checkins"
+const CHECKIN_STORAGE_EVENT = "quire_checkin_refresh_event"
 
 export function useCheckins() {
   const summary = ref<MonthCheckinSummary | null>(null)
@@ -114,11 +115,8 @@ export function useCheckins() {
     const now = Date.now()
     if (!force && now - lastRevalidateAt < REVALIDATE_GAP_MS) return
     lastRevalidateAt = now
-    if (followsCurrentMonth) {
-      void loadCurrent()
-    } else {
-      void load(year, month)
-    }
+    if (followsCurrentMonth) void loadCurrent()
+    else void load(year, month)
   }
 
   function handleCheckinMessage(event: MessageEvent<unknown>): void {
@@ -126,6 +124,27 @@ export function useCheckins() {
     if (!message || typeof message !== "object") return
     if ((message as { type?: unknown }).type !== "checked-in") return
     revalidateActive(true)
+  }
+
+  function handleStorageEvent(event: StorageEvent): void {
+    if (event.key !== CHECKIN_STORAGE_EVENT || !event.newValue) return
+    revalidateActive(true)
+  }
+
+  function broadcastCheckin(checkinDate: string): void {
+    if (channel) {
+      channel.postMessage({ type: "checked-in", checkinDate })
+      return
+    }
+    try {
+      localStorage.setItem(
+        CHECKIN_STORAGE_EVENT,
+        JSON.stringify({ checkinDate, emittedAt: Date.now() }),
+      )
+      localStorage.removeItem(CHECKIN_STORAGE_EVENT)
+    } catch {
+      // 跨标签页通知失败不影响服务端签到结果与焦点刷新兜底。
+    }
   }
 
   function markOnline(): void {
@@ -149,7 +168,8 @@ export function useCheckins() {
   window.addEventListener("online", markOnline)
   window.addEventListener("focus", handleWindowFocus)
   document.addEventListener("visibilitychange", handleVisibilityChange)
-  channel?.addEventListener("message", handleCheckinMessage)
+  if (channel) channel.addEventListener("message", handleCheckinMessage)
+  else window.addEventListener("storage", handleStorageEvent)
   const revalidateTimer = window.setInterval(
     handlePeriodicRevalidation,
     REVALIDATE_INTERVAL_MS,
@@ -191,7 +211,7 @@ export function useCheckins() {
       const result = await checkInToday()
       if (mine !== submitSeq) return
       applyTodayResult(result)
-      channel?.postMessage({ type: "checked-in", checkinDate: result.checkinDate })
+      broadcastCheckin(result.checkinDate)
 
       if (followsCurrentMonth) {
         await loadCurrent()
@@ -228,8 +248,12 @@ export function useCheckins() {
     window.removeEventListener("online", markOnline)
     window.removeEventListener("focus", handleWindowFocus)
     document.removeEventListener("visibilitychange", handleVisibilityChange)
-    channel?.removeEventListener("message", handleCheckinMessage)
-    channel?.close()
+    if (channel) {
+      channel.removeEventListener("message", handleCheckinMessage)
+      channel.close()
+    } else {
+      window.removeEventListener("storage", handleStorageEvent)
+    }
     window.clearInterval(revalidateTimer)
   })
 
