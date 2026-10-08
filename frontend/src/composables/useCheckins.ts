@@ -38,7 +38,8 @@ export function useCheckins() {
   let submitSeq = 0
   let lastRevalidateAt = 0
 
-  const checkedInToday = computed(() => summary.value?.checkedInToday ?? false)
+  // Cached or failed-read data is display-only, never proof that today is signed.
+  const checkedInToday = computed(() => !stale.value && (summary.value?.checkedInToday ?? false))
   const currentStreak = computed(() => summary.value?.currentStreak ?? 0)
   const checkinDates = computed(() => summary.value?.checkinDates ?? [])
 
