@@ -41,7 +41,7 @@ import type { MonthCheckinSummary } from "@/api/checkins"
 import type { LocalDate } from "@/shared/types"
 
 const props = defineProps<{ summary: MonthCheckinSummary | null; loading: boolean; checkingIn: boolean; offline: boolean; stale: boolean; error: string; checkedInToday: boolean; currentStreak: number }>()
-const emit = defineEmits<{ submit: []; retry: []; monthChange: [year: number, month: number] }>()
+const emit = defineEmits<{ submit: []; retry: []; currentMonth: []; monthChange: [year: number, month: number] }>()
 const weekLabels = ["日", "一", "二", "三", "四", "五", "六"]
 const checkedDates = computed(() => new Set(props.summary?.checkinDates ?? []))
 const successMessage = ref("")
@@ -74,11 +74,14 @@ function shiftMonth(offset: -1 | 1): void {
   const monthIndex = props.summary.year * 12 + props.summary.month - 1 + offset
   const year = Math.floor(monthIndex / 12)
   const month = (monthIndex % 12) + 1
-  if (year >= 1970 && year <= 9998) emit("monthChange", year, month)
+  if (year < 1970 || year > 9998) return
+  const targetPrefix = `${year}-${String(month).padStart(2, "0")}`
+  if (props.summary.today.startsWith(targetPrefix)) emit("currentMonth")
+  else emit("monthChange", year, month)
 }
 function goToCurrentMonth(): void {
   if (!props.summary || isCurrentMonth.value || props.loading || props.offline) return
-  emit("monthChange", Number(props.summary.today.slice(0, 4)), Number(props.summary.today.slice(5, 7)))
+  emit("currentMonth")
 }
 function dayLabel(value: LocalDate): string {
   const checked = checkedDates.value.has(value) ? "，已签到" : "，未签到"

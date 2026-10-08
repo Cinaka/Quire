@@ -40,6 +40,7 @@
       @submit="submitToday"
       @retry="refreshActiveCheckins"
       @month-change="loadCheckinMonth"
+      @current-month="loadCheckins"
     />
     <button v-else class="sign-in" type="button" title="前往云笺" @click="router.push('/sync')">
       <span>上名青简</span><small>登录后可用</small>
