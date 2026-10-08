@@ -50,6 +50,9 @@ export function useCheckins() {
   function restoreCached(year?: number, month?: number): boolean {
     const cached = readCachedCheckinMonth(year, month)
     if (!cached) return false
+    const current = summary.value
+    // A cached snapshot must not undo newer in-memory data, including POST results.
+    if (current && current.year === cached.year && current.month === cached.month && current.updatedAt >= cached.updatedAt) return false
     summary.value = cached
     activeYear.value = cached.year
     activeMonth.value = cached.month
@@ -169,12 +172,16 @@ export function useCheckins() {
     const prefix = `${current.year}-${String(current.month).padStart(2, "0")}`
     const dates = current.checkinDates.includes(result.checkinDate) ? current.checkinDates : result.checkinDate.startsWith(prefix) ? [...current.checkinDates, result.checkinDate].sort() : current.checkinDates
     summary.value = { ...current, checkinDates: dates, today: result.checkinDate, checkedInToday: result.checkedIn, currentStreak: result.currentStreak, longestStreak: result.longestStreak, totalCheckins: result.totalCheckins }
+    cacheCheckinMonth(summary.value)
   }
 
   async function submitToday(): Promise<void> {
     if (checkingIn.value || checkedInToday.value) return
     if (!navigator.onLine) { markOffline(); return }
     const mine = ++submitSeq
+    // Invalidate reads started before this write; their snapshots can be outdated.
+    loadSeq += 1
+    loading.value = false
     checkingIn.value = true
     error.value = ""
     try {
