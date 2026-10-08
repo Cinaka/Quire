@@ -22,7 +22,7 @@ export interface SyncErrorItem {
 }
 
 export interface PendingSyncItem {
-  kind: "entry" | "tag" | "media"
+  kind: "entry" | "tag" | "media" | "schedule"
   id: string
   label: string
   detail: string
@@ -34,6 +34,7 @@ export interface SyncStatus {
   dirtyEntries: number
   dirtyTags: number
   dirtyMedia: number
+  dirtySchedules: number
   dirtyTotal: number
   conflictCount: number
   errorCount: number
@@ -92,7 +93,7 @@ async function normalizeConflicts(value: unknown): Promise<SyncConflict[]> {
 
 export const localSyncRepo = {
   async status(): Promise<SyncStatus> {
-    const [owner, cursor, entries, tags, media, conflicts, errors] = await Promise.all([
+    const [owner, cursor, entries, tags, media, conflicts, errors, schedules] = await Promise.all([
       db.meta.get("ownerUserId"),
       db.meta.get("lastSyncAt"),
       db.entries.where("dirty").equals(1).count(),
@@ -100,6 +101,7 @@ export const localSyncRepo = {
       db.media.where("dirty").equals(1).count(),
       db.meta.get("conflicts"),
       db.meta.get("syncErrors"),
+      db.schedules.where("dirty").equals(1).count(),
     ])
     const activeConflicts = await persistPrunedConflicts(conflicts?.value)
     return {
@@ -108,19 +110,25 @@ export const localSyncRepo = {
       dirtyEntries: entries,
       dirtyTags: tags,
       dirtyMedia: media,
-      dirtyTotal: entries + tags + media,
+      dirtySchedules: schedules,
+      dirtyTotal: entries + tags + media + schedules,
       conflictCount: activeConflicts.length,
       errorCount: arrayValue<SyncErrorItem>(errors?.value).length,
     }
   },
 
   async pending(): Promise<PendingSyncItem[]> {
-    const [entries, tags, media] = await Promise.all([
+    const [entries, tags, media, schedules] = await Promise.all([
       db.entries.where("dirty").equals(1).toArray(),
       db.tags.where("dirty").equals(1).toArray(),
       db.media.where("dirty").equals(1).toArray(),
+      db.schedules.where("dirty").equals(1).toArray(),
     ])
     return [
+      ...schedules.map((item): PendingSyncItem => ({
+        kind: "schedule", id: item.id, label: item.title || "无题预简",
+        detail: `${item.remindDate} · 已本地保存；日程云端同步尚未启用`,
+      })),
       ...entries.map((item): PendingSyncItem => ({
         kind: "entry",
         id: item.id,

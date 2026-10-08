@@ -17,7 +17,7 @@
             <dt>待上传</dt>
             <dd>
               {{ status.dirtyTotal }} 项
-              <small>日记 {{ status.dirtyEntries }} / 标签 {{ status.dirtyTags }} / 图片 {{ status.dirtyMedia }}</small>
+              <small>日记 {{ status.dirtyEntries }} / 标签 {{ status.dirtyTags }} / 图片 {{ status.dirtyMedia }} / 预简 {{ status.dirtySchedules }}</small>
             </dd>
           </div>
           <div><dt>冲突留档</dt><dd>{{ status.conflictCount }} 项</dd></div>
@@ -71,6 +71,7 @@ const status = ref<SyncStatus>({
   dirtyEntries: 0,
   dirtyTags: 0,
   dirtyMedia: 0,
+  dirtySchedules: 0,
   dirtyTotal: 0,
   conflictCount: 0,
   errorCount: 0,

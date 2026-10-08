@@ -1,4 +1,6 @@
-import { LOCAL_MEDIA_PREFIX } from "@/shared/text"
+import { LOCAL_MEDIA_PREFIX, toPlainText } from "@/shared/text"
+import { remapScheduleBackup } from "@/shared/scheduleBackup"
+import { SCHEDULE_META_KEYS } from "@/shared/schedules"
 import {
   BACKUP_FORMAT_VERSION,
   checkBackup,
@@ -14,6 +16,7 @@ import { CONTENT_SCHEMA_VERSION, type Entry, type MediaItem, type Tag } from "@/
 
 import { localMediaRepo } from "./mediaRepo"
 import { db } from "./schema"
+import { assertLocalOwner, localOwnerSnapshot, readScheduleConversions, rotateOwnerGeneration } from "./scheduleStateRepo"
 
 export interface ImportReport {
   entriesAdded: number
@@ -25,6 +28,11 @@ export interface ImportReport {
   tagsMerged: number
   mediaAdded: number
   mediaSkipped: number
+  schedulesAdded: number
+  schedulesUpdated: number
+  schedulesSkipped: number
+  schedulesTooNew: number
+  conversionsRestored: number
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -99,23 +107,28 @@ export const localBackupRepo = {
    * 后者会把所有原图同时握在内存里，几百张图直接把标签页搞崩。
    * base64 本身还有 4/3 的膨胀，两处叠加就是灾难。
    *
-   * P2-0 之后这里一行不用改：...rest 会自动带上新增的 remoteUrl /
-   * thumbRemoteUrl（BackupMedia 是 Omit<MediaItem, "blob" | "thumbBlob"> 的派生），
-   * entries 的 serverUpdatedAt 同理。所以 formatVersion 不升（J1）。
+   * P2 的远程地址字段继续保留；P4 将格式升为 v3，增加预简和转换恢复快照。
+   * owner、登录凭据、同步游标与本地保护代际不导出。
    */
   async exportAll(onProgress?: (done: number, total: number) => void): Promise<BackupFile> {
-    const [entries, tags, mediaIds] = await Promise.all([
-      db.entries.toArray(),
-      db.tags.toArray(),
-      db.media.orderBy("id").primaryKeys(),
-    ])
+    const snapshot = await db.transaction("r", db.entries, db.tags, db.media, db.schedules, db.meta, async () => {
+      const owner = await localOwnerSnapshot()
+      return {
+        owner, entries: await db.entries.toArray(), tags: await db.tags.toArray(),
+        schedules: await db.schedules.toArray(), conversions: await readScheduleConversions(),
+        mediaIds: await db.media.orderBy("id").primaryKeys(),
+      }
+    })
+    const { entries, tags, schedules, mediaIds } = snapshot
+    const scheduleConversions = snapshot.conversions.map(item => ({
+      scheduleId: item.scheduleId, source: item.source, entry: item.entry, queuedAt: item.queuedAt,
+    }))
 
     const media: BackupMedia[] = []
     for (let i = 0; i < mediaIds.length; i++) {
       const m = await db.media.get(mediaIds[i] as string)
-      if (!m) {
-        continue
-      }
+      if (!m) throw new Error("备份期间图片发生变化，请重试；尚未生成完整备份")
+      await assertLocalOwner(snapshot.owner)
       const { blob, thumbBlob, ...rest } = m
       media.push({
         ...rest,
@@ -128,7 +141,8 @@ export const localBackupRepo = {
       onProgress?.(i + 1, mediaIds.length)
     }
 
-    return {
+    await assertLocalOwner(snapshot.owner)
+    const file: BackupFile = {
       app: "quire",
       formatVersion: BACKUP_FORMAT_VERSION,
       exportedAt: utcNow(),
@@ -137,11 +151,17 @@ export const localBackupRepo = {
         entries: entries.length,
         tags: tags.length,
         media: media.length,
+        schedules: schedules.length,
       },
       entries,
       tags,
       media,
+      schedules,
+      scheduleConversions,
     }
+    const checked = checkBackup(file)
+    if (!checked.ok) throw new Error(checked.reason)
+    return file
   },
 
   /** 导入。raw 是 JSON.parse 之后的结果，校验在里面做。 */
@@ -151,6 +171,8 @@ export const localBackupRepo = {
       throw new Error(checked.reason)
     }
     const file = checked.file
+    if (!["preferNewer", "keepLocal", "asCopy"].includes(conflict)) throw new Error("备份取舍策略无效")
+    const owner = await db.transaction("r", db.meta, () => localOwnerSnapshot())
     const now = utcNow()
 
     const report: ImportReport = {
@@ -162,6 +184,8 @@ export const localBackupRepo = {
       tagsMerged: 0,
       mediaAdded: 0,
       mediaSkipped: 0,
+      schedulesAdded: 0, schedulesUpdated: 0, schedulesSkipped: 0, schedulesTooNew: 0,
+      conversionsRestored: 0,
     }
 
     // ──────────────────────────────────────────
@@ -171,9 +195,16 @@ export const localBackupRepo = {
     //   Entry -> 新 ID，Media -> 原 Entry ID
     // 复制出来的图片会仍然挂在原条目上。
     // ──────────────────────────────────────────
+    const scheduleIdMap = new Map<string, string>()
+    for (const row of file.schedules ?? []) {
+      scheduleIdMap.set(row.id, conflict === "asCopy" ? newId() : row.id)
+    }
     const entryIdMap = new Map<string, string>()
     for (const entry of file.entries) {
-      entryIdMap.set(entry.id, conflict === "asCopy" ? newId() : entry.id)
+      const sourceId = entry.fromScheduleId
+      // 同源转换的两个资源必须映射到同一个新UUID v7。
+      entryIdMap.set(entry.id, sourceId && scheduleIdMap.has(sourceId)
+        ? scheduleIdMap.get(sourceId)! : conflict === "asCopy" ? newId() : entry.id)
     }
 
     // ──────────────────────────────────────────
@@ -261,41 +292,73 @@ export const localBackupRepo = {
     // 构造最终 Entry。id 必须从 entryIdMap 取，
     // 不能在这里再 newId()，否则 Media 用的 entryIdMap 又失效。
     // ──────────────────────────────────────────
+    const mapEntry = (e: Entry): Entry => {
+      const fromScheduleId = e.fromScheduleId && scheduleIdMap.has(e.fromScheduleId)
+        ? scheduleIdMap.get(e.fromScheduleId)! : conflict === "asCopy" ? null : e.fromScheduleId ?? null
+      const content = remapMediaRefs(e.content, mediaIdMap)
+      return {
+        ...e, id: fromScheduleId && scheduleIdMap.has(e.fromScheduleId!) ? fromScheduleId : entryIdMap.get(e.id) ?? e.id,
+        fromScheduleId, content, contentText: toPlainText(content),
+        tagIds: [...new Set((e.tagIds ?? []).map(id => tagIdMap.get(id) ?? id))],
+        clientUpdatedAt: e.clientUpdatedAt ?? e.updatedAt ?? now,
+        serverUpdatedAt: conflict === "asCopy" ? "" : e.serverUpdatedAt ?? "", dirty: 1,
+      }
+    }
+    const plan = remapScheduleBackup(
+      file.schedules ?? [], file.scheduleConversions ?? [], file.entries,
+      scheduleIdMap, mapEntry, now,
+    )
+    report.schedulesTooNew = plan.skippedSourceIds.length
+    const skippedSources = new Set(plan.skippedSourceIds)
     const incoming: Entry[] = []
     for (const e of file.entries) {
-      if (contentTooNew(e, CONTENT_SCHEMA_VERSION)) {
+      if (contentTooNew(e, CONTENT_SCHEMA_VERSION) || skippedSources.has(e.fromScheduleId ?? "")) {
         report.entriesTooNew += 1
         continue
       }
-      incoming.push({
-        ...e,
-        // asCopy 时用预先建立好的 Entry ID。
-        id: entryIdMap.get(e.id) ?? e.id,
-        // 正文中的 local://media/{oldId} 同步改成新的 media id。
-        content: remapMediaRefs(e.content, mediaIdMap),
-        // 标签 ID 用归并后的 ID；多个同名来源标签可能映射到同一 ID，必须去重。
-        tagIds: [...new Set((e.tagIds ?? []).map((t) => tagIdMap.get(t) ?? t))],
-        clientUpdatedAt: e.clientUpdatedAt ?? e.updatedAt ?? now,
-
-        // ── P2-0 改动 3/4 ──────────────────────────────────────────────
-        // 旧备份没有这个字段，补空串。
-        //
-        // asCopy 必须硬置 ""：副本是一个全新的 id，服务端压根不知道它。
-        // 把原条的 serverUpdatedAt 拄过来，之后排查时会看到一个从未同步过
-        // 的行冒出一个服务端时间戳，直接把人带错方向。
-        //
-        // 它不参与任何仲裁（仲裁只看 clientUpdatedAt），所以这里怎么填
-        // 都不影响同步正确性，只影响可读性。
-        serverUpdatedAt: conflict === "asCopy" ? "" : (e.serverUpdatedAt ?? ""),
-
-        dirty: 1,
-      })
+      incoming.push(mapEntry(e))
     }
 
     // ──────────────────────────────────────────
     // 第二段：纯 Dexie 事务。里面一个非 Dexie 的 await 都不能有。
     // ──────────────────────────────────────────
-    await db.transaction("rw", db.entries, db.tags, db.media, async () => {
+    let committedGeneration = ""
+    await db.transaction("rw", db.entries, db.tags, db.media, db.schedules, db.meta, async () => {
+      await assertLocalOwner(owner)
+      const acceptedSources = new Set<string>()
+      const updatedSources = new Set<string>()
+      const incomingSources = new Set(plan.schedules.filter(row => row.status === "converted").map(row => row.id))
+      for (const row of plan.schedules) {
+        const cur = await db.schedules.get(row.id)
+        if (cur && (conflict === "keepLocal" || row.clientUpdatedAt <= cur.clientUpdatedAt ||
+          (cur.status === "converted" && row.status === "pending"))) {
+          report.schedulesSkipped += 1
+          if (cur.status === "converted" && row.status === "converted" && cur.convertedEntryId === row.id) {
+            acceptedSources.add(row.id)
+          }
+          continue
+        }
+        await db.schedules.put(row)
+        acceptedSources.add(row.id)
+        updatedSources.add(row.id)
+        if (cur) report.schedulesUpdated += 1
+        else report.schedulesAdded += 1
+      }
+      const currentConversions = await readScheduleConversions()
+      const queued = new Map(currentConversions.map(item => [item.scheduleId, item]))
+      for (const intent of plan.conversions) {
+        if (!acceptedSources.has(intent.scheduleId)) continue
+        // 同源首次转换快照不可被后来的恢复覆盖。
+        if (queued.has(intent.scheduleId)) continue
+        if (!updatedSources.has(intent.scheduleId)) {
+          const currentSource = await db.schedules.get(intent.scheduleId)
+          if (currentSource?.dirty === 0 && currentSource.serverUpdatedAt) continue
+        }
+        queued.set(intent.scheduleId, { ...intent, ownerUserId: owner.ownerUserId })
+        report.conversionsRestored += 1
+      }
+      await db.meta.put({ key: SCHEDULE_META_KEYS.conversions, value: [...queued.values()] })
+
       // ── Tags ──
       for (const t of tagsToAdd) {
         await db.tags.put(t)
@@ -319,6 +382,11 @@ export const localBackupRepo = {
 
       // ── Entries ──
       for (const e of incoming) {
+        // 终态来源未接受时，不能单独恢复一个候选Entry造成半套关联。
+        if (e.fromScheduleId && incomingSources.has(e.fromScheduleId) && !acceptedSources.has(e.fromScheduleId)) {
+          report.entriesSkipped += 1
+          continue
+        }
         const cur = await db.entries.get(e.id)
         if (!cur) {
           // 改动 4/4：不动。e 已经是造好的 Entry，含 serverUpdatedAt。
@@ -338,6 +406,8 @@ export const localBackupRepo = {
           report.entriesSkipped += 1
         }
       }
+      await rotateOwnerGeneration()
+      committedGeneration = (await localOwnerSnapshot()).generation
     })
 
     // ──────────────────────────────────────────
@@ -347,7 +417,11 @@ export const localBackupRepo = {
     // 这样导入完成后立刻执行彻底删除，也不会因为旧的 media.entryId 关联
     // 而误删原条目或副本条目的图片。
     // ──────────────────────────────────────────
-    await localMediaRepo.reconcileAll()
+    const restoredOwner = { ...owner, generation: committedGeneration }
+    await db.transaction("rw", db.entries, db.media, db.meta, async () => {
+      await assertLocalOwner(restoredOwner)
+      await localMediaRepo.reconcileAll()
+    })
 
     return report
   },

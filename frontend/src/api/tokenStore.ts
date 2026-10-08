@@ -7,6 +7,9 @@
 export const ACCESS_TOKEN_KEY = "quire_access_token"
 
 let cached: string | null = null
+let generation = 0
+export function tokenGeneration(): number { return generation }
+export function invalidateTokenContext(): void { generation += 1 }
 
 export function getAccessToken(): string {
   if (cached !== null) return cached
@@ -28,6 +31,7 @@ export function accessTokenSubject(token = getAccessToken()): string {
 }
 
 export function setAccessToken(token: string): void {
+  if (!token || accessTokenSubject(token) !== accessTokenSubject(getAccessToken())) generation += 1
   cached = token
   if (token) localStorage.setItem(ACCESS_TOKEN_KEY, token)
   else localStorage.removeItem(ACCESS_TOKEN_KEY)
@@ -38,7 +42,11 @@ export function clearAccessToken(): void {
 }
 
 window.addEventListener("storage", (event) => {
-  if (event.key === ACCESS_TOKEN_KEY) cached = event.newValue ?? ""
+  if (event.key === ACCESS_TOKEN_KEY) {
+    const next = event.newValue ?? ""
+    if (!next || accessTokenSubject(next) !== accessTokenSubject(getAccessToken())) generation += 1
+    cached = next
+  }
 })
 
 /** refresh token 不在这里——它是 httpOnly Cookie，JS 读不到也不该读。 */

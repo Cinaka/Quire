@@ -1,4 +1,5 @@
-import type { Entry, MediaItem, Tag } from "./types"
+import { validateScheduleGraph, type BackupScheduleConversion } from "./scheduleBackup"
+import type { Entry, MediaItem, Schedule, Tag } from "./types"
 
 /**
  * 备份文件格式版本。注意它和正文的 CONTENT_SCHEMA_VERSION 是两件事：
@@ -7,7 +8,7 @@ import type { Entry, MediaItem, Tag } from "./types"
  * 两者独立升级。导入时都要校验，但拒绝的粒度不同：
  * 外壳版本太新 → 整份拒绝；正文版本太新 → 只跳过那几篇。
  */
-export const BACKUP_FORMAT_VERSION = 2
+export const BACKUP_FORMAT_VERSION = 3
 
 /** media 的 Blob 在 JSON 里存 base64（不含 data URL 前缀）。 */
 export interface BackupMedia extends Omit<MediaItem, "blob" | "thumbBlob"> {
@@ -23,11 +24,14 @@ export interface BackupFile {
   /** 导出时刻，UTC */
   exportedAt: string
   contentSchemaVersion: number
-  counts: { entries: number; tags: number; media: number }
+  counts: { entries: number; tags: number; media: number; schedules?: number }
   /** 含回收站里的条目：备份就该是全量，否则「导出后清空重装」会丢断简 */
   entries: Entry[]
   tags: Tag[]
   media: BackupMedia[]
+  /** v1/v2 缺省为空；v3 外壳要求明确包含。 */
+  schedules?: Schedule[]
+  scheduleConversions?: BackupScheduleConversion[]
 }
 
 /**
@@ -60,7 +64,7 @@ export function checkBackup(raw: unknown): BackupCheck {
 
   if (f.app !== "quire") return { ok: false, reason: "这不是青简的备份文件" }
 
-  if (typeof f.formatVersion !== "number" || f.formatVersion < 1) {
+  if (typeof f.formatVersion !== "number" || !Number.isSafeInteger(f.formatVersion) || f.formatVersion < 1) {
     return { ok: false, reason: "缺少或非法的 formatVersion" }
   }
   if (f.formatVersion > BACKUP_FORMAT_VERSION) {
@@ -74,6 +78,18 @@ export function checkBackup(raw: unknown): BackupCheck {
     return { ok: false, reason: "文件结构不完整，可能已损坏或被截断" }
   }
 
+  if (f.formatVersion === 3) {
+    if (!isArray(f.schedules) || !isArray(f.scheduleConversions)) {
+      return { ok: false, reason: "v3 备份缺少预简或转简恢复信息" }
+    }
+    if (f.counts?.schedules !== f.schedules.length) {
+      return { ok: false, reason: "预简数量校验失败" }
+    }
+    const reason = validateScheduleGraph(f.schedules, f.scheduleConversions, f.entries as Entry[])
+    if (reason) return { ok: false, reason }
+  } else if (f.schedules !== undefined || f.scheduleConversions !== undefined) {
+    return { ok: false, reason: "预简数据必须使用 v3 格式，不能伪装为旧备份" }
+  }
   return { ok: true, file: f as BackupFile }
 }
 

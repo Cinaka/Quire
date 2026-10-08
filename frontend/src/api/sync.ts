@@ -9,6 +9,8 @@ import {
 } from "@/api/mappers"
 import type { PushItemResult, WireMediaMeta, WireTag } from "@/api/wire"
 import { db } from "@/db/schema"
+import { holdConversionServerEntry, protectedConversions } from "@/db/scheduleStateRepo"
+import { assertSyncContext, captureSyncContext, type SyncContext } from "./syncContext"
 import { utcNow } from "@/shared/time"
 import type { Entry, MediaItem, Tag } from "@/shared/types"
 
@@ -18,6 +20,7 @@ const CONFLICT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const FULL_PULL_CURSOR = "1970-01-01T00:00:00.000Z"
 const DUPLICATE_TAG_PREFIX = "duplicate_tag:"
 let running: Promise<void> | null = null
+let runningKey = ""
 
 interface ConflictRecord {
   entryId: string
@@ -154,19 +157,21 @@ async function attachServerConflict(server: Entry): Promise<void> {
   await db.meta.put({ key: "conflicts", value: list })
 }
 
-async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWork: boolean }> {
+async function pushAll(context: SyncContext): Promise<{ serverTime: string; complete: boolean; hadWork: boolean }> {
   let serverTime = ""
   let hadWork = false
   for (;;) {
+    await assertSyncContext(context)
+    const protectedRows = await protectedConversions()
     const blocked = await blockedIds()
     const [allEntries, allTags, allMedia] = await Promise.all([
       db.entries.where("dirty").equals(1).toArray(),
       db.tags.where("dirty").equals(1).toArray(),
       db.media.where("dirty").equals(1).toArray(),
     ])
-    const entries = allEntries.filter((item) => !blocked.entry.has(item.id)).slice(0, BATCH)
+    const entries = allEntries.filter((item) => !blocked.entry.has(item.id) && !protectedRows.entryIds.has(item.id)).slice(0, BATCH)
     const tags = allTags.filter((item) => !blocked.tag.has(item.id)).slice(0, BATCH)
-    const mediaMeta = allMedia.filter((item) => !blocked.media.has(item.id)).slice(0, BATCH)
+    const mediaMeta = allMedia.filter((item) => !blocked.media.has(item.id) && !protectedRows.entryIds.has(item.entryId) && !protectedRows.mediaIds.has(item.id)).slice(0, BATCH)
     if (!entries.length && !tags.length && !mediaMeta.length) {
       return { serverTime, complete: true, hadWork }
     }
@@ -176,24 +181,26 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
     for (const media of mediaMeta) {
       if (!media.entryId || media.blob.size === 0) continue
       try {
+        await assertSyncContext(context)
         await uploadMedia(media.id, media.blob, {
           thumb: media.thumbBlob,
           entryId: media.entryId,
           sortOrder: media.sortOrder,
           width: media.width,
           height: media.height,
-        })
+        }, context.ownerUserId)
       } catch (error) {
         uploadFailed.add(media.id)
-        await noteError("media", media.id, (error as Error).message)
+        await noteError("media", media.id, (error as Error).message, context)
       }
     }
 
+    await assertSyncContext(context)
     const result = await pushBatch({
       entries: entries.map(toWireEntry),
       tags: tags.map(toWireTag),
       mediaMeta: mediaMeta.filter((item) => !uploadFailed.has(item.id)).map(toWireMediaMetaPush),
-    })
+    }, context.ownerUserId)
     serverTime = result.serverTime
     const sentEntries = new Map(entries.map((item) => [item.id, item]))
     const sentTags = new Map(tags.map((item) => [item.id, item]))
@@ -201,9 +208,12 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
     let reconciledDuplicate = false
     let superseded = false
 
-    await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
+    await db.transaction("rw", db.entries, db.tags, db.media, db.schedules, db.meta, async () => {
+      await assertSyncContext(context)
+      const protectedNow = await protectedConversions()
       const currentPurges = await pendingPurgeIds()
       for (const item of result.entries) {
+        if (protectedNow.entryIds.has(item.id)) continue
         const local = await db.entries.get(item.id)
         if (!sameEntryRevision(local, sentEntries.get(item.id))) {
           superseded = true
@@ -241,6 +251,8 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
         }
       }
       for (const item of result.mediaMeta) {
+        const sent = sentMedia.get(item.id)
+        if (protectedNow.mediaIds.has(item.id) || (sent && protectedNow.entryIds.has(sent.entryId))) continue
         const local = await db.media.get(item.id)
         if (!sameMediaRevision(local, sentMedia.get(item.id))) {
           superseded = true
@@ -279,23 +291,30 @@ async function reconcileDuplicateTag(item: PushItemResult): Promise<boolean> {
   return true
 }
 
-async function pullAll(since: string): Promise<void> {
+async function pullAll(since: string, context: SyncContext): Promise<void> {
   let cursor = since
   let afterId = ""
   let syncUntil = ""
   const purges = await pendingPurgeIds()
   for (;;) {
+    await assertSyncContext(context)
     const result = await pullChanges({
       since: cursor,
       afterId: afterId || undefined,
       until: syncUntil || undefined,
       limit: 200,
-    })
+    }, context.ownerUserId)
     if (!syncUntil) syncUntil = result.syncUntil
-    await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
+    await db.transaction("rw", db.entries, db.tags, db.media, db.schedules, db.meta, async () => {
+      await assertSyncContext(context)
+      const protectedNow = await protectedConversions()
       for (const wire of result.entries) {
-        if (purges.has(wire.id)) continue
         const incoming: Entry = fromWireEntry(wire)
+        if (protectedNow.entryIds.has(wire.id)) {
+          await holdConversionServerEntry(incoming)
+          continue
+        }
+        if (purges.has(wire.id)) continue
         const local = await db.entries.get(incoming.id)
         if (!local) {
           await db.entries.put({ ...incoming, dirty: 0 })
@@ -321,42 +340,64 @@ async function pullAll(since: string): Promise<void> {
         }
       }
       await mergeTags(result.tags)
-      await mergeMediaMeta(result.mediaMeta)
+      await mergeMediaMeta(result.mediaMeta.filter(row => (!row.entry_id || !protectedNow.entryIds.has(row.entry_id)) && !protectedNow.mediaIds.has(row.id)))
     })
     cursor = result.serverTime
     afterId = result.cursorId
     if (!result.hasMore) break
   }
-  await db.meta.put({ key: "lastSyncAt", value: syncUntil || cursor })
-  await clearPendingPurges(purges)
+  await db.transaction("rw", db.entries, db.schedules, db.meta, async () => {
+    await assertSyncContext(context)
+    const protectedNow = await protectedConversions()
+    await db.meta.put({ key: "lastSyncAt", value: syncUntil || cursor })
+    await clearPendingPurges(new Set([...purges].filter(id => !protectedNow.entryIds.has(id))))
+  })
 }
 
-async function syncOnce(): Promise<void> {
-  if (!(await meta("ownerUserId"))) return
-  const pushed = await pushAll()
+async function syncOnce(context: SyncContext): Promise<void> {
+  await assertSyncContext(context)
+  const pushed = await pushAll(context)
   if (!pushed.complete) return
   const since = await meta("lastSyncAt")
   if (!since) {
     if (pushed.hadWork) {
-      await db.meta.put({ key: "lastSyncAt", value: FULL_PULL_CURSOR })
+      await db.transaction("rw", db.meta, async () => {
+        await assertSyncContext(context)
+        await db.meta.put({ key: "lastSyncAt", value: FULL_PULL_CURSOR })
+      })
       return
     }
-    await pullAll(FULL_PULL_CURSOR)
+    await pullAll(FULL_PULL_CURSOR, context)
     return
   }
-  await pullAll(since)
+  await pullAll(since, context)
 }
 
-export function runSync(): Promise<void> {
-  if (running) return running
-  const task = syncOnce().finally(() => {
-    if (running === task) running = null
+export async function runSync(): Promise<void> {
+  if (!(await meta("ownerUserId"))) return
+  const context = await captureSyncContext()
+  const key = `${context.ownerUserId}:${context.generation}:${context.tokenGeneration}`
+  if (running && runningKey === key) return running
+  if (running) {
+    await running.catch(() => undefined)
+    return runSync()
+  }
+  runningKey = key
+  const task = syncOnce(context).finally(() => {
+    if (running === task) { running = null; runningKey = "" }
   })
   running = task
   return task
 }
 
-async function noteError(kind: string, id: string, message?: string): Promise<void> {
+async function noteError(kind: string, id: string, message?: string, context?: SyncContext): Promise<void> {
+  if (context) {
+    await db.transaction("rw", db.meta, async () => {
+      await assertSyncContext(context)
+      await noteError(kind, id, message)
+    })
+    return
+  }
   const list = await errorRecords()
   const hit = list.find((item) => item.kind === kind && item.id === id)
   const count = (hit?.count ?? 0) + 1

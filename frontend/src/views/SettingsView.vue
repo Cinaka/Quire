@@ -28,7 +28,7 @@
     <section class="card">
       <h2 class="card-title">防蠹</h2>
       <p class="note">
-        导出一份全量备份，含全部日记、标签、图片与断简中的残简。文件只在本机生成，不经服务器。
+        导出一份全量备份，含全部日记、预简、转换恢复信息、标签、图片与断简中的残简。文件只在本机生成，不经服务器。
       </p>
 
       <button type="button" class="line-btn" :disabled="busy" @click="exportBackup">
@@ -99,7 +99,7 @@ async function exportBackup(): Promise<void> {
     const blob = new Blob([JSON.stringify(file)], { type: "application/json" })
     saveBlob(blob, backupFileName())
 
-    message.value = `已导出 ${file.counts.entries} 简、${file.counts.media} 张图片。`
+    message.value = `已导出 ${file.counts.entries} 简、${file.counts.schedules ?? 0} 条预简、${file.counts.media} 张图片。`
   } catch (err) {
     failed.value = true
     message.value = `导出失败：${(err as Error).message}`
@@ -133,6 +133,10 @@ async function onPick(ev: Event): Promise<void> {
     const parts = [`新增 ${r.entriesAdded} 简`, `更新 ${r.entriesUpdated} 简`]
     if (r.entriesSkipped) parts.push(`跳过 ${r.entriesSkipped} 简`)
     if (r.entriesTooNew) parts.push(`${r.entriesTooNew} 简正文版本过新，未导入`)
+    parts.push(`预简新增 ${r.schedulesAdded} 条、更新 ${r.schedulesUpdated} 条`)
+    if (r.schedulesSkipped) parts.push(`预简保留本机 ${r.schedulesSkipped} 条`)
+    if (r.schedulesTooNew) parts.push(`预简版本过新 ${r.schedulesTooNew} 条`)
+    if (r.conversionsRestored) parts.push(`转换恢复 ${r.conversionsRestored} 条（待同步）`)
     parts.push(`图片 ${r.mediaAdded} 张`)
     message.value = `${parts.join("，")}。`
 

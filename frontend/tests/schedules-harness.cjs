@@ -9,19 +9,26 @@ try { ts = require("typescript") } catch (error) {
   if (error.code !== "MODULE_NOT_FOUND") throw error
 }
 function compile(source) {
+  source = source.replaceAll("import.meta.env.VITE_API_BASE_URL", JSON.stringify("/api/v1"))
   if (ts) return ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText
   const names = []
+  let index = 0
   return require("node:module").stripTypeScriptTypes(source)
+    .replace(/import\s+(\w+)\s*,\s*\{([\s\S]*?)\}\s+from\s+["']([^"']+)["']\s*;?/g,
+      (_, name, imports, specifier) => {
+        const module = `__module${index++}`
+        return `const ${module} = require(${JSON.stringify(specifier)}); const ${name} = ${module}.default ?? ${module}; const { ${imports} } = ${module};\n`
+      })
     .replace(/import\s+\{([\s\S]*?)\}\s+from\s+["']([^"']+)["']\s*;?/g,
       (_, imports, specifier) => `const { ${imports} } = require(${JSON.stringify(specifier)});\n`)
-    .replace(/export\s+(const|function)\s+(\w+)/g, (_, kind, name) => {
+    .replace(/export\s+(async\s+)?(const|function|class)\s+(\w+)/g, (_, asyncPart, kind, name) => {
       names.push(name)
-      return `${kind} ${name}`
+      return `${asyncPart ?? ""}${kind} ${name}`
     }) + `\n${names.map(name => `exports.${name} = ${name};`).join("\n")}`
 }
-function loadTS(relative, mocks = {}) {
+function loadTS(relative, mocks = {}, globals = {}) {
   const cache = new Map()
   const root = path.resolve(__dirname, "../src")
   function load(filename) {
@@ -36,7 +43,7 @@ function loadTS(relative, mocks = {}) {
       throw new Error(`未模拟的测试依赖：${name}`)
     }
     vm.runInNewContext(compile(fs.readFileSync(filename, "utf8")), {
-      exports, require: customRequire, Date, Set, Map, Number, Array, JSON,
+      exports, require: customRequire, Date, Set, Map, Number, Array, JSON, Blob, FormData, fetch, structuredClone, ...globals,
     }, { filename })
     return exports
   }

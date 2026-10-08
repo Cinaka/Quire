@@ -1,11 +1,12 @@
 import axios, {
   AxiosError,
   type AxiosInstance,
+  type AxiosRequestConfig,
   type AxiosResponse,
   type InternalAxiosRequestConfig,
 } from "axios"
 
-import { clearAccessToken, getAccessToken, setAccessToken } from "./tokenStore"
+import { accessTokenSubject, clearAccessToken, getAccessToken, setAccessToken, tokenGeneration } from "./tokenStore"
 
 /** 后端统一响应体。code === 0 才是成功。 */
 export interface Envelope<T> {
@@ -33,7 +34,7 @@ export class ApiError extends Error {
   }
 }
 
-type RetriableConfig = InternalAxiosRequestConfig & { _retried?: boolean }
+type RetriableConfig = InternalAxiosRequestConfig & { _retried?: boolean; _syncOwner?: string; _tokenGeneration?: number }
 
 export const http: AxiosInstance = axios.create({
   // 开发走 Vite proxy、生产走 Nginx 反代，两者都是同源，所以这里只有路径。
@@ -44,6 +45,11 @@ export const http: AxiosInstance = axios.create({
 })
 
 http.interceptors.request.use((config) => {
+  const guarded = config as RetriableConfig
+  if (guarded._syncOwner && (accessTokenSubject() !== guarded._syncOwner ||
+      (guarded._tokenGeneration !== undefined && guarded._tokenGeneration !== tokenGeneration()))) {
+    throw new ApiError(-1, "同步账号已变化，请重新发起同步")
+  }
   const token = getAccessToken()
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
@@ -54,10 +60,18 @@ http.interceptors.request.use((config) => {
 // 若每个都去刷新，而 refresh 又是轮换的（每次下发新的、旧的立即作废），
 // 后到的刷新必然失败，用户会被莫名踢下线。所以全局只允许有一个刷新在飞。
 let refreshing: Promise<string> | null = null
+let refreshingGeneration = -1
 
 async function refreshAccessToken(): Promise<string> {
-  if (refreshing) return refreshing
+  if (refreshing) {
+    if (refreshingGeneration === tokenGeneration()) return refreshing
+    await refreshing.catch(() => undefined)
+    return refreshAccessToken()
+  }
 
+  const subject = accessTokenSubject()
+  const generation = tokenGeneration()
+  refreshingGeneration = generation
   refreshing = (async () => {
     try {
       // 用裸 axios，绕开本实例的拦截器，避免刷新自身 401 时递归。
@@ -68,11 +82,17 @@ async function refreshAccessToken(): Promise<string> {
       )
       const token = res.data?.data?.access_token ?? ""
       if (!token) throw new ApiError(-1, "refresh 未返回 access_token", 401)
+      if (tokenGeneration() !== generation || accessTokenSubject() !== subject ||
+        (subject && accessTokenSubject(token) !== subject)) {
+        throw new ApiError(-1, "旧刷新响应已失效", 401)
+      }
       setAccessToken(token)
       return token
     } catch (e) {
-      clearAccessToken()
-      onUnauthorized?.()
+      if (tokenGeneration() === generation && accessTokenSubject() === subject) {
+        clearAccessToken()
+        onUnauthorized?.()
+      }
       throw e
     } finally {
       refreshing = null
@@ -107,7 +127,15 @@ http.interceptors.response.use(
     if (status === 401 && config && !config._retried) {
       config._retried = true
       try {
+        if (config._syncOwner && (accessTokenSubject() !== config._syncOwner ||
+            config._tokenGeneration !== tokenGeneration())) {
+          throw new ApiError(-1, "旧同步会话已失效，禁止刷新或重放", 401)
+        }
         const token = await refreshAccessToken()
+        if (config._syncOwner && (accessTokenSubject(token) !== config._syncOwner ||
+            config._tokenGeneration !== tokenGeneration())) {
+          throw new ApiError(-1, "同步账号已变化，禁止重放旧请求", 401)
+        }
         config.headers.Authorization = `Bearer ${token}`
         return http.request(config)
       } catch {
@@ -124,13 +152,13 @@ http.interceptors.response.use(
 )
 
 /** 业务层只用这四个，永远拿到已解包的 data。 */
-export async function get<T>(url: string, params?: unknown): Promise<T> {
-  const res = await http.get<Envelope<T>>(url, { params })
+export async function get<T>(url: string, params?: unknown, syncOwner?: string): Promise<T> {
+  const res = await http.get<Envelope<T>>(url, { params, ...syncRequestOptions(syncOwner) })
   return res.data.data
 }
 
-export async function post<T>(url: string, body?: unknown): Promise<T> {
-  const res = await http.post<Envelope<T>>(url, body)
+export async function post<T>(url: string, body?: unknown, syncOwner?: string): Promise<T> {
+  const res = await http.post<Envelope<T>>(url, body, syncRequestOptions(syncOwner))
   return res.data.data
 }
 
@@ -142,4 +170,8 @@ export async function put<T>(url: string, body?: unknown): Promise<T> {
 export async function del<T>(url: string, body?: unknown): Promise<T> {
   const res = await http.delete<Envelope<T>>(url, { data: body })
   return res.data.data
+}
+
+function syncRequestOptions(syncOwner?: string): AxiosRequestConfig & { _syncOwner?: string; _tokenGeneration?: number } {
+  return syncOwner ? { _syncOwner: syncOwner, _tokenGeneration: tokenGeneration() } : {}
 }
