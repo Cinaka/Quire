@@ -1,12 +1,7 @@
 import { computed, onScopeDispose, ref } from "vue"
 
 import { cacheCheckinMonth, readCachedCheckinMonth } from "@/api/checkinCache"
-import {
-  checkInToday,
-  getMonthCheckins,
-  type MonthCheckinSummary,
-  type TodayCheckin,
-} from "@/api/checkins"
+import { checkInToday, getMonthCheckins, type MonthCheckinSummary, type TodayCheckin } from "@/api/checkins"
 import { ACCESS_TOKEN_KEY, accessTokenSubject } from "@/api/tokenStore"
 
 const REVALIDATE_GAP_MS = 1_000
@@ -24,12 +19,7 @@ interface CheckinRefreshMessage {
 function isCheckinRefreshMessage(value: unknown): value is CheckinRefreshMessage {
   if (!value || typeof value !== "object") return false
   const message = value as Partial<CheckinRefreshMessage>
-  return (
-    message.type === "checked-in" &&
-    typeof message.userId === "string" &&
-    typeof message.checkinDate === "string" &&
-    typeof message.emittedAt === "number"
-  )
+  return message.type === "checked-in" && typeof message.userId === "string" && typeof message.checkinDate === "string" && typeof message.emittedAt === "number"
 }
 
 export function useCheckins() {
@@ -76,7 +66,13 @@ export function useCheckins() {
     const mine = ++loadSeq
     followsCurrentMonth = followCurrent
     if (year !== undefined && month !== undefined) { activeYear.value = year; activeMonth.value = month }
-    if (!navigator.onLine) { restoreCached(year, month); markOffline(); return }
+    if (!navigator.onLine) {
+      // A newer offline load invalidates the older request's finally block.
+      loading.value = false
+      restoreCached(year, month)
+      markOffline()
+      return
+    }
     loading.value = true
     error.value = ""
     try {
@@ -104,12 +100,15 @@ export function useCheckins() {
   function revalidateActive(force = false): void {
     const year = activeYear.value
     const month = activeMonth.value
-    if (year === null || month === null || loading.value || checkingIn.value || !navigator.onLine) return
+    // Current-month intent exists before the first successful response supplies
+    // year/month. Retrying must not depend on already having fetched data.
+    if (!followsCurrentMonth && (year === null || month === null)) return
+    if (loading.value || checkingIn.value || !navigator.onLine) return
     const now = Date.now()
     if (!force && now - lastRevalidateAt < REVALIDATE_GAP_MS) return
     lastRevalidateAt = now
     if (followsCurrentMonth) void loadCurrent()
-    else void load(year, month)
+    else if (year !== null && month !== null) void load(year, month)
   }
 
   function handleCheckinMessage(event: MessageEvent<unknown>): void {
@@ -134,17 +133,12 @@ export function useCheckins() {
     if (nextUserId === activeUserId) return
     activeUserId = nextUserId
     reset()
-    if (nextUserId && navigator.onLine) void loadCurrent()
+    if (nextUserId) void loadCurrent()
   }
 
   function broadcastCheckin(checkinDate: string): void {
     if (!activeUserId) return
-    const message: CheckinRefreshMessage = {
-      type: "checked-in",
-      userId: activeUserId,
-      checkinDate,
-      emittedAt: Date.now(),
-    }
+    const message: CheckinRefreshMessage = { type: "checked-in", userId: activeUserId, checkinDate, emittedAt: Date.now() }
     if (channel) { channel.postMessage(message); return }
     try {
       localStorage.setItem(CHECKIN_STORAGE_EVENT, JSON.stringify(message))
