@@ -1,0 +1,59 @@
+from collections.abc import Iterable
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+
+def account_local_date(timezone_name: str, *, now: datetime | None = None) -> date:
+    """返回指定账号时区下的当前自然日。
+
+    `now` 仅用于测试和确定性调用；naive datetime 按项目约定视为 UTC。
+    无效时区统一抛出 ZoneInfoNotFoundError，禁止静默退回客户端日期。
+    """
+    try:
+        account_zone = ZoneInfo(timezone_name)
+    except (ValueError, TypeError) as exc:
+        # Empty, absolute or non-normalized keys can raise ValueError instead
+        # of ZoneInfoNotFoundError. Keep the API's existing 422 error contract.
+        raise ZoneInfoNotFoundError("Invalid account timezone") from exc
+    instant = now or datetime.now(timezone.utc)
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    return instant.astimezone(account_zone).date()
+
+
+def current_streak(checkin_dates: Iterable[date], today: date) -> int:
+    """计算当前连续签到天数。
+
+    今天已签到时从今天向前计算；今天未签到时从昨天向前计算，避免在用户
+    当天尚未操作时提前把连续天数显示为零。
+    """
+    checked_days = set(checkin_dates)
+    cursor = today if today in checked_days else today - timedelta(days=1)
+    streak = 0
+    while cursor in checked_days:
+        streak += 1
+        cursor -= timedelta(days=1)
+    return streak
+
+
+def longest_streak(checkin_dates: Iterable[date]) -> int:
+    """计算去重后的历史最长连续签到天数。"""
+    days = sorted(set(checkin_dates))
+    longest = 0
+    running = 0
+    previous: date | None = None
+
+    for day in days:
+        running = running + 1 if previous and day == previous + timedelta(days=1) else 1
+        longest = max(longest, running)
+        previous = day
+
+    return longest
+
+
+def month_bounds(year: int, month: int) -> tuple[date, date]:
+    """返回月份查询的左闭右开日期边界。"""
+    start = date(year, month, 1)
+    if month == 12:
+        return start, date(year + 1, 1, 1)
+    return start, date(year, month + 1, 1)

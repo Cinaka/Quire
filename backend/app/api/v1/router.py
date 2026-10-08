@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, entries, health, media, sessions, sync, tags
+from app.api.v1 import auth, checkins, entries, health, media, sessions, sync, tags
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -10,3 +10,4 @@ api_router.include_router(entries.router)
 api_router.include_router(tags.router)
 api_router.include_router(media.router)
 api_router.include_router(sync.router)
+api_router.include_router(checkins.router)
