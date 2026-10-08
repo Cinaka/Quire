@@ -103,3 +103,52 @@ export interface LocalStats {
   media: number
   mediaBytes: number
 }
+
+/** P4 预简：到期/逾期为展示派生状态，不写回 status。 */
+export type ScheduleStatus = "pending" | "converted"
+export type SchedulePhase = "future" | "due" | "overdue" | "converted" | "deleted"
+
+export interface Schedule {
+  id: string
+  remindDate: LocalDate
+  title: string
+  content: EntryContent | null
+  contentText: string
+  status: ScheduleStatus
+  convertedEntryId: string | null
+  convertedAt: Iso | null
+  createdAt: Iso
+  updatedAt: Iso
+  clientUpdatedAt: Iso
+  serverUpdatedAt: Iso | ""
+  deletedAt: Iso | null
+  isDeleted: 0 | 1
+  dirty: 0 | 1
+}
+
+export interface ScheduleCreateDto {
+  remindDate: LocalDate
+  title?: string
+  content?: EntryContent | null
+}
+
+export type ScheduleUpdateDto = Partial<ScheduleCreateDto>
+export interface ScheduleListParams {
+  page?: number
+  pageSize?: number
+  status?: ScheduleStatus
+  onlyDeleted?: boolean
+  dateFrom?: LocalDate
+  dateTo?: LocalDate
+}
+
+/** 离线转简意图；owner/generation 属于运行时边界，不直接写入备份。 */
+export interface ScheduleConversion {
+  scheduleId: string
+  /** 首次转换前的 pending 修订，用于先同步来源和服务端乐观锁。 */
+  source: Schedule
+  /** 首次转换快照独立保存，之后 Entry 编辑或弃去不得改写它。 */
+  entry: Entry
+  queuedAt: Iso
+  ownerUserId: string
+}

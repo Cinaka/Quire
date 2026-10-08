@@ -8,7 +8,9 @@
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "test:p3": "node scripts/test-checkins.cjs",
-    "check:p3": "npm run test:p3 && npm run build"
+    "check:p3": "npm run test:p3 && npm run build",
+    "test:p4": "node scripts/test-schedules.cjs",
+    "check:p4": "npm run test:p4 && npm run build"
   },
   "dependencies": {
     "@tiptap/extension-image": "^2.27.2",
