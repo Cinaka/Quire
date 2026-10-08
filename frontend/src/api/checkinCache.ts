@@ -18,14 +18,21 @@ function isSummary(value: unknown): value is MonthCheckinSummary {
   return Number.isInteger(item.year) && Number.isInteger(item.month) && Array.isArray(item.checkinDates) && typeof item.today === "string" && typeof item.timezone === "string" && typeof item.checkedInToday === "boolean" && Number.isInteger(item.currentStreak) && Number.isInteger(item.longestStreak) && Number.isInteger(item.totalCheckins) && typeof item.updatedAt === "number" && Number.isFinite(item.updatedAt)
 }
 
+function removeSafely(key: string): void {
+  try { sessionStorage.removeItem(key) } catch {
+    // Storage may be disabled even for reads/removals. Cache is optional.
+  }
+}
+
 function readSummary(key: string): MonthCheckinSummary | null {
   try {
     const parsed: unknown = JSON.parse(sessionStorage.getItem(key) ?? "null")
-    return isSummary(parsed) ? parsed : null
+    if (isSummary(parsed)) return parsed
+    removeSafely(key)
   } catch {
-    sessionStorage.removeItem(key)
-    return null
+    removeSafely(key)
   }
+  return null
 }
 
 export function currentCheckinCacheOwner(): string { return accessTokenSubject() }
@@ -44,11 +51,28 @@ export function clearCheckinCache(userId = accessTokenSubject()): void {
 }
 
 export function readCachedCheckinMonth(year?: number, month?: number): MonthCheckinSummary | null {
-  const userId = accessTokenSubject()
-  if (!userId) return null
-  if (year !== undefined && month !== undefined) return readSummary(monthKey(userId, year, month))
-  const currentKey = sessionStorage.getItem(`${accountPrefix(userId)}:current`)
-  return currentKey ? readSummary(currentKey) : null
+  try {
+    const userId = accessTokenSubject()
+    if (!userId || (year === undefined) !== (month === undefined)) return null
+    if (year !== undefined && month !== undefined) {
+      const result = readSummary(monthKey(userId, year, month))
+      return result?.year === year && result.month === month ? result : null
+    }
+    const prefix = accountPrefix(userId)
+    const pointerKey = `${prefix}:current`
+    const currentKey = sessionStorage.getItem(pointerKey)
+    if (!currentKey) return null
+    // Never follow a damaged pointer into another account's namespace.
+    const result = currentKey.startsWith(`${prefix}:`) ? readSummary(currentKey) : null
+    if (!result || currentKey !== monthKey(userId, result.year, result.month)) {
+      removeSafely(pointerKey)
+      return null
+    }
+    return result
+  } catch {
+    // 禁用存储、隐私模式或异常缓存只会导致缓存未命中。
+    return null
+  }
 }
 
 export function cacheCheckinMonth(summary: MonthCheckinSummary): void {
@@ -61,8 +85,11 @@ export function cacheCheckinMonth(summary: MonthCheckinSummary): void {
   try {
     sessionStorage.setItem(key, JSON.stringify(summary))
     if (summary.today.startsWith(currentPrefix)) sessionStorage.setItem(`${prefix}:current`, key)
-    const parsed: unknown = JSON.parse(sessionStorage.getItem(indexKey) ?? "[]")
-    const index = Array.isArray(parsed) ? parsed.filter((item): item is CacheIndexItem => Boolean(item) && typeof item === "object" && typeof (item as CacheIndexItem).key === "string" && typeof (item as CacheIndexItem).savedAt === "number") : []
+    let parsed: unknown = []
+    try { parsed = JSON.parse(sessionStorage.getItem(indexKey) ?? "[]") } catch {
+      // A broken index must not prevent rebuilding cache retention metadata.
+    }
+    const index = Array.isArray(parsed) ? parsed.filter((item): item is CacheIndexItem => Boolean(item) && typeof item === "object" && typeof (item as CacheIndexItem).key === "string" && (item as CacheIndexItem).key.startsWith(`${prefix}:`) && typeof (item as CacheIndexItem).savedAt === "number") : []
     const next = [{ key, savedAt: Date.now() }, ...index.filter((item) => item.key !== key)]
     for (const expired of next.slice(MAX_CACHED_MONTHS)) sessionStorage.removeItem(expired.key)
     sessionStorage.setItem(indexKey, JSON.stringify(next.slice(0, MAX_CACHED_MONTHS)))
