@@ -1,18 +1,24 @@
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def account_local_date(timezone_name: str, *, now: datetime | None = None) -> date:
     """返回指定账号时区下的当前自然日。
 
     `now` 仅用于测试和确定性调用；naive datetime 按项目约定视为 UTC。
-    无效的 IANA 时区名由 ZoneInfo 抛错，禁止静默退回客户端日期。
+    无效时区统一抛出 ZoneInfoNotFoundError，禁止静默退回客户端日期。
     """
+    try:
+        account_zone = ZoneInfo(timezone_name)
+    except (ValueError, TypeError) as exc:
+        # Empty, absolute or non-normalized keys can raise ValueError instead
+        # of ZoneInfoNotFoundError. Keep the API's existing 422 error contract.
+        raise ZoneInfoNotFoundError("Invalid account timezone") from exc
     instant = now or datetime.now(timezone.utc)
     if instant.tzinfo is None:
         instant = instant.replace(tzinfo=timezone.utc)
-    return instant.astimezone(ZoneInfo(timezone_name)).date()
+    return instant.astimezone(account_zone).date()
 
 
 def current_streak(checkin_dates: Iterable[date], today: date) -> int:
