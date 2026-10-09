@@ -133,6 +133,20 @@ export interface ScheduleCreateDto {
 }
 
 export type ScheduleUpdateDto = Partial<ScheduleCreateDto>
+/** 手动转简只复制已保存的来源修订，不接受页面另传正文或任意 Entry ID。 */
+export interface ScheduleConvertDto {
+  expectedClientUpdatedAt: Iso
+  /** 不传时保留 remindDate；显式目标必须是设备本地已至之日。 */
+  entryDate?: LocalDate
+}
+export interface ScheduleConvertResult {
+  schedule: Schedule
+  entry: Entry | undefined
+  created: boolean
+  /** pendingPurges中的物理墓碑也按purged处理，不能再次打开为可编辑正文。 */
+  entryState: "active" | "deleted" | "purged"
+  pendingConfirmation: boolean
+}
 export interface ScheduleListParams {
   page?: number
   pageSize?: number

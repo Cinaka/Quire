@@ -22,7 +22,7 @@ test("P4 keys do not overlap P2 synchronization metadata", () => {
   assert.equal(new Set(keys).size, 5)
   for (const key of keys) assert.ok(!["lastSyncAt", "conflicts", "syncErrors", "pendingPurges", "draft"].includes(key))
 })
-test("schedule writes are not exposed before backup/claim integration", () => {
+test("schedule and conversion writes remain hidden before real-storage acceptance", () => {
   const source = fs.readFileSync(path.join(__dirname, "../src/repo/index.ts"), "utf8")
-  assert.doesNotMatch(source, /scheduleRepo/)
+  assert.doesNotMatch(source, /scheduleRepo|scheduleConversionRepo/)
 })

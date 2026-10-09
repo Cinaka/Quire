@@ -68,7 +68,13 @@ function multiDB() {
       async bulkGet(ids) { return ids.map(id => clone(rows.get(id))) },
       toArray: async () => [...rows.values()].map(clone),
       toCollection: () => collection(), orderBy: () => collection(),
-      where: index => ({ equals: value => collection(row => Array.isArray(row[index]) ? row[index].includes(value) : row[index] === value) }),
+      where: index => ({ equals: value => collection(row => {
+        if (index.startsWith("[") && index.endsWith("]")) {
+          const key = index.slice(1, -1).split("+").map(name => row[name])
+          return JSON.stringify(key) === JSON.stringify(value)
+        }
+        return Array.isArray(row[index]) ? row[index].includes(value) : row[index] === value
+      }) }),
     }
   }
   const db = { ...stores, transaction(...args) {

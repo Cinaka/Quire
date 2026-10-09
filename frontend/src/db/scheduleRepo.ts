@@ -8,12 +8,14 @@ import {
 import { toPlainText } from "@/shared/text"
 import { utcNow } from "@/shared/time"
 import type {
-  Paged, Schedule, ScheduleCreateDto, ScheduleListParams, ScheduleUpdateDto,
+  Paged, Schedule, ScheduleConvertDto, ScheduleConvertResult, ScheduleCreateDto,
+  ScheduleListParams, ScheduleUpdateDto,
 } from "@/shared/types"
 
 import { db } from "./schema"
+import { convertLocalSchedule } from "./scheduleConversionRepo"
 
-/** 内部数据层；备份/认领/同步保护未完成前不从 @/repo 导出，不接 UI。 */
+/** 内部数据层；真实存储/浏览器验收前不从 @/repo 导出，不接 UI。 */
 export interface IScheduleRepo {
   list(params?: ScheduleListParams): Promise<Paged<Schedule>>
   get(id: string): Promise<Schedule | undefined>
@@ -21,6 +23,7 @@ export interface IScheduleRepo {
   update(id: string, dto: ScheduleUpdateDto): Promise<Schedule>
   remove(id: string): Promise<void>
   restore(id: string): Promise<void>
+  convert(id: string, dto: ScheduleConvertDto): Promise<ScheduleConvertResult>
 }
 
 function pageNumber(value: number | undefined, fallback: number): number {
@@ -112,4 +115,5 @@ export const localScheduleRepo: IScheduleRepo = {
 
   async remove(id) { await setDeleted(id, true) },
   async restore(id) { await setDeleted(id, false) },
+  convert: convertLocalSchedule,
 }
