@@ -24,5 +24,5 @@ test("P4 keys do not overlap P2 synchronization metadata", () => {
 })
 test("schedule and conversion writes remain hidden before real-storage acceptance", () => {
   const source = fs.readFileSync(path.join(__dirname, "../src/repo/index.ts"), "utf8")
-  assert.doesNotMatch(source, /scheduleRepo|scheduleConversionRepo|scheduleDraftRepo/)
+  assert.doesNotMatch(source, /scheduleRepo|scheduleConversionRepo|scheduleDraftRepo|scheduleEditorRepo/)
 })

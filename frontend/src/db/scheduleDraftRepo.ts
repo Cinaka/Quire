@@ -5,7 +5,8 @@ import {
   matchesScheduleDraftBody, parseScheduleDraftPayload, parseScheduleDraftState,
   type ScheduleDraftSaveInput, type ScheduleDraftState, type ScheduleEditorDraft,
 } from "@/shared/scheduleDrafts"
-import { nextScheduleRevision, SCHEDULE_META_KEYS } from "@/shared/schedules"
+import { assertNewScheduleDate, assertScheduleBody, nextScheduleRevision, SCHEDULE_META_KEYS } from "@/shared/schedules"
+import { toPlainText } from "@/shared/text"
 import { utcNow } from "@/shared/time"
 import type { Iso, Schedule } from "@/shared/types"
 
@@ -23,6 +24,11 @@ export interface ScheduleDraftReceipt {
   draftId: string
   scheduleId: string
   clientUpdatedAt: Iso
+}
+export interface ScheduleDraftCommitResult {
+  lease: ScheduleDraftLease
+  schedule: Schedule
+  created: boolean
 }
 export type ScheduleDraftAck =
   | { cleared: true; lease: ScheduleDraftLease }
@@ -142,6 +148,57 @@ export const localScheduleDraftRepo = {
       const next = advanceScheduleDraftState(current, bound)
       await db.meta.put({ key: SCHEDULE_META_KEYS.draft, value: next })
       return { lease: leaseFor(lease, next), draft: bound, status: await status(bound) }
+    })
+  },
+
+  /** 显式正式保存：同一事务消费已落库草稿，写业务记录并清槽，避免create/bind间崩溃重复创建。 */
+  async commit(lease: ScheduleDraftLease, draftId: string): Promise<ScheduleDraftCommitResult> {
+    lease = { ...lease }
+    validLease(lease)
+    assertDraftId(draftId)
+    return db.transaction("rw", db.schedules, db.meta, async () => {
+      await assertLocalOwner(lease)
+      const current = await state()
+      sameRevision(current, lease)
+      const draft = current.draft
+      if (!draft || draft.draftId !== draftId) throw new Error("预简草稿会话已关闭或变化，未保存")
+      assertScheduleBody(draft.title, draft.content)
+      // 先验证递增标记；耗尽时不能留下半个业务记录。
+      const cleared = advanceScheduleDraftState(current, null)
+      let row: Schedule
+      const created = draft.scheduleId === null
+      if (draft.scheduleId === null) {
+        // 事务执行时复核今天；跨午夜的旧新建草稿不得偷偷写成过期预简或日记。
+        assertNewScheduleDate(draft.remindDate)
+        const now = utcNow()
+        row = {
+          id: newId(), remindDate: draft.remindDate, title: draft.title, content: draft.content,
+          contentText: toPlainText(draft.content), status: "pending", convertedEntryId: null,
+          convertedAt: null, createdAt: now, updatedAt: now, clientUpdatedAt: now,
+          serverUpdatedAt: "", deletedAt: null, isDeleted: 0, dirty: 1,
+        }
+        await db.schedules.add(row)
+      } else {
+        const source = await db.schedules.get(draft.scheduleId)
+        if (!source || !isBackupSchedule(source) || scheduleContentTooNew(source) ||
+          source.isDeleted || source.status !== "pending") {
+          throw new Error("预简来源不可编辑，草稿已保留")
+        }
+        if (matchesScheduleDraftBody(draft, source)) {
+          // 恢复到完全相同的业务正文只清安全草稿，不刷新dirty/时间戳。
+          row = source
+        } else {
+          if (source.clientUpdatedAt !== draft.baseClientUpdatedAt) {
+            throw new Error("预简来源已变化，请确认冲突；草稿已保留，未覆盖")
+          }
+          const now = nextScheduleRevision(source.clientUpdatedAt, utcNow())
+          row = { ...source, remindDate: draft.remindDate, title: draft.title, content: draft.content,
+            contentText: toPlainText(draft.content), updatedAt: now, clientUpdatedAt: now, dirty: 1 }
+          await db.schedules.put(row)
+        }
+      }
+      await db.meta.put({ key: SCHEDULE_META_KEYS.draft, value: cleared })
+      return { lease: leaseFor(lease, cleared), schedule: row, created }
     })
   },
 
