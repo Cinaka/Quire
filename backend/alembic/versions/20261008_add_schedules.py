@@ -5,8 +5,9 @@ Revises: p3_checkins
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import mysql
+
+from alembic import op
 
 revision: str = "p4_schedules"
 down_revision: str = "p3_checkins"
