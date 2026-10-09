@@ -1,5 +1,9 @@
 import { LOCAL_MEDIA_PREFIX, toPlainText } from "@/shared/text"
 import { remapScheduleBackup } from "@/shared/scheduleBackup"
+import {
+  advanceScheduleDraftState, emptyScheduleDraftState, parseScheduleDraftState, remapScheduleDraft,
+  scheduleDraftFingerprint, type ScheduleDraftState,
+} from "@/shared/scheduleDrafts"
 import { SCHEDULE_META_KEYS } from "@/shared/schedules"
 import {
   BACKUP_FORMAT_VERSION,
@@ -33,6 +37,9 @@ export interface ImportReport {
   schedulesSkipped: number
   schedulesTooNew: number
   conversionsRestored: number
+  scheduleDraftRestored: number
+  scheduleDraftSkipped: number
+  scheduleDraftDetached: number
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -113,10 +120,14 @@ export const localBackupRepo = {
   async exportAll(onProgress?: (done: number, total: number) => void): Promise<BackupFile> {
     const snapshot = await db.transaction("r", db.entries, db.tags, db.media, db.schedules, db.meta, async () => {
       const owner = await localOwnerSnapshot()
+      const draftRow = await db.meta.get(SCHEDULE_META_KEYS.draft)
+      const draftState = draftRow ? parseScheduleDraftState(draftRow.value) : emptyScheduleDraftState()
       return {
         owner, entries: await db.entries.toArray(), tags: await db.tags.toArray(),
         schedules: await db.schedules.toArray(), conversions: await readScheduleConversions(),
         mediaIds: await db.media.orderBy("id").primaryKeys(),
+        scheduleDraft: draftState.draft,
+        draftFingerprint: scheduleDraftFingerprint(Boolean(draftRow), draftRow?.value),
       }
     })
     const { entries, tags, schedules, mediaIds } = snapshot
@@ -142,7 +153,13 @@ export const localBackupRepo = {
       onProgress?.(i + 1, mediaIds.length)
     }
 
-    await assertLocalOwner(snapshot.owner)
+    await db.transaction("r", db.meta, async () => {
+      await assertLocalOwner(snapshot.owner)
+      const current = await db.meta.get(SCHEDULE_META_KEYS.draft)
+      if (scheduleDraftFingerprint(Boolean(current), current?.value) !== snapshot.draftFingerprint) {
+        throw new Error("备份期间预简草稿已变化，请重试；尚未生成完整备份")
+      }
+    })
     const file: BackupFile = {
       app: "quire",
       formatVersion: BACKUP_FORMAT_VERSION,
@@ -159,6 +176,7 @@ export const localBackupRepo = {
       media,
       schedules,
       scheduleConversions,
+      scheduleDraft: snapshot.scheduleDraft,
     }
     const checked = checkBackup(file)
     if (!checked.ok) throw new Error(checked.reason)
@@ -187,6 +205,7 @@ export const localBackupRepo = {
       mediaSkipped: 0,
       schedulesAdded: 0, schedulesUpdated: 0, schedulesSkipped: 0, schedulesTooNew: 0,
       conversionsRestored: 0,
+      scheduleDraftRestored: 0, scheduleDraftSkipped: 0, scheduleDraftDetached: 0,
     }
 
     // ──────────────────────────────────────────
@@ -316,6 +335,10 @@ export const localBackupRepo = {
     )
     report.schedulesTooNew = plan.skippedSourceIds.length
     const skippedSources = new Set(plan.skippedSourceIds)
+    const plannedSourceIds = new Set(plan.schedules.map(row => row.id))
+    const draftSourceMap = new Map([...scheduleIdMap].filter(([, mapped]) => plannedSourceIds.has(mapped)))
+    const draftPlan = file.scheduleDraft
+      ? remapScheduleDraft(file.scheduleDraft, draftSourceMap, conflict === "asCopy", newId()) : null
     const incoming: Entry[] = []
     for (const e of file.entries) {
       if (contentTooNew(e, CONTENT_SCHEMA_VERSION) || skippedSources.has(e.fromScheduleId ?? "")) {
@@ -419,6 +442,25 @@ export const localBackupRepo = {
           report.entriesUpdated += 1
         } else {
           report.entriesSkipped += 1
+        }
+      }
+      if (draftPlan) {
+        const draftRow = await db.meta.get(SCHEDULE_META_KEYS.draft)
+        let draftState: ScheduleDraftState | null = null
+        try {
+          draftState = draftRow ? parseScheduleDraftState(draftRow.value) : emptyScheduleDraftState()
+        } catch {
+          // 不覆盖未知/损坏的本机草稿；其余已校验的备份业务仍可恢复。
+          report.scheduleDraftSkipped = 1
+        }
+        if (draftState?.draft) {
+          report.scheduleDraftSkipped = 1
+        } else if (draftState) {
+          await db.meta.put({
+            key: SCHEDULE_META_KEYS.draft, value: advanceScheduleDraftState(draftState, draftPlan.draft),
+          })
+          report.scheduleDraftRestored = 1
+          report.scheduleDraftDetached = draftPlan.detached ? 1 : 0
         }
       }
       await rotateOwnerGeneration()

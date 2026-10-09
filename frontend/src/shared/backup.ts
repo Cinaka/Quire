@@ -1,4 +1,5 @@
 import { validateScheduleGraph, type BackupScheduleConversion } from "./scheduleBackup"
+import { isScheduleEditorDraft, type ScheduleEditorDraft } from "./scheduleDrafts"
 import type { Entry, MediaItem, Schedule, Tag } from "./types"
 
 /**
@@ -32,6 +33,8 @@ export interface BackupFile {
   /** v1/v2 缺省为空；v3 外壳要求明确包含。 */
   schedules?: Schedule[]
   scheduleConversions?: BackupScheduleConversion[]
+  /** v3可选；只备份业务草稿，不导出操作租约或本地journal修订。 */
+  scheduleDraft?: ScheduleEditorDraft | null
 }
 
 /**
@@ -87,7 +90,10 @@ export function checkBackup(raw: unknown): BackupCheck {
     }
     const reason = validateScheduleGraph(f.schedules, f.scheduleConversions, f.entries as Entry[])
     if (reason) return { ok: false, reason }
-  } else if (f.schedules !== undefined || f.scheduleConversions !== undefined) {
+    if (f.scheduleDraft !== undefined && f.scheduleDraft !== null && !isScheduleEditorDraft(f.scheduleDraft)) {
+      return { ok: false, reason: "预简安全草稿损坏或版本不受支持，已拒绝导入" }
+    }
+  } else if (f.schedules !== undefined || f.scheduleConversions !== undefined || f.scheduleDraft !== undefined) {
     return { ok: false, reason: "预简数据必须使用 v3 格式，不能伪装为旧备份" }
   }
   return { ok: true, file: f as BackupFile }
