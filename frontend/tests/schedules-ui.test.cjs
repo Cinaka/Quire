@@ -177,10 +177,10 @@ test("unsubscribe stops UI notifications and observers receive copies through in
 })
 test("text editor schema has only existing StarterKit and placeholder, no images or diary reuse", () => {
   const schema = read("editor/scheduleSchema.ts")
-  assert.match(schema, /levels: \[1, 2, 3, 4, 5, 6\]/); assert.match(schema, /StarterKit.configure/); assert.match(schema, /Placeholder.configure/)
+  assert.match(schema, /levels: \[1, 2, 3\]/); assert.match(schema, /StarterKit.configure/); assert.match(schema, /Placeholder.configure/)
   assert.doesNotMatch(schema, /LocalImage|insertImages|buildExtensions|extension-image|taskList/)
   const editor = read("components/schedules/ScheduleTextEditor.vue")
-  assert.match(editor, /assertScheduleContent\(props.initialContent\)/)
+  assert.match(editor, /assertScheduleEditorContent\(props.initialContent\)/)
   assert.match(editor, /handlePaste/); assert.match(editor, /handleDrop/); assert.match(editor, /data\?\.files.length/)
   assert.doesNotMatch(editor, /mediaRepo|insertImages|type="file"|EntryMetaFields/)
 })

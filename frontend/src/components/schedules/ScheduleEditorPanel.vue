@@ -9,8 +9,8 @@
     <div class="actions">
       <button type="button" :disabled="locked || Boolean(editorError) || state.sourceStatus === 'conflict' || state.sourceStatus === 'sourceUnavailable'" @click="save">保存预简</button>
       <button v-if="state.error" type="button" :disabled="locked || Boolean(editorError)" @click="changed">重试保存安全草稿</button>
-      <button type="button" :disabled="locked" @click="leave">保留草稿并返回</button>
-      <button type="button" :disabled="locked" @click="discard">弃去安全草稿…</button>
+      <button type="button" :disabled="actionLocked" @click="leave">保留草稿并返回</button>
+      <button type="button" :disabled="actionLocked" @click="discard">弃去安全草稿…</button>
     </div>
   </section>
 </template>
@@ -20,6 +20,7 @@ import { computed, onBeforeUnmount, ref } from "vue"
 import { createScheduleEditorPanel } from "@/shared/scheduleEditorPanel"
 import type { ScheduleEditorSession } from "@/shared/scheduleEditor"
 import { draftRecoveryMessage } from "@/shared/schedulePresentation"
+import { assertScheduleEditorContent } from "@/shared/scheduleEditorContent"
 import type { EntryContent } from "@/shared/types"
 import ScheduleTextEditor from "./ScheduleTextEditor.vue"
 
@@ -31,13 +32,20 @@ const initialState = panel.inspect()
 const state = ref(initialState)
 const body = ref(structuredClone(initialState.body))
 const initialContent = structuredClone(initialState.body.content)
-const editorError = ref("")
-const locked = computed(() => state.value.busy || state.value.closed)
+let initialBlock = ""
+try { assertScheduleEditorContent(initialContent) } catch (error) { initialBlock = String(error) }
+const readOnlyContent = Boolean(initialBlock)
+const editorError = ref(initialBlock)
+const actionLocked = computed(() => state.value.busy || state.value.closed)
+const locked = computed(() => actionLocked.value || readOnlyContent)
 const unsubscribe = panel.subscribe(() => { state.value = panel.inspect() })
 function changed(): void { void panel.change({ ...body.value }) }
 function contentChanged(content: EntryContent): void { body.value.content = content; editorError.value = ""; changed() }
 async function save(): Promise<void> { if (await panel.submit()) emit("saved") }
-async function prepareLeave(): Promise<boolean> { return !editorError.value && await panel.prepareLeave() }
+async function prepareLeave(): Promise<boolean> {
+  // 不兼容初始正文只读，未触发任何编辑；允许保留原草稿返回，不强迫弃去文字。
+  return (readOnlyContent || !editorError.value) && await panel.prepareLeave()
+}
 async function leave(): Promise<void> { if (await prepareLeave()) emit("leave") }
 async function discard(): Promise<void> {
   if (!window.confirm("只弃去安全草稿，已保存预简不删除。确定弃去？")) return

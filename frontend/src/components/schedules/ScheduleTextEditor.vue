@@ -14,14 +14,14 @@ import type { Content } from "@tiptap/core"
 import { EditorContent, useEditor } from "@tiptap/vue-3"
 import { onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { buildScheduleExtensions } from "@/editor/scheduleSchema"
-import { assertScheduleContent } from "@/shared/schedules"
+import { assertScheduleEditorContent } from "@/shared/scheduleEditorContent"
 import { CONTENT_SCHEMA_VERSION, type EntryContent, type TiptapDoc } from "@/shared/types"
 
 // initialContent仅用于挂载；父组件必须按编辑会话key重建，不能用新来源静默替换正文。
 const props = defineProps<{ initialContent: EntryContent | null; disabled?: boolean }>()
 const emit = defineEmits<{ change: [EntryContent]; invalid: [string] }>()
 let initialError = ""
-try { assertScheduleContent(props.initialContent) } catch (error) { initialError = String(error) }
+try { assertScheduleEditorContent(props.initialContent) } catch (error) { initialError = String(error) }
 const warning = ref(initialError)
 const editor = useEditor({
   content: (initialError ? "" : props.initialContent?.doc ?? "") as Content,
@@ -46,7 +46,7 @@ const editor = useEditor({
   },
   onUpdate({ editor: current }) {
     const content: EntryContent = { schemaVersion: CONTENT_SCHEMA_VERSION, doc: current.getJSON() as unknown as TiptapDoc }
-    try { assertScheduleContent(content); emit("change", content) } catch (error) {
+    try { assertScheduleEditorContent(content); emit("change", content) } catch (error) {
       warning.value = String(error)
       emit("invalid", warning.value)
     }
