@@ -122,6 +122,7 @@ export const localBackupRepo = {
     const { entries, tags, schedules, mediaIds } = snapshot
     const scheduleConversions = snapshot.conversions.map(item => ({
       scheduleId: item.scheduleId, source: item.source, entry: item.entry, queuedAt: item.queuedAt,
+      ...(item.protectedMediaIds ? { protectedMediaIds: [...item.protectedMediaIds] } : {}),
     }))
 
     const media: BackupMedia[] = []
@@ -200,6 +201,10 @@ export const localBackupRepo = {
       scheduleIdMap.set(row.id, conflict === "asCopy" ? newId() : row.id)
     }
     const entryIdMap = new Map<string, string>()
+    // 来源终态仍在但Entry已物理弃去时，关联媒体也必须映射到复制后的稳定来源ID。
+    for (const row of file.schedules ?? []) {
+      if (row.status === "converted") entryIdMap.set(row.id, scheduleIdMap.get(row.id)!)
+    }
     for (const entry of file.entries) {
       const sourceId = entry.fromScheduleId
       // 同源转换的两个资源必须映射到同一个新UUID v7。
@@ -307,6 +312,7 @@ export const localBackupRepo = {
     const plan = remapScheduleBackup(
       file.schedules ?? [], file.scheduleConversions ?? [], file.entries,
       scheduleIdMap, mapEntry, now,
+      mediaIdMap,
     )
     report.schedulesTooNew = plan.skippedSourceIds.length
     const skippedSources = new Set(plan.skippedSourceIds)
@@ -349,7 +355,16 @@ export const localBackupRepo = {
       for (const intent of plan.conversions) {
         if (!acceptedSources.has(intent.scheduleId)) continue
         // 同源首次转换快照不可被后来的恢复覆盖。
-        if (queued.has(intent.scheduleId)) continue
+        const existing = queued.get(intent.scheduleId)
+        if (existing) {
+          if (intent.protectedMediaIds?.length) queued.set(intent.scheduleId, {
+            ...existing,
+            protectedMediaIds: [...new Set([
+              ...(existing.protectedMediaIds ?? []), ...intent.protectedMediaIds,
+            ])],
+          })
+          continue
+        }
         if (!updatedSources.has(intent.scheduleId)) {
           const currentSource = await db.schedules.get(intent.scheduleId)
           if (currentSource?.dirty === 0 && currentSource.serverUpdatedAt) continue
@@ -418,7 +433,7 @@ export const localBackupRepo = {
     // 而误删原条目或副本条目的图片。
     // ──────────────────────────────────────────
     const restoredOwner = { ...owner, generation: committedGeneration }
-    await db.transaction("rw", db.entries, db.media, db.meta, async () => {
+    await db.transaction("rw", db.entries, db.media, db.schedules, db.meta, async () => {
       await assertLocalOwner(restoredOwner)
       await localMediaRepo.reconcileAll()
     })

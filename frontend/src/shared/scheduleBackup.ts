@@ -8,6 +8,8 @@ export interface BackupScheduleConversion {
   source: Schedule
   entry: Entry
   queuedAt: string
+  /** v3可选业务恢复字段；旧v3缺省为空，不携带会话信息。 */
+  protectedMediaIds?: string[]
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -59,7 +61,10 @@ function conversionEntry(raw: unknown, id: string): raw is Entry {
 export function isBackupConversion(raw: unknown): raw is BackupScheduleConversion {
   return object(raw) && typeof raw.scheduleId === "string" && isBackupSchedule(raw.source) &&
     raw.source.id === raw.scheduleId && raw.source.status === "pending" && raw.source.isDeleted === 0 &&
-    conversionEntry(raw.entry, raw.scheduleId) && iso(raw.queuedAt)
+    conversionEntry(raw.entry, raw.scheduleId) && iso(raw.queuedAt) &&
+    (raw.protectedMediaIds === undefined || (Array.isArray(raw.protectedMediaIds) &&
+      raw.protectedMediaIds.every(id => typeof id === "string" && id.length > 0) &&
+      new Set(raw.protectedMediaIds).size === raw.protectedMediaIds.length))
 }
 
 export function validateScheduleGraph(
@@ -100,6 +105,7 @@ function absentEntry(row: Schedule): Entry {
 export function remapScheduleBackup(
   schedules: Schedule[], conversions: BackupScheduleConversion[], entries: Entry[],
   scheduleIds: ReadonlyMap<string, string>, mapEntry: (row: Entry) => Entry, now: string,
+  mediaIds: ReadonlyMap<string, string> = new Map(),
 ): { schedules: Schedule[]; conversions: BackupScheduleConversion[]; skippedSourceIds: string[] } {
   const byEntry = new Map(entries.map(row => [row.id, row]))
   const byIntent = new Map(conversions.map(row => [row.scheduleId, row]))
@@ -128,6 +134,9 @@ export function remapScheduleBackup(
     queued.push({
       scheduleId: id, source, entry: mapEntry(intent?.entry ?? entry ?? absentEntry(row)),
       queuedAt: intent?.queuedAt ?? now,
+      ...(intent?.protectedMediaIds ? {
+        protectedMediaIds: intent.protectedMediaIds.map(id => mediaIds.get(id) ?? id),
+      } : {}),
     })
   }
   return { schedules: restored, conversions: queued, skippedSourceIds }

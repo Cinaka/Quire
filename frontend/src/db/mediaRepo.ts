@@ -5,6 +5,7 @@ import { utcNow } from "@/shared/time"
 import type { MediaItem } from "@/shared/types"
 
 import { db } from "./schema"
+import { protectedConversions, retainConversionMedia } from "./scheduleStateRepo"
 
 /** 原图入库上限。算术见 E1 第一小节 */
 const IMAGE_MAX_EDGE = 1920
@@ -81,26 +82,29 @@ export const localMediaRepo = {
    * “打上变孤儿的时刻”，真正删除至少要等 24 小时后的下一次维护。
    */
   async reconcileAll(): Promise<number> {
-    const entries = await db.entries.toArray()
-    const mediaIds = (await db.media.orderBy("id").primaryKeys()) as string[]
-    const expected = new Map<string, { entryId: string; sortOrder: number }>()
+    return db.transaction("rw", db.entries, db.media, db.schedules, db.meta, async () => {
+      const entries = await db.entries.toArray()
+      const mediaIds = (await db.media.orderBy("id").primaryKeys()) as string[]
+      const expected = new Map<string, { entryId: string; sortOrder: number }>()
 
-    for (const entry of entries) {
-      const ids = collectMediaIds(entry.content?.doc)
-      ids.forEach((id, sortOrder) => {
-        // 同一张图被两篇引用时只归第一篇。已知、可接受：P1 不做多对多，
-        // 且两篇正文都仍能按 id 正常显示图片。
-        if (!expected.has(id)) expected.set(id, { entryId: entry.id, sortOrder })
-      })
-    }
+      for (const entry of entries) {
+        const ids = collectMediaIds(entry.content?.doc)
+        ids.forEach((id, sortOrder) => {
+          // 同一张图被两篇引用时只归第一篇。已知、可接受：P1 不做多对多，
+          // 且两篇正文都仍能按 id 正常显示图片。
+          if (!expected.has(id)) expected.set(id, { entryId: entry.id, sortOrder })
+        })
+      }
 
-    let changed = 0
-    await db.transaction("rw", db.media, async () => {
+      let changed = 0
       for (const id of mediaIds) {
         const item = await db.media.get(id)
         if (!item) continue
 
         const next = expected.get(id)
+        // 正文或旧关联即将消失时，先把ID留在转换意图的独立保护关联中。
+        if (item.entryId) await retainConversionMedia(item.entryId, [id])
+        if (next && next.entryId !== item.entryId) await retainConversionMedia(next.entryId, [id])
         const wantEntryId = next?.entryId ?? ""
         const wantSortOrder = next?.sortOrder ?? 0
         // 已经是孤儿的保持原有 orphanedAt，不要每次维护都刷新时间戳，
@@ -124,8 +128,8 @@ export const localMediaRepo = {
         })
         changed += 1
       }
+      return changed
     })
-    return changed
   },
 
   async get(id: string): Promise<MediaItem | undefined> {
@@ -161,9 +165,10 @@ export const localMediaRepo = {
 
   /** 保存日记时调用，把这次正文里实际用到的图片关联过去。 */
   async attach(entryId: string, mediaIds: string[]): Promise<void> {
-    await db.transaction("rw", db.media, async () => {
+    await db.transaction("rw", db.entries, db.media, db.schedules, db.meta, async () => {
       const keep = new Set(mediaIds)
       const attached = await db.media.where("entryId").equals(entryId).toArray()
+      await retainConversionMedia(entryId, [...mediaIds, ...attached.map(item => item.id)])
 
       // 不立即物理删除：用户仍可能撤销。退回孤儿时才写 orphanedAt，
       // 窗口从此刻起算（而不是从当初贴图起算）。
@@ -198,12 +203,16 @@ export const localMediaRepo = {
    */
   async purgeOrphans(olderThanHours = 24): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanHours * 3600_000).toISOString()
-    const orphans = await db.media.where("entryId").equals("").toArray()
-    const stale = orphans
-      .filter((m) => m.dirty === 0 && (m.orphanedAt ?? m.createdAt) < cutoff)
-      .map((m) => m.id)
-    if (stale.length) await db.media.bulkDelete(stale)
-    return stale.length
+    return db.transaction("rw", db.entries, db.media, db.schedules, db.meta, async () => {
+      const held = await protectedConversions()
+      const orphans = await db.media.where("entryId").equals("").toArray()
+      const stale = orphans
+        .filter((m) => !held.mediaIds.has(m.id) && m.dirty === 0 &&
+          (m.orphanedAt ?? m.createdAt) < cutoff)
+        .map((m) => m.id)
+      if (stale.length) await db.media.bulkDelete(stale)
+      return stale.length
+    })
   },
 
   /**

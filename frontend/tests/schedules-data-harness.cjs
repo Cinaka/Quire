@@ -36,14 +36,19 @@ function multiDB() {
   let failName = ""
   let failAt = ""
   const clone = value => value === undefined ? undefined : structuredClone(value)
+  function scope(name) {
+    const context = txStorage.getStore()
+    if (context && !context.tables.has(stores[name])) throw new Error(`table outside transaction: ${name}`)
+  }
   function trip(name, operation) {
+    scope(name)
     if (failName === name && failAt === operation) { failName = ""; throw new Error("injected storage failure") }
   }
   for (const name of ["entries", "tags", "media", "schedules", "meta"]) {
     const rows = new Map()
     const key = name === "meta" ? "key" : "id"
     function collection(predicate = () => true) {
-      const selected = () => [...rows.values()].filter(predicate)
+      const selected = () => { scope(name); return [...rows.values()].filter(predicate) }
       return {
         toArray: async () => selected().map(clone), count: async () => selected().length,
         primaryKeys: async () => selected().map(row => row[key]),
@@ -58,15 +63,15 @@ function multiDB() {
       }
     }
     stores[name] = {
-      rows, async get(id) { return clone(rows.get(id)) },
+      rows, async get(id) { scope(name); return clone(rows.get(id)) },
       async add(row) { trip(name, "put"); if (rows.has(row[key])) throw new Error("duplicate ID"); rows.set(row[key], clone(row)) },
       async put(row) { trip(name, "put"); rows.set(row[key], clone(row)) },
       async update(id, patch) { trip(name, "put"); if (!rows.has(id)) return 0; Object.assign(rows.get(id), clone(patch)); return 1 },
       async delete(id) { trip(name, "delete"); rows.delete(id) },
       async clear() { trip(name, "clear"); rows.clear() },
-      async bulkDelete(ids) { for (const id of ids) rows.delete(id) },
-      async bulkGet(ids) { return ids.map(id => clone(rows.get(id))) },
-      toArray: async () => [...rows.values()].map(clone),
+      async bulkDelete(ids) { trip(name, "delete"); for (const id of ids) rows.delete(id) },
+      async bulkGet(ids) { scope(name); return ids.map(id => clone(rows.get(id))) },
+      toArray: async () => { scope(name); return [...rows.values()].map(clone) },
       toCollection: () => collection(), orderBy: () => collection(),
       where: index => ({ equals: value => collection(row => {
         if (index.startsWith("[") && index.endsWith("]")) {
@@ -79,8 +84,15 @@ function multiDB() {
   }
   const db = { ...stores, transaction(...args) {
     const fn = args.at(-1)
-    if (txStorage.getStore() === db) return fn()
-    const task = queue.then(() => txStorage.run(db, async () => {
+    const tables = new Set(args.slice(1, -1).flat())
+    const parent = txStorage.getStore()
+    if (parent) {
+      if ([...tables].some(table => !parent.tables.has(table))) {
+        return Promise.reject(new Error("nested transaction requests a table outside its parent"))
+      }
+      return fn()
+    }
+    const task = queue.then(() => txStorage.run({ db, tables }, async () => {
       const snapshots = Object.fromEntries(Object.entries(stores).map(([name, store]) => [name, clone(store.rows)]))
       try { return await fn() } catch (error) {
         for (const [name, store] of Object.entries(stores)) {
@@ -95,7 +107,7 @@ function multiDB() {
   } }
   return { db, stores, failNext: (name, operation = "put") => { failName = name; failAt = operation } }
 }
-function setup(extraMocks = {}) {
+function setup(extraMocks = {}, extraGlobals = {}) {
   const memory = multiDB()
   let next = 100
   let user = "account-a"
@@ -116,7 +128,7 @@ function setup(extraMocks = {}) {
       }).catch(error => { this.error = error; this.onerror() })
     }
   }
-  const load = relative => loadTS(relative, mocks, { FileReader: Reader, atob, btoa })
+  const load = relative => loadTS(relative, mocks, { FileReader: Reader, atob, btoa, ...extraGlobals })
   return { ...memory, load, mocks, tokens, user: value => { user = value; gen++ } }
 }
 module.exports = { ID, OTHER_ID, AT, content, schedule, entry, terminal, intent, backup, setup, multiDB }

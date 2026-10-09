@@ -165,4 +165,6 @@ export interface ScheduleConversion {
   entry: Entry
   queuedAt: Iso
   ownerUserId: string
+  /** 可增长的保护关联，不属于不可变的首次正文快照；确认前不释放。 */
+  protectedMediaIds?: string[]
 }

@@ -1,4 +1,5 @@
 import { db } from "./schema"
+import { retainConversionMedia } from "./scheduleStateRepo"
 import { newId } from "@/shared/ids"
 import { collectMediaIds, toPlainText } from "@/shared/text"
 import { todayLocal, utcNow } from "@/shared/time"
@@ -114,7 +115,7 @@ export const localEntryRepo: IEntryRepo = {
   },
 
   async update(id, dto) {
-    return db.transaction("rw", db.entries, async () => {
+    return db.transaction("rw", db.entries, db.media, db.schedules, db.meta, async () => {
       const cur = await db.entries.get(id)
       if (!cur) throw new Error(`entry not found: ${id}`)
       const next: Entry = { ...cur }
@@ -124,6 +125,10 @@ export const localEntryRepo: IEntryRepo = {
       if (dto.weather !== undefined) next.weather = dto.weather
       if (dto.tagIds !== undefined) next.tagIds = dto.tagIds
       if (dto.content !== undefined) {
+        await retainConversionMedia(id, [
+          ...collectMediaIds(cur.content?.doc), ...collectMediaIds(dto.content?.doc),
+          ...(await db.media.where("entryId").equals(id).primaryKeys()) as string[],
+        ])
         next.content = dto.content
         next.contentText = toPlainText(dto.content)
       }
@@ -156,10 +161,15 @@ export const localEntryRepo: IEntryRepo = {
   },
 
   async purge(id) {
-    const cur = await db.entries.get(id)
-    if (!cur) return
     const now = utcNow()
-    await db.transaction("rw", db.entries, db.media, db.meta, async () => {
+    await db.transaction("rw", db.entries, db.media, db.schedules, db.meta, async () => {
+      // 事务内重读：不能用删除前读出的旧正文覆盖并发编辑，且必须先保存图片保护关联。
+      const cur = await db.entries.get(id)
+      if (!cur) return
+      await retainConversionMedia(id, [
+        ...collectMediaIds(cur.content?.doc),
+        ...(await db.media.where("entryId").equals(id).primaryKeys()) as string[],
+      ])
       await db.media.where("entryId").equals(id).modify({
         entryId: "", orphanedAt: now, dirty: 1,
       })
