@@ -86,3 +86,5 @@ export function createScheduleEditorSession(
     close(): void { closed = true },
   }
 }
+
+export type ScheduleEditorSession = ReturnType<typeof createScheduleEditorSession>
