@@ -1,6 +1,8 @@
 """P4 push tests reuse the pending-write SQLite fixture; no real MySQL acceptance."""
 
+import ast
 import asyncio
+import inspect
 import uuid
 
 import pytest
@@ -17,6 +19,7 @@ from test_schedule_writes import (
     stored,
 )
 
+from app.api.v1 import router as router_module
 from app.api.v1 import schedule_sync
 from app.core.security import get_current_user
 from app.main import app
@@ -245,5 +248,24 @@ def test_single_upsert_duplicate_retry_also_pins_orm_owner_before_rollback():
 
 
 def test_static_sync_router_registered_before_uuid_detail_router():
-    paths = [route.path for route in app.routes if hasattr(route, "path")]
-    assert paths.index(URL) < paths.index("/api/v1/schedules/{schedule_id}")
+    # Router wrappers need not expose a flat app.routes/path list.
+    # Check declared include order, then independently prove HTTP mounting.
+    declared = []
+    for statement in ast.parse(inspect.getsource(router_module)).body:
+        if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+            continue
+        call = statement.value
+        if (
+            not isinstance(call.func, ast.Attribute) or call.func.attr != "include_router"
+            or not isinstance(call.func.value, ast.Name) or call.func.value.id != "api_router"
+        ):
+            continue
+        argument = call.args[0] if call.args else next(
+            (keyword.value for keyword in call.keywords if keyword.arg == "router"), None,
+        )
+        if isinstance(argument, ast.Attribute) and isinstance(argument.value, ast.Name):
+            declared.append(argument.value.id)
+    assert declared.index("schedule_sync") < declared.index("schedules")
+    with api_client() as (client, db):
+        assert push(client, [])["schedules"] == []
+        assert not db.statements and db.commits == 0
