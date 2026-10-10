@@ -77,7 +77,7 @@ function wireSchedule(raw: unknown, id: string): Schedule {
   if (!isBackupSchedule(row)) throw new Error("来源响应内容或转换关系无效")
   return row
 }
-function wireEntry(raw: unknown, id: string): Entry {
+export function parseConversionEntry(raw: unknown, id: string): Entry {
   const r = record(raw)
   if (r.id !== id || r.from_schedule_id !== id || typeof r.title !== "string" || typeof r.content_text !== "string" ||
       typeof r.entry_date !== "string" || !Number.isSafeInteger(r.sort_order) || Number(r.sort_order) < 0 ||
@@ -143,7 +143,7 @@ export function parseConversionAck(raw: unknown, ticket: ConversionTicket): Conv
       r.first_entry_deleted !== (i.entry.isDeleted === 1)) throw new Error("首次转换回执未确认")
   const schedule = wireSchedule(r.schedule, i.scheduleId)
   if (schedule.status !== "converted") throw new Error("来源尚未终态")
-  const entry = r.entry === null ? null : wireEntry(r.entry, i.scheduleId)
+  const entry = r.entry === null ? null : parseConversionEntry(r.entry, i.scheduleId)
   if (r.entry_state === "purged" && entry === null) return { schedule, entry, entryState: "purged" }
   if (entry && ((r.entry_state === "active" && !entry.isDeleted) || (r.entry_state === "deleted" && entry.isDeleted))) {
     return { schedule, entry, entryState: r.entry_state }
@@ -208,7 +208,7 @@ export function parseConversionRejection(raw: unknown, id: string): ConversionFa
   const r = record(raw)
   if (r.confirmed !== false || r.created !== false || typeof r.reason !== "string" || !CONVERT_FAILURES.has(r.reason)) throw new Error("转换失败回执无效")
   const source = r.schedule === null ? null : wireSchedule(r.schedule, id)
-  const entry = r.entry === null ? null : wireEntry(r.entry, id)
+  const entry = r.entry === null ? null : parseConversionEntry(r.entry, id)
   if ((r.entry_state === "active" && (!entry || entry.isDeleted)) ||
       (r.entry_state === "deleted" && (!entry || !entry.isDeleted)) ||
       (r.entry_state === "purged" && entry !== null) ||
