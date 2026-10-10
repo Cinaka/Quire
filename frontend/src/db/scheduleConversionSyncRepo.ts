@@ -1,35 +1,18 @@
-import { accessTokenSubject, tokenGeneration } from "@/api/tokenStore"
-import { assertSyncContext, captureSyncContext } from "@/api/syncContext"
-import { isBackupConversion, isBackupSchedule } from "@/shared/scheduleBackup"
+import { captureSyncContext } from "@/api/syncContext"
+import { isBackupSchedule } from "@/shared/scheduleBackup"
 import {
   conversionCanonical, conversionCopy, conversionIntentKey, conversionUtc, createScheduleConversionConsumer,
   prepareConversionRequest, sameFirstEntry,
 } from "@/shared/scheduleConversionSync"
 import type { ConversionAck, ConversionConsumerPort, ConversionTicket, ConversionTransport } from "@/shared/scheduleConversionSync"
 import { SCHEDULE_META_KEYS } from "@/shared/schedules"
-import type { ScheduleConversion } from "@/shared/types"
 
-import { OWNER_GENERATION_KEY } from "./scheduleStateRepo"
+import {
+  assertScheduleLease, readCheckedConversionQueue,
+  rememberScheduleServerState,
+} from "./scheduleSyncStateRepo"
 import { db } from "./schema"
 
-async function checkLease(lease: ConversionTicket["lease"]): Promise<void> {
-  const owner = await db.meta.get("ownerUserId"), epoch = await db.meta.get(OWNER_GENERATION_KEY)
-  if (!owner || typeof owner.value !== "string" || (epoch && typeof epoch.value !== "string")) throw new Error("本地归属或恢复代际标记损坏")
-  await assertSyncContext(lease)
-  // Recheck auth after the awaited DB owner read, not only before it.
-  if (accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) throw new Error("旧登录租约已失效")
-}
-async function checkedQueue(owner: string): Promise<ScheduleConversion[]> {
-  const stored = await db.meta.get(SCHEDULE_META_KEYS.conversions)
-  if (!stored) return []
-  if (!Array.isArray(stored.value)) throw new Error("转换队列损坏")
-  const ids = new Set<string>()
-  for (const raw of stored.value) {
-    if (!isBackupConversion(raw) || (raw as ScheduleConversion).ownerUserId !== owner || ids.has(raw.scheduleId)) throw new Error("转换队列结构或归属异常")
-    ids.add(raw.scheduleId)
-  }
-  return stored.value as ScheduleConversion[]
-}
 async function conflict(ticket: ConversionTicket, ack: ConversionAck, reason: string) {
   const stored = await db.meta.get(SCHEDULE_META_KEYS.conflicts)
   if (stored && !Array.isArray(stored.value)) throw new Error("日程冲突记录损坏")
@@ -44,8 +27,8 @@ async function conflict(ticket: ConversionTicket, ack: ConversionAck, reason: st
 const conversionPort: ConversionConsumerPort = {
   async reject(ticket, failure) {
     return db.transaction("rw", db.meta, async () => {
-      await checkLease(ticket.lease)
-      const queued = (await checkedQueue(ticket.lease.ownerUserId)).find(row => row.scheduleId === ticket.intent.scheduleId)
+      await assertScheduleLease(ticket.lease)
+      const queued = (await readCheckedConversionQueue(ticket.lease.ownerUserId)).find(row => row.scheduleId === ticket.intent.scheduleId)
       if (!queued || conversionIntentKey(queued) !== conversionIntentKey(ticket.intent)) return { kind: "held", reason: "intent_changed" }
       const key = failure.category === "conflict" ? SCHEDULE_META_KEYS.conflicts : SCHEDULE_META_KEYS.errors
       const stored = await db.meta.get(key)
@@ -59,15 +42,15 @@ const conversionPort: ConversionConsumerPort = {
       if (!records.some(row => conversionCanonical(row) === conversionCanonical(candidate))) {
         await db.meta.put({ key, value: [...records, conversionCopy(candidate)] })
       }
-      await checkLease(ticket.lease)
+      await assertScheduleLease(ticket.lease)
       return { kind: failure.category === "conflict" ? "conflict" : "held", reason: failure.reason }
     })
   },
   async prepare(id) {
     const lease = await captureSyncContext()
     return db.transaction("r", db.schedules, db.entries, db.meta, async () => {
-      await checkLease(lease)
-      const queued = await checkedQueue(lease.ownerUserId), intent = queued.find(row => row.scheduleId === id)
+      await assertScheduleLease(lease)
+      const queued = await readCheckedConversionQueue(lease.ownerUserId), intent = queued.find(row => row.scheduleId === id)
       const source = await db.schedules.get(id)
       if (!intent || !source || !isBackupSchedule(source) || source.status !== "converted") throw new Error("转换意图或终态来源缺失")
       const ticket = { lease, intent: conversionCopy(intent) }
@@ -77,15 +60,15 @@ const conversionPort: ConversionConsumerPort = {
   },
   async verify(ticket) {
     await db.transaction("r", db.meta, async () => {
-      await checkLease(ticket.lease)
-      const intent = (await checkedQueue(ticket.lease.ownerUserId)).find(row => row.scheduleId === ticket.intent.scheduleId)
+      await assertScheduleLease(ticket.lease)
+      const intent = (await readCheckedConversionQueue(ticket.lease.ownerUserId)).find(row => row.scheduleId === ticket.intent.scheduleId)
       if (!intent || conversionIntentKey(intent) !== conversionIntentKey(ticket.intent)) throw new Error("首次转换意图已变化")
     })
   },
   async acknowledge(ticket, ack) {
     return db.transaction("rw", db.schedules, db.entries, db.meta, async () => {
-      await checkLease(ticket.lease)
-      const queue = await checkedQueue(ticket.lease.ownerUserId)
+      await assertScheduleLease(ticket.lease)
+      const queue = await readCheckedConversionQueue(ticket.lease.ownerUserId)
       const intent = queue.find(row => row.scheduleId === ticket.intent.scheduleId)
       if (!intent || conversionIntentKey(intent) !== conversionIntentKey(ticket.intent)) return { kind: "held", reason: "intent_changed" }
       const source = await db.schedules.get(intent.scheduleId), entry = await db.entries.get(intent.scheduleId)
@@ -104,9 +87,10 @@ const conversionPort: ConversionConsumerPort = {
       const exactSourceRevision = conversionUtc(source.clientUpdatedAt) === ack.schedule.clientUpdatedAt
       await db.schedules.put({ ...source, serverUpdatedAt: ack.schedule.serverUpdatedAt,
         dirty: exactSourceRevision ? 0 : source.dirty })
+      await rememberScheduleServerState(ticket.lease, ack.schedule)
       await db.meta.put({ key: SCHEDULE_META_KEYS.conversions,
         value: queue.filter(row => row.scheduleId !== intent.scheduleId) })
-      await checkLease(ticket.lease)
+      await assertScheduleLease(ticket.lease)
       return { kind: "confirmed", reason: exactSourceRevision ? "first_intent" : "source_revision_held" }
     })
   },
