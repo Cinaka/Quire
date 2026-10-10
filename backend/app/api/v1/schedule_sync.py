@@ -1,4 +1,4 @@
-"""P4-only push/changes: independent transactions and committed account watermarks."""
+"""P4 push/changes: pending snapshots or sparse terminal deletion, separate commits."""
 
 import uuid
 from datetime import datetime, timezone
@@ -17,6 +17,10 @@ from app.db.session import get_db
 from app.models.schedule import Schedule
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
+from app.services.schedule_deletion import (
+    TerminalScheduleDeletionRequest,
+    update_terminal_deletion,
+)
 from app.services.schedules import (
     PendingScheduleRequest,
     ScheduleWriteOwner,
@@ -36,6 +40,17 @@ class SchedulePushRequest(BaseModel):
 
 
 class PendingPushItem(PendingScheduleRequest):
+    id: uuid.UUID
+
+    @field_validator("id")
+    @classmethod
+    def uuid_v7(cls, value: uuid.UUID) -> uuid.UUID:
+        if value.version != 7:
+            raise ValueError("预简来源必须为UUID v7")
+        return value
+
+
+class TerminalDeletionPushItem(TerminalScheduleDeletionRequest):
     id: uuid.UUID
 
     @field_validator("id")
@@ -101,14 +116,19 @@ async def push_schedules(
             results.append(result)
             continue
         try:
-            item = PendingPushItem.model_validate(raw)
+            item = (TerminalDeletionPushItem.model_validate(raw)
+                    if isinstance(raw, dict) and raw.get("status") == "converted"
+                    else PendingPushItem.model_validate(raw))
         except ValidationError:
             results.append(result)
             continue
         result.id = item.id
         result.submitted_client_updated_at = item.client_updated_at
         try:
-            row, outcome = await upsert_schedule(db, owner, item.id, item)
+            if isinstance(item, TerminalDeletionPushItem):
+                row, outcome = await update_terminal_deletion(db, owner, item.id, item)
+            else:
+                row, outcome = await upsert_schedule(db, owner, item.id, item)
             # Pin response before commit/rollback can expire database attributes.
             result.current = to_response(row) if row is not None else None
             if outcome == "applied":
@@ -134,6 +154,9 @@ async def push_schedules(
                         "conflict": "相同修订包含不同内容，请明确取舍",
                         "terminal": "来源已转简，pending上行不能覆盖或重置终态",
                         "not_found": "预简不存在或不可写",
+                        "not_terminal": "来源尚未转简，未执行终态删除写入",
+                        "invalid_state": "来源转换关系异常，未执行删除恢复",
+                        "source_revision": "来源修订已变化，未执行旧版本删除恢复",
                     }.get(outcome, "预简未确认保存")
         except Exception as error:
             interrupted = not await clean_transaction(db)

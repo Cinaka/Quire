@@ -1,4 +1,4 @@
-"""P4 schedule queries and pending writes; sync/convert routes are added separately."""
+"""P4 queries, pending snapshots, and sparse terminal deletion writes."""
 
 import uuid
 from datetime import date, datetime
@@ -17,7 +17,11 @@ from app.db.session import get_db
 from app.models.schedule import Schedule
 from app.models.user import User
 from app.schemas.envelope import Envelope, Page, ok, paged
-from app.services.schedules import PendingScheduleRequest, upsert_schedule
+from app.services.schedule_deletion import (
+    TerminalScheduleDeletionRequest,
+    update_terminal_deletion,
+)
+from app.services.schedules import PendingScheduleRequest, ScheduleWriteOwner, upsert_schedule
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 ScheduleStatus = Literal["pending", "converted"]
@@ -111,24 +115,32 @@ async def get_schedule(
 @router.put("/{schedule_id}", response_model=Envelope[ScheduleResponse])
 async def put_schedule(
     schedule_id: uuid.UUID,
-    body: PendingScheduleRequest,
+    body: PendingScheduleRequest | TerminalScheduleDeletionRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if schedule_id.version != 7:
         raise HTTPException(status_code=422, detail="预简来源必须为UUID v7")
     try:
-        row, outcome = await upsert_schedule(db, user, schedule_id, body)
+        if isinstance(body, TerminalScheduleDeletionRequest):
+            row, outcome = await update_terminal_deletion(
+                db, ScheduleWriteOwner(user.id), schedule_id, body,
+            )
+        else:
+            row, outcome = await upsert_schedule(db, user, schedule_id, body)
         if outcome == "not_found" or row is None:
             await db.rollback()
             raise HTTPException(status_code=404, detail="预简不存在")
         # Snapshot BEFORE rollback/commit can expire ORM attributes in AsyncSession.
         current = to_response(row)
-        if outcome in {"stale", "conflict", "terminal"}:
+        if outcome not in {"applied", "replayed"}:
             messages = {
                 "stale": "服务端已有更新预简版本",
                 "conflict": "同一修订包含不同预简内容，请明确取舍",
                 "terminal": "预简已转简，不能通过pending写入修改或恢复状态",
+                "not_terminal": "来源尚未转简，请使用pending快照写入",
+                "invalid_state": "转换关系异常，未修改来源删除标记",
+                "source_revision": "来源修订已变化，未执行旧版本删除或恢复",
             }
             await db.rollback()
             return JSONResponse(status_code=409, content=jsonable_encoder({
