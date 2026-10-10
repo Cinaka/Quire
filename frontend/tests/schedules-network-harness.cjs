@@ -21,6 +21,7 @@ function networkHarness(serve) {
     interceptors: { request: { use: fn => { authorize = fn } },
       response: { use: (ok, fail) => { success = ok; failure = fail } } },
     post: (url, data, options) => send({ url, data, headers: {}, ...options }),
+    get: (url, options) => send({ url, headers: {}, ...options }),
     request: config => send(config),
   }
   const axios = { create: () => http, post: async () => {

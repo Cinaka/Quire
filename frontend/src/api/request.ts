@@ -200,3 +200,20 @@ export async function postPinnedSchedule<T>(
   }
   return res.data.data
 }
+
+/** P4 changes GET pins the caller's original token generation, just like its POST. */
+export async function getPinnedScheduleChanges<T>(
+  params: unknown, lease: { ownerUserId: string; tokenGeneration: number },
+): Promise<T> {
+  if (!lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0) {
+    throw new ApiError(-1, "日程拉取登录租约无效")
+  }
+  const options: AxiosRequestConfig & { _syncOwner: string; _tokenGeneration: number } = {
+    params, _syncOwner: lease.ownerUserId, _tokenGeneration: lease.tokenGeneration,
+  }
+  const res = await http.get<Envelope<T>>("/schedules/sync/changes", options)
+  if (accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
+    throw new ApiError(-1, "旧日程拉取响应已失效")
+  }
+  return res.data.data
+}
