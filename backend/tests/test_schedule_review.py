@@ -20,6 +20,40 @@ def saved(row):
     return {column.name: deepcopy(getattr(row, column.name)) for column in row.__table__.columns}
 
 
+
+def assert_review_private_fields(data):
+    forbidden = {"confirmed", "created", "fingerprint", "converted_receipt", "user_id"}
+    assert forbidden.isdisjoint(data)
+    for name in ["schedule", "entry"]:
+        resource = data.get(name)
+        if resource is not None:
+            assert isinstance(resource, dict)
+            assert forbidden.isdisjoint(resource)
+
+
+def test_privacy_assertion_allows_created_at_and_user_text():
+    data = {
+        "schedule": {"created_at": "2026-10-08T10:00:00Z", "title": "created user_id"},
+        "entry": {
+            "created_at": "2026-10-08T10:00:00Z", "title": "confirmed fingerprint",
+            "content": {"doc": {"text": "converted_receipt created"}},
+        },
+    }
+    assert_review_private_fields(data)
+
+
+@pytest.mark.parametrize("level", ["root", "schedule", "entry"])
+@pytest.mark.parametrize(
+    "field", ["confirmed", "created", "fingerprint", "converted_receipt", "user_id"],
+)
+def test_privacy_assertion_rejects_actual_protocol_fields(level, field):
+    data = {"schedule": {"created_at": "keep"}, "entry": {"created_at": "keep"}}
+    target = data if level == "root" else data[level]
+    target[field] = "must not expose"
+    with pytest.raises(AssertionError):
+        assert_review_private_fields(data)
+
+
 def test_pending_get_does_not_convert_write_or_allocate_receipt():
     with api_client([stored()]) as (client, db):
         before = saved(db.session.get(Schedule, ID))
@@ -43,8 +77,8 @@ def test_known_terminal_snapshot_is_repeatable_private_and_read_only():
         assert data["read_only"] and data["reviewable"] and data["receipt_known"]
         assert data["reason"] == "terminal_review" and data["entry_state"] == "active"
         assert data["entry"]["id"] == data["entry"]["from_schedule_id"] == str(ID)
-        for private in ["confirmed", "created", "fingerprint", "converted_receipt", "user_id"]:
-            assert private not in str(data)
+        assert_review_private_fields(data)
+        assert "created_at" in data["schedule"] and "created_at" in data["entry"]
         assert success(client.get(URL)) == data
         assert (
             saved(db.session.get(Schedule, ID)), saved(db.session.get(DiaryEntry, ID)),
