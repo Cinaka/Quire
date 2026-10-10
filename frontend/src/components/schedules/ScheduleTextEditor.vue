@@ -45,6 +45,7 @@ const editor = useEditor({
     },
   },
   onUpdate({ editor: current }) {
+    if (props.disabled || initialError) return
     const content: EntryContent = { schemaVersion: CONTENT_SCHEMA_VERSION, doc: current.getJSON() as unknown as TiptapDoc }
     try { assertScheduleEditorContent(content); emit("change", content) } catch (error) {
       warning.value = String(error)
@@ -60,7 +61,7 @@ const buttons = [
   { label: "有序列表", active: () => editor.value?.isActive("orderedList") ?? false, run: () => editor.value?.chain().focus().toggleOrderedList().run() },
   { label: "引用", active: () => editor.value?.isActive("blockquote") ?? false, run: () => editor.value?.chain().focus().toggleBlockquote().run() },
 ]
-watch(() => props.disabled, value => editor.value?.setEditable(!value && !initialError))
+watch(() => props.disabled, value => editor.value?.setEditable(!value && !initialError, false))
 onMounted(() => { if (initialError) emit("invalid", initialError) })
 onBeforeUnmount(() => editor.value?.destroy())
 </script>

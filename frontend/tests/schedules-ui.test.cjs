@@ -223,3 +223,49 @@ test("failed formal save can be followed by explicit safety retry and leave with
   assert.equal(await p.change(b), true); assert.equal(await p.prepareLeave(), true)
   assert.ok((await journal(h)).draft); assert.equal(h.stores.schedules.rows.size, 0)
 })
+
+test("editor lock/unlock cannot recreate an identical safety draft or overwrite the business-saved notice", async () => {
+  const vm = require("node:vm")
+  const component = read("components/schedules/ScheduleTextEditor.vue")
+  const fixedWatch = component.match(/^watch\(\(\) => props.disabled[^\n]+/m)[0]
+  assert.match(fixedWatch, /setEditable\(!value && !initialError, false\)/)
+  for (const muted of [false, true]) {
+    const h = harness(); await h.db.schedules.put(schedule()); const p = h.panels(await h.editors.openExisting(ID))
+    const props = { disabled: false }; let callback; let disabled = false; const callbacks = []
+    const editor = { value: { setEditable(_editable, emitUpdate = true) {
+      if (emitUpdate) callbacks.push(p.change(body({ title: "正式保存的修改" })))
+    } } }
+    const watchCode = muted ? fixedWatch : fixedWatch.replace(", false)", ")")
+    new vm.Script(watchCode).runInNewContext({ props, editor, initialError: "", watch(_getter, handler) { callback = handler } })
+    const stop = p.subscribe(() => {
+      const state = p.inspect(); const next = state.busy || state.closed
+      if (next !== disabled) { disabled = next; props.disabled = next; callback(next) }
+    })
+    await p.change(body({ title: "正式保存的修改" })); assert.equal(await p.submit(), true)
+    await Promise.all(callbacks)
+    assert.equal((await h.db.schedules.get(ID)).title, "正式保存的修改")
+    if (muted) {
+      assert.equal((await journal(h)).draft, null)
+      assert.match(p.inspect().notice, /预简已保存本机/)
+    } else {
+      assert.ok((await journal(h)).draft)
+      assert.equal((await h.drafts.read()).status, "alreadySaved")
+      assert.match(p.inspect().notice, /尚未保存为预简/)
+    }
+    stop(); p.dispose()
+  }
+})
+test("disabled editor update events are ignored, while an actual unlocked content edit still emits a change", () => {
+  const vm = require("node:vm")
+  const component = read("components/schedules/ScheduleTextEditor.vue")
+  const handler = component.match(/onUpdate\(\{ editor: current \}\) \{([\s\S]*?)\n  \},/)[1]
+    .replace("const content: EntryContent =", "const content =").replace(" as unknown as TiptapDoc", "")
+  const props = { disabled: true }; let reads = 0; const emitted = []
+  const context = { props, initialError: "", CONTENT_SCHEMA_VERSION: 1, warning: { value: "" },
+    current: { getJSON() { reads++; return content("真实输入").doc } },
+    assertScheduleEditorContent: loadTS("shared/scheduleEditorContent.ts").assertScheduleEditorContent,
+    emit(...args) { emitted.push(args) } }
+  const update = new vm.Script("(function () {" + handler + "})").runInNewContext(context)
+  update(); assert.equal(reads, 0); assert.equal(emitted.length, 0)
+  props.disabled = false; update(); assert.equal(reads, 1); assert.equal(emitted.length, 1); assert.equal(emitted[0][0], "change")
+})
