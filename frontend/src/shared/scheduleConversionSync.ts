@@ -7,6 +7,22 @@ export interface ConversionLease { ownerUserId: string; generation: string; toke
 export interface ConversionTicket { lease: ConversionLease; intent: ScheduleConversion }
 export interface ConversionAck { schedule: Schedule; entry: Entry | null; entryState: "active" | "deleted" | "purged" }
 export interface ConversionConsumeResult { kind: "confirmed" | "held" | "conflict"; reason: string }
+export interface ConversionFailure {
+  stage: "source" | "convert"
+  category: "conflict" | "error"
+  reason: string
+  serverSchedule: Schedule | null
+  serverEntry: Entry | null
+  firstEntryDate: string | null
+  firstEntryDeleted: boolean | null
+}
+export class ConversionTransportError extends Error {
+  readonly failure: ConversionFailure
+  constructor(failure: ConversionFailure) {
+    super("日程请求未确认，请保留首次意图")
+    this.failure = conversionCopy(failure)
+  }
+}
 export interface ConversionTransport {
   pushSource(body: unknown, lease: ConversionLease): Promise<unknown>
   convert(id: string, body: unknown, lease: ConversionLease): Promise<unknown>
@@ -15,6 +31,7 @@ export interface ConversionConsumerPort {
   prepare(id: string): Promise<ConversionTicket>
   verify(ticket: ConversionTicket): Promise<void>
   acknowledge(ticket: ConversionTicket, ack: ConversionAck): Promise<ConversionConsumeResult>
+  reject(ticket: ConversionTicket, failure: ConversionFailure): Promise<ConversionConsumeResult>
 }
 
 export function conversionCopy<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T }
@@ -144,17 +161,65 @@ export function createScheduleConversionConsumer(port: ConversionConsumerPort, t
   return { async consumeOne(id: string): Promise<ConversionConsumeResult> {
     if (busy.has(id)) return { kind: "held", reason: "busy" }
     busy.add(id)
+    let ticket: ConversionTicket | undefined
     try {
-      const ticket = conversionCopy(await port.prepare(id)), request = prepareConversionRequest(ticket)
+      ticket = conversionCopy(await port.prepare(id))
+      const request = prepareConversionRequest(ticket)
       await port.verify(ticket)
       const source = await transport.pushSource({ schedules: [request.source] }, conversionCopy(ticket.lease))
       await port.verify(ticket); assertConversionSourcePush(source, ticket)
       const raw = await transport.convert(id, request.convert, conversionCopy(ticket.lease))
       await port.verify(ticket)
       return await port.acknowledge(ticket, conversionCopy(parseConversionAck(raw, ticket)))
-    } catch {
+    } catch (error) {
+      if (ticket && error instanceof ConversionTransportError) {
+        try {
+          await port.verify(ticket)
+          return await port.reject(ticket, conversionCopy(error.failure))
+        } catch { /* stale context or failed candidate storage must retain the intention */ }
+      }
       // Even a server commit followed by timeout is not permission to remove the intention.
       return { kind: "held", reason: "unconfirmed" }
     } finally { busy.delete(id) }
   } }
+}
+
+
+const SOURCE_FAILURES = new Set(["stale", "conflict", "not_found", "invalid", "retry", "storage", "aborted", "not_terminal", "invalid_state", "source_revision"])
+const CONVERT_FAILURES = new Set(["identity_conflict", "invalid_state", "source_deleted", "source_revision", "conversion_revision", "source_content", "source_snapshot", "receipt_unknown", "intent_conflict"])
+export function conversionFailure(stage: ConversionFailure["stage"], reason: string): ConversionFailure {
+  return { stage, category: "error", reason, serverSchedule: null, serverEntry: null,
+    firstEntryDate: null, firstEntryDeleted: null }
+}
+export function parseConversionSourceFailure(raw: unknown, id: string): ConversionFailure | null {
+  const body = record(raw)
+  if (typeof body.interrupted !== "boolean" || !Array.isArray(body.schedules) || body.schedules.length !== 1) throw new Error("来源回执无效")
+  const r = record(body.schedules[0])
+  if (r.id !== id || r.index !== 0) throw new Error("来源失败回执错位")
+  if (!body.interrupted && (r.status === "applied" || (r.status === "error" && r.reason === "terminal"))) return null
+  if (!["stale", "error"].includes(String(r.status)) || typeof r.reason !== "string" || !SOURCE_FAILURES.has(r.reason) ||
+      (r.status === "stale") !== (r.reason === "stale")) throw new Error("来源失败原因不受支持")
+  return { ...conversionFailure("source", r.reason), category: ["stale", "conflict", "source_revision", "invalid_state"].includes(r.reason) ? "conflict" : "error",
+    serverSchedule: r.current === null ? null : wireSchedule(r.current, id) }
+}
+export function parseConversionRejection(raw: unknown, id: string): ConversionFailure {
+  // Lock timeout/deadlock has no candidate DTO; don't invent one from an error message.
+  if (raw === null || raw === undefined) return conversionFailure("convert", "retry")
+  const r = record(raw)
+  if (r.confirmed !== false || r.created !== false || typeof r.reason !== "string" || !CONVERT_FAILURES.has(r.reason)) throw new Error("转换失败回执无效")
+  const source = r.schedule === null ? null : wireSchedule(r.schedule, id)
+  const entry = r.entry === null ? null : wireEntry(r.entry, id)
+  if ((r.entry_state === "active" && (!entry || entry.isDeleted)) ||
+      (r.entry_state === "deleted" && (!entry || !entry.isDeleted)) ||
+      (r.entry_state === "purged" && entry !== null) ||
+      (r.entry_state === "unknown" && entry !== null) ||
+      !["active", "deleted", "purged", "unknown"].includes(String(r.entry_state))) throw new Error("失败日记状态不一致")
+  const day = r.first_entry_date
+  if (day !== null) {
+    if (typeof day !== "string") throw new Error("首次日期无效")
+    assertScheduleDate(day)
+  }
+  if ((day === null && r.first_entry_deleted !== null) || (day !== null && typeof r.first_entry_deleted !== "boolean")) throw new Error("首次摘要不一致")
+  return { stage: "convert", category: "conflict", reason: r.reason, serverSchedule: source, serverEntry: entry,
+    firstEntryDate: day as string | null, firstEntryDeleted: r.first_entry_deleted as boolean | null }
 }

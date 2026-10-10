@@ -25,16 +25,19 @@ export interface Envelope<T> {
 export class ApiError extends Error {
   readonly code: number
   readonly status?: number
+  /** Only explicitly pinned P4 HTTP 409 requests retain candidate data in memory. */
+  readonly data?: unknown
 
-  constructor(code: number, message: string, status?: number) {
+  constructor(code: number, message: string, status?: number, data?: unknown) {
     super(message)
     this.name = "ApiError"
     this.code = code
     this.status = status
+    this.data = data
   }
 }
 
-type RetriableConfig = InternalAxiosRequestConfig & { _retried?: boolean; _syncOwner?: string; _tokenGeneration?: number }
+type RetriableConfig = InternalAxiosRequestConfig & { _retried?: boolean; _syncOwner?: string; _tokenGeneration?: number; _retainScheduleConflict?: boolean }
 
 export const http: AxiosInstance = axios.create({
   // 开发走 Vite proxy、生产走 Nginx 反代，两者都是同源，所以这里只有路径。
@@ -114,7 +117,8 @@ http.interceptors.response.use(
     const body = res.data
     // 有 code 字段就按统一响应体校验；文件流等无 envelope 的响应原样放过。
     if (body && typeof body.code === "number" && body.code !== 0) {
-      throw new ApiError(body.code, body.message || "请求失败", res.status)
+      throw new ApiError(body.code, body.message || "请求失败", res.status,
+        (res.config as RetriableConfig)?._retainScheduleConflict && res.status === 409 && body.code === 409 ? body.data : undefined)
     }
     return res
   },
@@ -145,7 +149,8 @@ http.interceptors.response.use(
 
     const body = error.response?.data
     if (body && typeof body.code === "number") {
-      throw new ApiError(body.code, body.message || error.message, status)
+      throw new ApiError(body.code, body.message || error.message, status,
+        config?._retainScheduleConflict && status === 409 && body.code === 409 ? body.data : undefined)
     }
     throw new ApiError(-1, error.message || "网络异常", status)
   },
@@ -174,4 +179,24 @@ export async function del<T>(url: string, body?: unknown): Promise<T> {
 
 function syncRequestOptions(syncOwner?: string): AxiosRequestConfig & { _syncOwner?: string; _tokenGeneration?: number } {
   return syncOwner ? { _syncOwner: syncOwner, _tokenGeneration: tokenGeneration() } : {}
+}
+
+
+/** Internal P4-only POST: pin the supplied generation, never recapture it at send time. */
+export async function postPinnedSchedule<T>(
+  url: string, body: unknown, lease: { ownerUserId: string; tokenGeneration: number },
+): Promise<T> {
+  const id = "[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+  if (!new RegExp(`^/schedules/(?:sync/push|${id}/convert)$`).test(url) ||
+      !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0) {
+    throw new ApiError(-1, "日程请求路径或登录租约无效")
+  }
+  const options: AxiosRequestConfig & { _syncOwner: string; _tokenGeneration: number; _retainScheduleConflict: boolean } = {
+    _syncOwner: lease.ownerUserId, _tokenGeneration: lease.tokenGeneration, _retainScheduleConflict: true,
+  }
+  const res = await http.post<Envelope<T>>(url, body, options)
+  if (accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
+    throw new ApiError(-1, "旧日程响应已失效")
+  }
+  return res.data.data
 }
