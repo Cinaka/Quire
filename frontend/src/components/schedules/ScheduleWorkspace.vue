@@ -103,7 +103,11 @@ onMounted(() => {
   document.addEventListener("visibilitychange", visibility)
 })
 watch(() => props.contextKey, () => { workspace.invalidate(); emit("context-expired") }, { flush: "sync" })
-defineExpose({ prepareLeave })
+function canCompose(): boolean {
+  const current = workspace.inspect()
+  return workspace.canLeave() && !current.loading && !current.prompt && !current.expired
+}
+defineExpose({ prepareLeave, refresh: workspace.refresh, canCompose })
 onBeforeUnmount(() => {
   if (timer !== undefined) window.clearInterval(timer)
   window.removeEventListener("focus", refreshOnFocus)

@@ -297,7 +297,7 @@ test("work area writes leave P2 metadata, ordinary diary draft, schema and backu
 test("workspace component explicitly injects a port/context key, guards leave and never navigates on conversion automatically", () => {
   const component = source("components/schedules/ScheduleWorkspace.vue")
   assert.match(component, /port: ScheduleWorkspacePort; contextKey: string/); assert.match(component, /flush: "sync"/)
-  assert.match(component, /editorRef\.value\.prepareLeave/); assert.match(component, /defineExpose\(\{ prepareLeave \}\)/)
+  assert.match(component, /editorRef\.value\.prepareLeave/); assert.match(component, /defineExpose\(\{ prepareLeave, refresh: workspace.refresh, canCompose \}\)/)
   assert.match(component, /workspace\.openResultEntry/); assert.match(component, /value="original"/); assert.match(component, /:max="state.today"/)
   assert.doesNotMatch(component, /@\/repo|scheduleWorkspaceRepo|useRouter|router\.|syncNow|beforeunload/)
 })
