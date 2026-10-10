@@ -1,4 +1,5 @@
 import { planFirstSave } from "./firstSave"
+import { createScheduleDiaryEditor, type ScheduleDiaryEditorSession } from "./scheduleDiaryEditor"
 import type { DiaryTarget, FirstSaveFrame, FirstSavePlan, FirstSaveResult, ScheduleHostContext, ScheduleHostPort } from "./scheduleHostTypes"
 import type { EntryUpdateDto, LocalDate } from "./types"
 import type { ScheduleWorkspacePort } from "./scheduleWorkspace"
@@ -9,6 +10,7 @@ const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 export function createScheduleHost(port: ScheduleHostPort, clock: () => LocalDate = todayLocal) {
   let context: ScheduleHostContext | null = null
   let workspace: ScheduleWorkspacePort | null = null
+  let targetEditor: ScheduleDiaryEditorSession | null = null
   let stopWatch: (() => void) | null = null
   let active = true
   let request = 0
@@ -20,6 +22,7 @@ export function createScheduleHost(port: ScheduleHostPort, clock: () => LocalDat
   function invalidate(reason = "宿主上下文已失效，请重新进入；原存储内容不自动清除"): void {
     if (!active) return
     active = false; request += 1; stopWatch?.(); stopWatch = null; workspace = null
+    targetEditor?.invalidate(reason)
     state.expired = true; state.ready = false; state.busy = false; state.error = reason
     state.frame = null; state.plan = null; state.target = null; state.firstResult = null; notify()
   }
@@ -61,6 +64,7 @@ export function createScheduleHost(port: ScheduleHostPort, clock: () => LocalDat
   return {
     inspect() { return copy(state) },
     workspacePort(): ScheduleWorkspacePort | null { return workspace },
+    diaryEditor(): ScheduleDiaryEditorSession | null { return targetEditor },
     contextKey(): string { return context ? JSON.stringify(context) : "" },
     subscribe(listener: () => void): () => void { if (active) listeners.add(listener); return () => { listeners.delete(listener) } },
     async initialize(): Promise<boolean> {
@@ -84,6 +88,7 @@ export function createScheduleHost(port: ScheduleHostPort, clock: () => LocalDat
     },
     async confirmFirstSave(): Promise<boolean> {
       if (!state.plan) return false
+      if (targetEditor && !targetEditor.inspect().closed) { state.error = "请先保存或明确处理当前日记编辑会话"; notify(); return false }
       const plan = copy(state.plan)
       return run(captured => port.firstSave(captured, plan), result => {
         state.firstResult = copy(result); state.frame = null; state.plan = null
@@ -92,10 +97,25 @@ export function createScheduleHost(port: ScheduleHostPort, clock: () => LocalDat
     },
     async openTarget(id: string): Promise<boolean> {
       if (!active || !context || !state.ready || state.busy) return false
-      state.target = null; notify()
-      return run(captured => port.openDiary(captured, id), result => { state.target = copy(result) })
+      if (targetEditor && !targetEditor.inspect().closed) { state.error = "请先保存或明确处理当前日记编辑会话"; notify(); return false }
+      return run(captured => port.openDiary(captured, id), result => { targetEditor?.dispose(); targetEditor = null; state.target = copy(result) })
     },
+    async openTargetEditor(id: string): Promise<boolean> {
+      if (!active || !context || !state.ready || state.busy) return false
+      if (targetEditor && !targetEditor.inspect().closed) { state.error = "请先保存或明确处理当前日记编辑会话"; notify(); return false }
+      return run(async captured => {
+        const target = await port.openDiary(captured, id)
+        const pin = copy(captured)
+        return { target, editor: createScheduleDiaryEditor(target, {
+          validate: () => port.validate(copy(pin)),
+          save: (lease, update) => port.saveDiary(copy(pin), lease, update),
+        }, clock) }
+      }, result => { targetEditor?.dispose(); targetEditor = result.editor; state.target = copy(result.target) })
+    },
+    async prepareTargetLeave(): Promise<boolean> { if (state.busy) return false; return targetEditor ? targetEditor.prepareLeave() : true },
     async saveTarget(update: EntryUpdateDto): Promise<boolean> {
+      if (!active || !context || !state.ready || state.busy) return false
+      if (targetEditor) { state.error = "目标编辑已绑定会话，请通过会话保存，不能绕过未保存输入与修订保护"; notify(); return false }
       if (!state.target) return false
       let snapshot: EntryUpdateDto
       try { snapshot = structuredClone(update) } catch (error) { failed(error); return false }
@@ -109,6 +129,6 @@ export function createScheduleHost(port: ScheduleHostPort, clock: () => LocalDat
       try { await port.validate(copy(context)); return active } catch (error) { if (active) failed(error); return false }
     },
     invalidate,
-    dispose(): void { invalidate("宿主已关闭。"); listeners.clear() },
+    dispose(): void { invalidate("宿主已关闭。"); targetEditor?.dispose(); listeners.clear() },
   }
 }
