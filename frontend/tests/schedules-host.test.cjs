@@ -291,8 +291,8 @@ test("isolation preflight accepts only a distinct loopback origin and performs n
 test("new host remains injected and unmounted, never jumps to legacy diary editor or starts background sync", () => {
   const component = source("components/schedules/ScheduleHost.vue")
   assert.match(component, /port: ScheduleHostPort/); assert.match(component, /workspaceRef.value\.canCompose/)
-  assert.match(component, /host\.openTarget\(id\)/); assert.match(component, /defineExpose\(\{ prepareLeave, saveTarget \}\)/)
-  assert.doesNotMatch(component, /useRouter|router\.|DiaryEditor|insertImages|localScheduleHostRepo|@\/repo/)
+  assert.match(component, /host\.openTargetEditor\(id\)/); assert.match(component, /defineExpose\(\{ prepareLeave, saveTarget \}\)/)
+  assert.doesNotMatch(component, /useRouter|router\.|\bDiaryEditor\b|insertImages|localScheduleHostRepo|@\/repo/)
   for (const p of ["App.vue", "router/index.ts", "views/ScheduleView.vue", "repo/index.ts"]) assert.doesNotMatch(source(p), /ScheduleHost|scheduleHostRepo|scheduleFirstSaveRepo|scheduleDiaryTargetRepo/)
 })
 test("target opening refuses malformed metadata while retaining original record bytes", async () => {

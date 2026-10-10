@@ -1,8 +1,8 @@
 <template>
   <div>
-    <p class="hint">预简仅支持文字与基础排版；图片、标签、心情和天气请在转简后添加。</p>
+    <p class="hint">{{ diaryMode ? "此面板编辑兼容文本；图片上传尚未接线，不会上传或导入图片。" : "预简仅支持文字与基础排版；图片、标签、心情和天气请在转简后添加。" }}</p>
     <p v-if="warning" role="alert" class="warning">{{ warning }}</p>
-    <div v-if="editor && !initialError" class="toolbar" aria-label="预简文字排版">
+    <div v-if="editor && !initialError" class="toolbar" :aria-label="diaryMode ? '日记文字排版' : '预简文字排版'">
       <button v-for="button in buttons" :key="button.label" type="button" :disabled="disabled" :aria-pressed="button.active()" @click="button.run()">{{ button.label }}</button>
     </div>
     <EditorContent v-if="!initialError" :editor="editor" />
@@ -18,7 +18,7 @@ import { assertScheduleEditorContent } from "@/shared/scheduleEditorContent"
 import { CONTENT_SCHEMA_VERSION, type EntryContent, type TiptapDoc } from "@/shared/types"
 
 // initialContent仅用于挂载；父组件必须按编辑会话key重建，不能用新来源静默替换正文。
-const props = defineProps<{ initialContent: EntryContent | null; disabled?: boolean }>()
+const props = defineProps<{ initialContent: EntryContent | null; disabled?: boolean; diaryMode?: boolean }>()
 const emit = defineEmits<{ change: [EntryContent]; invalid: [string] }>()
 let initialError = ""
 try { assertScheduleEditorContent(props.initialContent) } catch (error) { initialError = String(error) }
@@ -27,18 +27,18 @@ const editor = useEditor({
   content: (initialError ? "" : props.initialContent?.doc ?? "") as Content,
   extensions: buildScheduleExtensions(), editable: !props.disabled && !initialError,
   editorProps: {
-    attributes: { class: "prose-schedule", "aria-label": "预简正文" },
+    attributes: { class: "prose-schedule", "aria-label": props.diaryMode ? "日记正文" : "预简正文" },
     handlePaste(_view, event) {
       const data = event.clipboardData
       if (data?.files.length || /<img\b|data:image\//i.test(data?.getData("text/html") ?? "")) {
-        warning.value = "预简不接收图片或文件；请在转简后添加。"
+        warning.value = props.diaryMode ? "本面板尚不接收图片或文件；原图片不通过此编辑器重写。" : "预简不接收图片或文件；请在转简后添加。"
         return true
       }
       return false
     },
     handleDrop(_view, event) {
       if (event.dataTransfer?.files.length || /<img\b|data:image\//i.test(event.dataTransfer?.getData("text/html") ?? "")) {
-        warning.value = "预简不接收图片或文件；请在转简后添加。"
+        warning.value = props.diaryMode ? "本面板尚不接收图片或文件；原图片不通过此编辑器重写。" : "预简不接收图片或文件；请在转简后添加。"
         return true
       }
       return false
