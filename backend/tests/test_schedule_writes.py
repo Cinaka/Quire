@@ -92,7 +92,8 @@ def api_client(rows=(), *, authenticated=True, injected=None):
             CREATE TABLE schedules (
                 id BLOB PRIMARY KEY, user_id BLOB NOT NULL, remind_date DATE NOT NULL,
                 title VARCHAR(255), content JSON, content_text TEXT, status INTEGER NOT NULL,
-                converted_entry_id BLOB, converted_at DATETIME, client_updated_at DATETIME,
+                converted_entry_id BLOB, converted_at DATETIME, converted_receipt JSON,
+                client_updated_at DATETIME,
                 deleted_at DATETIME, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
             )
         """))

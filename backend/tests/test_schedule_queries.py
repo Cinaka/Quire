@@ -72,7 +72,8 @@ def api_client(rows=(), *, user_id=USER_ID, authenticated=True):
             CREATE TABLE schedules (
                 id BLOB PRIMARY KEY, user_id BLOB NOT NULL, remind_date DATE NOT NULL,
                 title VARCHAR(255), content JSON, content_text TEXT, status INTEGER NOT NULL,
-                converted_entry_id BLOB, converted_at DATETIME, client_updated_at DATETIME,
+                converted_entry_id BLOB, converted_at DATETIME, converted_receipt JSON,
+                client_updated_at DATETIME,
                 deleted_at DATETIME, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
             )
         """))
@@ -235,9 +236,9 @@ def test_nullable_legacy_text_and_unknown_content_are_not_destructively_rewritte
         assert data["content"] == unknown
 
 
-def test_invalid_write_and_push_are_rejected_and_conversion_remains_unimplemented():
+def test_invalid_write_push_and_conversion_are_rejected_without_database_reads():
     with api_client() as (client, db):
         error(client.put(f"/api/v1/schedules/{identity(1)}", json={}), 422)
-        error(client.post(f"/api/v1/schedules/{identity(1)}/convert", json={}), 404)
+        error(client.post(f"/api/v1/schedules/{identity(1)}/convert", json={}), 422)
         error(client.post("/api/v1/schedules/sync/push", json={}), 422)
         assert not db.statements

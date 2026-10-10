@@ -38,3 +38,4 @@ class Schedule(TimestampMixin, Base):
     converted_at: Mapped[datetime | None] = mapped_column(MySQLDateTime(fsp=3))
     client_updated_at: Mapped[datetime] = mapped_column(MySQLDateTime(fsp=3), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(MySQLDateTime(fsp=3))
+    converted_receipt: Mapped[dict | None] = mapped_column(JSON)

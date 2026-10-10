@@ -176,7 +176,8 @@ async def upsert_schedule(
             row = await locked_schedule(db, owner, schedule_id)
             if row is None:
                 return None, "not_found"
-    if row.status != 0 or row.converted_entry_id is not None or row.converted_at is not None:
+    if (row.status != 0 or row.converted_entry_id is not None or row.converted_at is not None
+            or row.converted_receipt is not None):
         return row, "terminal"
     if body.client_updated_at < row.client_updated_at:
         return row, "stale"
