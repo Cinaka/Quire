@@ -193,7 +193,10 @@ async def changes_schedules(
         await lock_schedule_owner(db, owner)
         head = await latest_schedule_revision(db, owner) or EMPTY_SYNC_TIME
         if (since is not None and since > head) or (until is not None and until > head):
-            raise HTTPException(status_code=409, detail="游标领先已提交日程水位，请保留本地状态核对")
+            raise HTTPException(
+                status_code=409,
+                detail="游标领先已提交日程水位，请保留本地状态核对",
+            )
         high_water = until if until is not None else head
         query = select(Schedule).where(
             Schedule.user_id == owner.id, Schedule.updated_at <= high_water,
