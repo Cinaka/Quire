@@ -51,7 +51,10 @@ def terminal(**changes):
 
 
 def snapshot(row):
-    return {column.name: deepcopy(getattr(row, column.name)) for column in Schedule.__table__}
+    return {
+        column.name: deepcopy(getattr(row, column.name))
+        for column in Schedule.__table__.columns
+    }
 
 
 def batch(client, items):
