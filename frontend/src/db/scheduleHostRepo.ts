@@ -1,7 +1,7 @@
 import { liveQuery } from "dexie"
 import { createScheduleEditorSession } from "@/shared/scheduleEditor"
 import { localScheduleDraftRepo } from "./scheduleDraftRepo"
-import type { ScheduleHostContext, ScheduleHostPort } from "@/shared/scheduleHostTypes"
+import type { ScheduleHostPort } from "@/shared/scheduleHostTypes"
 import { assertHostAuth, assertHostContext, captureHostContext, hostExpired, readHostOwner } from "./scheduleHostContext"
 import { createLocalScheduleWorkspaceRepo } from "./scheduleWorkspaceRepo"
 import { readFirstSaveFrame, commitFirstSave } from "./scheduleFirstSaveRepo"
