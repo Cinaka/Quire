@@ -63,7 +63,7 @@ const port: SchedulePullPort = {
           else reason="dirty_conflict"
         } else if (local?.status === "converted" && incoming.status !== "converted") reason="terminal_regression"
         else if (local?.status === "converted" && (!sameScheduleBusiness(local,incoming) ||
-          conversionUtc(local.convertedAt) !== incoming.convertedAt || conversionUtc(local.createdAt) !== incoming.createdAt)) reason="terminal_source_changed"
+          conversionUtc(base?.convertedAt ?? local.convertedAt) !== incoming.convertedAt || conversionUtc(base?.createdAt ?? local.createdAt) !== incoming.createdAt)) reason="terminal_source_changed"
         else if (local && conversionUtc(local.clientUpdatedAt) > incoming.clientUpdatedAt) reason="revision_regression"
         else if (local && conversionUtc(local.clientUpdatedAt) === incoming.clientUpdatedAt && !sameVersion(local,incoming)) reason="same_revision_conflict"
         if (!reason && incoming.status === "converted") {

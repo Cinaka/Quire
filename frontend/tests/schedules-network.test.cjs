@@ -142,17 +142,27 @@ test("possible post-commit timeout logs network error and never removes intent",
   assert.equal((await h.consumer.consumeOne(ID)).reason, "network")
   assert.equal((await queued(h)).length, 1); assert.equal(JSON.stringify(await log(h,"scheduleSyncErrors")).includes("Bearer-private"), false)
 })
-test("distinct old candidates remain and identical manual retry is deduplicated", async () => {
+test("distinct old candidates remain and an unresolved target conflict blocks replay", async () => {
   let version = "第一份云端候选"
   const h = await fixture({ serve: async (_h,url) => { if (url.endsWith("/push")) return ok(sourceSuccess())
     const c = conversionConflict(); c.entry.title = version; return rejected(c) } })
   await h.db.meta.put({ key: "scheduleConflicts", value: [{ scheduleId: OTHER_ID, kind: "old" }] })
-  await h.consumer.consumeOne(ID); await h.consumer.consumeOne(ID)
-  assert.equal((await log(h)).length, 2)
-  version = "第二份云端候选"; await h.consumer.consumeOne(ID)
-  const records = await log(h); assert.equal(records.length, 3)
-  assert.equal(records[1].serverEntry.title, "第一份云端候选"); assert.equal(records[2].serverEntry.title, version)
+  await h.consumer.consumeOne(ID)
+  const calls = h.net.calls.length
+  assert.equal((await h.consumer.consumeOne(ID)).kind, "held")
+  version = "第二份云端候选"
+  assert.equal((await h.consumer.consumeOne(ID)).kind, "held")
+  const records = await log(h); assert.equal(records.length, 2)
+  assert.equal(h.net.calls.length, calls)
+  assert.equal(records[0].kind, "old"); assert.equal(records[1].serverEntry.title, "第一份云端候选")
 })
+test("identical safe error retries are deduplicated without blocking conversion intent", async () => {
+  const h = await fixture({ serve: async () => { throw new Error("private timeout") } })
+  await h.consumer.consumeOne(ID); await h.consumer.consumeOne(ID)
+  assert.equal((await log(h,"scheduleSyncErrors")).length, 1)
+  assert.equal((await queued(h)).length, 1); assert.equal(h.net.calls.length, 2)
+})
+
 for (const mode of ["account", "epoch", "intent"]) {
   test(`late rejected response after ${mode} change cannot persist old candidate`, async () => {
     const h = await fixture({ serve: async (h,url) => {

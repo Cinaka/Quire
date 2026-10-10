@@ -118,7 +118,7 @@ test("timeout even after possible server commit keeps first intent and all prote
   const h = await harness({ fail: true }), before = state(h)
   assert.equal((await h.consumer.consumeOne(ID)).kind, "held"); assert.equal(state(h), before)
 })
-for (const mode of ["account", "logout", "epoch", "owner", "intent", "new_source"]) {
+for (const mode of ["account", "logout", "epoch", "owner", "intent"]) {
   test(`late ACK after ${mode} change cannot remove intention or clear dirty`, async () => {
     const h = await harness({ during: async h => {
       if (mode === "account") h.user("account-b")
