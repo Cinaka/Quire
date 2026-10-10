@@ -57,6 +57,9 @@ class ReadSession:
         self.statements.append(statement)
         return self.session.execute(statement)
 
+    async def rollback(self):
+        self.session.rollback()
+
 
 @contextmanager
 def api_client(rows=(), *, user_id=USER_ID, authenticated=True):
@@ -73,6 +76,12 @@ def api_client(rows=(), *, user_id=USER_ID, authenticated=True):
                 deleted_at DATETIME, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
             )
         """))
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE users (id BLOB PRIMARY KEY)"))
+        connection.execute(
+            text("INSERT INTO users (id) VALUES (:id)"),
+            [{"id": USER_ID.bytes}, {"id": OTHER_USER_ID.bytes}],
+        )
     previous = app.dependency_overrides.copy()
     try:
         with Session(engine, expire_on_commit=False) as session:

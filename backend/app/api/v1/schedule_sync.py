@@ -1,22 +1,27 @@
-"""P4-only push: independent per-item transactions, no P2 entities or cursors."""
+"""P4-only push/changes: independent transactions and committed account watermarks."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.schedules import ScheduleResponse, to_response
 from app.core.security import get_current_user
+from app.core.time import as_utc_naive
 from app.db.session import get_db
+from app.models.schedule import Schedule
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
 from app.services.schedules import (
     PendingScheduleRequest,
     ScheduleWriteOwner,
+    latest_schedule_revision,
+    lock_schedule_owner,
     server_revision,
     upsert_schedule,
 )
@@ -144,3 +149,89 @@ async def push_schedules(
     return ok(SchedulePushResponse(
         server_time=server_revision(), interrupted=interrupted, schedules=results,
     ))
+
+
+# Empty accounts don't acknowledge arbitrary wall-clock instants as sync cursors.
+EMPTY_SYNC_TIME = datetime(1000, 1, 1, tzinfo=timezone.utc).replace(tzinfo=None)
+
+
+class ScheduleChangesResponse(BaseModel):
+    server_time: datetime
+    sync_until: datetime
+    cursor_id: uuid.UUID | None
+    has_more: bool
+    schedules: list[ScheduleResponse]
+
+
+def cursor_time(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    value = as_utc_naive(value)
+    if value.year < 1000 or value.microsecond % 1000:
+        raise HTTPException(status_code=422, detail="日程游标必须为MySQL范围内的毫秒UTC时间")
+    return value
+
+
+@router.get("/changes")
+async def changes_schedules(
+    since: datetime | None = None,
+    after_id: uuid.UUID | None = None,
+    until: datetime | None = None,
+    limit: int = Query(200, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Envelope[ScheduleChangesResponse]:
+    since, until = cursor_time(since), cursor_time(until)
+    if after_id is not None and (since is None or until is None):
+        raise HTTPException(status_code=422, detail="分页续读必须同时保留since、after_id及until")
+    if after_id is not None and after_id.version != 7:
+        raise HTTPException(status_code=422, detail="日程分页ID必须为UUID v7")
+    if since is not None and until is not None and since > until:
+        raise HTTPException(status_code=422, detail="日程since不能晚于until")
+    owner = ScheduleWriteOwner(user.id)
+    try:
+        await lock_schedule_owner(db, owner)
+        head = await latest_schedule_revision(db, owner) or EMPTY_SYNC_TIME
+        if (since is not None and since > head) or (until is not None and until > head):
+            raise HTTPException(status_code=409, detail="游标领先已提交日程水位，请保留本地状态核对")
+        high_water = until if until is not None else head
+        query = select(Schedule).where(
+            Schedule.user_id == owner.id, Schedule.updated_at <= high_water,
+        )
+        if since is not None and after_id is not None:
+            query = query.where(or_(
+                Schedule.updated_at > since,
+                and_(Schedule.updated_at == since, Schedule.id > after_id),
+            ))
+        elif since is not None:
+            # Inclusive restart boundary: idempotent re-reads are safer than omissions.
+            query = query.where(Schedule.updated_at >= since)
+        page = list((await db.execute(
+            query.order_by(Schedule.updated_at, Schedule.id)
+            .limit(limit + 1)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )).scalars())
+        has_more = len(page) > limit
+        rows = page[:limit]
+        last = rows[-1] if rows else None
+        next_time = last.updated_at if has_more and last is not None else high_water
+        result = ScheduleChangesResponse(
+            server_time=next_time.replace(tzinfo=timezone.utc),
+            sync_until=high_water.replace(tzinfo=timezone.utc),
+            cursor_id=last.id if has_more and last is not None else None,
+            has_more=has_more,
+            schedules=[to_response(row) for row in rows],
+        )
+        # Release barrier after copying DTOs; no user/ORM attributes read after rollback.
+        await db.rollback()
+        return ok(result)
+    except OperationalError as error:
+        await db.rollback()
+        code = error.orig.args[0] if error.orig.args else None
+        if code in {1205, 1213}:
+            raise HTTPException(status_code=409, detail="日程拉取竞争，请保留游标后重试") from error
+        raise
+    except Exception:
+        await db.rollback()
+        raise

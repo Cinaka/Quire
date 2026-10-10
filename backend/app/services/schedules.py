@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Literal
 
+from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -91,6 +92,36 @@ def is_duplicate(error: IntegrityError) -> bool:
     }
 
 
+async def lock_schedule_owner(db: AsyncSession, owner: ScheduleWriteOwner) -> None:
+    """Existing User row is a per-account barrier; callers release at commit/rollback."""
+    result = await db.execute(select(User.id).where(User.id == owner.id).with_for_update())
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=401, detail="账号已失效")
+
+
+async def latest_schedule_revision(
+    db: AsyncSession, owner: ScheduleWriteOwner
+) -> datetime | None:
+    # Locking CURRENT read, not a potentially older auth/REPEATABLE READ snapshot.
+    result = await db.execute(
+        select(Schedule.updated_at)
+        .where(Schedule.user_id == owner.id)
+        .order_by(Schedule.updated_at.desc(), Schedule.id.desc())
+        .limit(1)
+        .with_for_update()
+    )
+    return result.scalar_one_or_none()
+
+
+async def allocate_schedule_revision(
+    db: AsyncSession, owner: ScheduleWriteOwner, previous: datetime | None = None
+) -> datetime:
+    """Caller MUST hold the owner barrier. Every committed P4 write advances its head."""
+    head = await latest_schedule_revision(db, owner)
+    times = [value for value in (head, previous) if value is not None]
+    return server_revision(max(times) if times else None)
+
+
 async def locked_schedule(
     db: AsyncSession, user: User | ScheduleWriteOwner, schedule_id: uuid.UUID
 ) -> Schedule | None:
@@ -121,9 +152,10 @@ async def upsert_schedule(
 ) -> tuple[Schedule | None, WriteOutcome]:
     # Rollback expires even User ORM attributes: pin ownership before the first request.
     owner = ScheduleWriteOwner(user.id)
+    await lock_schedule_owner(db, owner)
     row = await locked_schedule(db, owner, schedule_id)
     if row is None:
-        now = server_revision()
+        now = await allocate_schedule_revision(db, owner)
         row = Schedule(
             id=schedule_id, user_id=owner.id, remind_date=body.remind_date,
             title=body.title, content=deepcopy(body.content), content_text=body.content_text,
@@ -140,6 +172,7 @@ async def upsert_schedule(
             if not is_duplicate(error):
                 raise
             # Fresh locked read after insert race; never retain the failed candidate.
+            await lock_schedule_owner(db, owner)
             row = await locked_schedule(db, owner, schedule_id)
             if row is None:
                 return None, "not_found"
@@ -155,6 +188,6 @@ async def upsert_schedule(
     row.content_text = body.content_text
     row.client_updated_at = body.client_updated_at
     row.deleted_at = body.deleted_at
-    row.updated_at = server_revision(row.updated_at)
+    row.updated_at = await allocate_schedule_revision(db, owner, row.updated_at)
     await db.flush()
     return row, "applied"

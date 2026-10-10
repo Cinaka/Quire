@@ -62,6 +62,10 @@ class WriteSession:
         self.statements.append(statement)
         return self.session.scalar(statement)
 
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return self.session.execute(statement)
+
     def add(self, row):
         self.session.add(row)
 
@@ -92,6 +96,12 @@ def api_client(rows=(), *, authenticated=True, injected=None):
                 deleted_at DATETIME, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
             )
         """))
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE users (id BLOB PRIMARY KEY)"))
+        connection.execute(
+            text("INSERT INTO users (id) VALUES (:id)"),
+            [{"id": USER_ID.bytes}, {"id": OTHER_USER_ID.bytes}],
+        )
     previous = app.dependency_overrides.copy()
     try:
         with Session(engine, expire_on_commit=True) as session:
@@ -262,9 +272,13 @@ def mysql_error(code):
 
 
 def fake_db(*rows):
+    async def execute(statement):
+        value = USER_ID if statement.get_final_froms()[0].name == "users" else None
+        return SimpleNamespace(scalar_one_or_none=lambda: value)
+
     return SimpleNamespace(
-        scalar=AsyncMock(side_effect=list(rows)), add=MagicMock(), flush=AsyncMock(),
-        rollback=AsyncMock(), commit=AsyncMock(),
+        scalar=AsyncMock(side_effect=list(rows)), execute=AsyncMock(side_effect=execute),
+        add=MagicMock(), flush=AsyncMock(), rollback=AsyncMock(), commit=AsyncMock(),
     )
 
 
