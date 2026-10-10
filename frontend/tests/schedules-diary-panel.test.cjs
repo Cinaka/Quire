@@ -118,7 +118,8 @@ test("in-progress save prevents prompt/action races and reports unload protectio
 })
 test("visual panel uses fixed initial content, null-safe metadata events, composition generation and explicit confirmations", () => {
   const panel = source("components/schedules/ScheduleDiaryPanel.vue")
-  assert.match(panel, /const initialContent = structuredClone/); assert.match(panel, /state.bodyMode === 'text'/)
+  assert.match(panel, /const initialContent = structuredClone\(initialState.editor.body.content\)/);
+  assert.doesNotMatch(panel, /structuredClone\(state.value/); assert.match(panel, /state.bodyMode === 'text'/)
   assert.match(panel, /diary-mode/); assert.match(panel, /readonly rows=/); assert.match(panel, /不是包含图片字节/)
   assert.match(panel, /compositionGeneration/); assert.match(panel, /await nextTick/); assert.match(panel, /明确弃去并返回/)
   assert.match(panel, /defineExpose\(\{ prepareLeave, needsLeaveConfirmation \}\)/)
@@ -149,4 +150,34 @@ test("expiry during composition unlocks explicit discard but never authorizes sa
   assert.equal(h.panel.inspect().composing, false); assert.match(h.panel.inspect().editorError, /可能未包含最后输入/)
   assert.equal(await h.panel.save(), false); assert.equal(await h.panel.prepareLeave(), false)
   assert.equal(h.panel.requestDiscard(), true); assert.equal(h.panel.confirmDiscard(), true); assert.equal(h.patches.length, 0)
+})
+
+test("component setup clones the raw snapshot before Vue/proxy ref wrapping, reproducing the old blank-panel crash", () => {
+  const vm = require("node:vm")
+  let reactiveRef
+  try { reactiveRef = require("vue").ref } catch (error) {
+    if (error.code !== "MODULE_NOT_FOUND") throw error
+    const cache = new WeakMap()
+    const reactive = value => {
+      if (!value || typeof value !== "object") return value
+      if (!cache.has(value)) cache.set(value, new Proxy(value, { get(target, key, receiver) { return reactive(Reflect.get(target, key, receiver)) } }))
+      return cache.get(value)
+    }
+    reactiveRef = value => ({ value: reactive(value) })
+  }
+  const component = source("components/schedules/ScheduleDiaryPanel.vue")
+  const setupCode = component.slice(component.indexOf("const panel ="), component.indexOf("const showCopy ="))
+  const fixedLines = "const initialState = panel.inspect()\nconst initialContent = structuredClone(initialState.editor.body.content)\nconst state = ref(initialState)"
+  const oldLines = "const state = ref(panel.inspect())\nconst initialContent = structuredClone(state.value.editor.body.content)"
+  assert.ok(setupCode.includes(fixedLines))
+  for (const original of [content("实际正文"), image]) {
+    const h = harness({ content: original })
+    const globals = { props: { session: h.session }, createScheduleDiaryPanel: createPanel, structuredClone, ref: reactiveRef }
+    assert.throws(() => new vm.Script(setupCode.replace(fixedLines, oldLines)).runInNewContext({ ...globals }), error => error.name === "DataCloneError")
+    const result = new vm.Script(setupCode + ";\n({ initialContent, state })").runInNewContext({ ...globals })
+    assert.deepEqual(result.initialContent, original)
+    result.initialContent.schemaVersion = 99
+    assert.equal(h.session.inspect().body.content.schemaVersion, 1)
+    assert.equal(h.patches.length, 0)
+  }
 })
