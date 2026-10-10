@@ -3,6 +3,7 @@
 import json
 import uuid
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Literal
 
@@ -17,6 +18,11 @@ from app.models.user import User
 from app.services.schedule_content import schedule_content_text, trim_text
 
 WriteOutcome = Literal["applied", "replayed", "stale", "conflict", "terminal", "not_found"]
+
+
+@dataclass(frozen=True)
+class ScheduleWriteOwner:
+    id: uuid.UUID
 
 
 class PendingScheduleRequest(BaseModel):
@@ -86,7 +92,7 @@ def is_duplicate(error: IntegrityError) -> bool:
 
 
 async def locked_schedule(
-    db: AsyncSession, user: User, schedule_id: uuid.UUID
+    db: AsyncSession, user: User | ScheduleWriteOwner, schedule_id: uuid.UUID
 ) -> Schedule | None:
     return await db.scalar(
         select(Schedule)
@@ -108,13 +114,18 @@ def same_pending_snapshot(row: Schedule, body: PendingScheduleRequest) -> bool:
 
 
 async def upsert_schedule(
-    db: AsyncSession, user: User, schedule_id: uuid.UUID, body: PendingScheduleRequest
+    db: AsyncSession,
+    user: User | ScheduleWriteOwner,
+    schedule_id: uuid.UUID,
+    body: PendingScheduleRequest,
 ) -> tuple[Schedule | None, WriteOutcome]:
-    row = await locked_schedule(db, user, schedule_id)
+    # Rollback expires even User ORM attributes: pin ownership before the first request.
+    owner = ScheduleWriteOwner(user.id)
+    row = await locked_schedule(db, owner, schedule_id)
     if row is None:
         now = server_revision()
         row = Schedule(
-            id=schedule_id, user_id=user.id, remind_date=body.remind_date,
+            id=schedule_id, user_id=owner.id, remind_date=body.remind_date,
             title=body.title, content=deepcopy(body.content), content_text=body.content_text,
             status=0, converted_entry_id=None, converted_at=None,
             client_updated_at=body.client_updated_at, deleted_at=body.deleted_at,
@@ -129,7 +140,7 @@ async def upsert_schedule(
             if not is_duplicate(error):
                 raise
             # Fresh locked read after insert race; never retain the failed candidate.
-            row = await locked_schedule(db, user, schedule_id)
+            row = await locked_schedule(db, owner, schedule_id)
             if row is None:
                 return None, "not_found"
     if row.status != 0 or row.converted_entry_id is not None or row.converted_at is not None:
