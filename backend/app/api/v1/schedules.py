@@ -1,12 +1,15 @@
-"""P4 read-only schedule queries; write/sync/convert routes are added separately."""
+"""P4 schedule queries and pending writes; sync/convert routes are added separately."""
 
 import uuid
 from datetime import date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
@@ -14,6 +17,7 @@ from app.db.session import get_db
 from app.models.schedule import Schedule
 from app.models.user import User
 from app.schemas.envelope import Envelope, Page, ok, paged
+from app.services.schedules import PendingScheduleRequest, upsert_schedule
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 ScheduleStatus = Literal["pending", "converted"]
@@ -102,3 +106,50 @@ async def get_schedule(
         raise HTTPException(status_code=404, detail="预简不存在")
     # Detail includes the owner's tombstone; list defaults to live records only.
     return ok(to_response(row))
+
+
+@router.put("/{schedule_id}", response_model=Envelope[ScheduleResponse])
+async def put_schedule(
+    schedule_id: uuid.UUID,
+    body: PendingScheduleRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if schedule_id.version != 7:
+        raise HTTPException(status_code=422, detail="预简来源必须为UUID v7")
+    try:
+        row, outcome = await upsert_schedule(db, user, schedule_id, body)
+        if outcome == "not_found" or row is None:
+            await db.rollback()
+            raise HTTPException(status_code=404, detail="预简不存在")
+        # Snapshot BEFORE rollback/commit can expire ORM attributes in AsyncSession.
+        current = to_response(row)
+        if outcome in {"stale", "conflict", "terminal"}:
+            messages = {
+                "stale": "服务端已有更新预简版本",
+                "conflict": "同一修订包含不同预简内容，请明确取舍",
+                "terminal": "预简已转简，不能通过pending写入修改或恢复状态",
+            }
+            await db.rollback()
+            return JSONResponse(status_code=409, content=jsonable_encoder({
+                "code": 409, "message": messages[outcome],
+                "data": {"reason": outcome, "current": current},
+            }))
+        if outcome == "applied":
+            await db.commit()
+        else:
+            # Equal, identical replay is a read: don't advance updated_at or write again.
+            await db.rollback()
+        return ok(current)
+    except OperationalError as error:
+        await db.rollback()
+        code = error.orig.args[0] if error.orig.args else None
+        if code not in {1205, 1213}:
+            raise
+        return JSONResponse(status_code=409, content={
+            "code": 409, "message": "预简并发写入冲突，请保留本地内容后重试",
+            "data": {"reason": "retry", "current": None},
+        })
+    except Exception:
+        await db.rollback()
+        raise

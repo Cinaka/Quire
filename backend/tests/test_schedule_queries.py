@@ -226,9 +226,9 @@ def test_nullable_legacy_text_and_unknown_content_are_not_destructively_rewritte
         assert data["content"] == unknown
 
 
-def test_write_and_conversion_routes_are_not_implemented_by_query_batch():
+def test_invalid_write_is_rejected_and_sync_conversion_routes_remain_unimplemented():
     with api_client() as (client, db):
-        error(client.put(f"/api/v1/schedules/{identity(1)}", json={}), 405)
+        error(client.put(f"/api/v1/schedules/{identity(1)}", json={}), 422)
         error(client.post(f"/api/v1/schedules/{identity(1)}/convert", json={}), 404)
         error(client.post("/api/v1/schedules/sync/push", json={}), 404)
         assert not db.statements
