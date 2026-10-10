@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Quire P4 隔离验收</title></head>
+<body>
+  <section id="acceptance-gate">
+    <h1>仅供独立 P4 验收</h1>
+    <p id="acceptance-status" role="alert">正在核对专用配置与隔离地址；未进入业务存储。</p>
+    <label><input id="confirm-isolation" type="checkbox" />我确认当前是专用验收地址，不放入真实数据或凭据；进入后将创建专用验收库。</label>
+    <button id="enter-acceptance" type="button">明确进入隔离验收</button>
+  </section>
+  <div id="acceptance-root"></div>
+  <script type="module" src="/src/acceptance/entry.ts"></script>
+</body>
+</html>

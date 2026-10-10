@@ -14,8 +14,8 @@ export class QuireDb extends Dexie {
   media!: EntityTable<MediaItem, "id">
   meta!: EntityTable<MetaRow, "key">
 
-  constructor() {
-    super("quire")
+  constructor(name = "quire") {
+    super(name)
 
     this.version(1).stores({
       entries:
