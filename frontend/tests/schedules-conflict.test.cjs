@@ -190,3 +190,9 @@ test("unsafe candidate metadata does not enter a portable export",async()=>{
   const r=await h.resolver.review(ID);assert.equal(r.choices.length,0)
   assert.equal((await h.resolver.resolve(r.reviewId,"use-cloud",true,h.preserve)).applied,false);assert.equal(h.exports.length,0)
 })
+test("recognized empty schedule draft journal allows pending choice without resetting its revision",async()=>{
+  const h=await harness(),slot={formatVersion:1,revision:4,draft:null};await h.db.meta.put({key:"scheduleDraft",value:slot})
+  const r=await h.resolver.review(ID);assert.equal(r.choices.length,2)
+  assert.equal((await h.resolver.resolve(r.reviewId,"use-cloud",true,h.preserve)).applied,true)
+  assert.equal(JSON.stringify((await h.db.meta.get("scheduleDraft")).value),JSON.stringify(slot))
+})

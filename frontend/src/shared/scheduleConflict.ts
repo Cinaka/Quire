@@ -1,4 +1,5 @@
 import { isBackupSchedule, scheduleContentTooNew } from "./scheduleBackup"
+import { parseScheduleDraftState } from "./scheduleDrafts"
 import { conversionCanonical, conversionCopy, conversionUtc } from "./scheduleConversionSync"
 import type { ConversionLease } from "./scheduleConversionSync"
 import { parseScheduleWire } from "./schedulePush"
@@ -51,7 +52,8 @@ function reports(records: unknown[], id: string): unknown[] {
 export function conflictEvidence(ticket: ScheduleConflictTicket, choice: ScheduleConflictChoice): ScheduleConflictEvidence {
   const {snapshot,server,id}=ticket
   assertKnownConflictSchedule(snapshot.local,id);assertKnownConflictSchedule(server,id)
-  if (snapshot.local.status!=="pending" || server.status!=="pending" || snapshot.queue.length || snapshot.linkedEntries.length || snapshot.draft!==null) throw new Error("转换、终态、关联日记或安全草稿需要独立处理")
+  const activeDraft=snapshot.draft!==null && parseScheduleDraftState(snapshot.draft).draft!==null
+  if (snapshot.local.status!=="pending" || server.status!=="pending" || snapshot.queue.length || snapshot.linkedEntries.length || activeDraft) throw new Error("转换、终态、关联日记或安全草稿需要独立处理")
   return { app:"quire",format:"schedule-conflict-evidence",formatVersion:1,exportedAt:conversionUtc(new Date().toISOString()),scheduleId:id,
     choice,local:conversionCopy(snapshot.local),server:conversionCopy(server),candidates:reports(snapshot.records,id) }
 }

@@ -1,5 +1,6 @@
 import { newId } from "@/shared/ids"
 import { isBackupConversion } from "@/shared/scheduleBackup"
+import { conversionCanonical, conversionCopy } from "@/shared/scheduleConversionSync"
 import { SCHEDULE_META_KEYS } from "@/shared/schedules"
 import { collectMediaIds } from "@/shared/text"
 import type { Entry, ScheduleConversion } from "@/shared/types"
@@ -86,9 +87,11 @@ export async function protectedConversions(): Promise<{ entryIds: Set<string>; m
 export async function holdConversionServerEntry(entry: Entry): Promise<void> {
   const key = SCHEDULE_META_KEYS.conflicts
   const row = await db.meta.get(key)
-  const records = Array.isArray(row?.value) ? row.value as Array<{ scheduleId?: string }> : []
-  await db.meta.put({ key, value: [
-    ...records.filter(item => item.scheduleId !== entry.id),
-    { scheduleId: entry.id, kind: "conversion-entry", localEntry: await db.entries.get(entry.id), serverEntry: entry },
-  ] })
+  if (row && !Array.isArray(row.value)) throw new Error("转换候选记录损坏，未替换")
+  const records = (row?.value ?? []) as unknown[]
+  const candidate = { scheduleId: entry.id, kind: "conversion-entry",
+    localEntry: await db.entries.get(entry.id) ?? null, serverEntry: conversionCopy(entry) }
+  if (!records.some(item => conversionCanonical(item) === conversionCanonical(candidate))) {
+    await db.meta.put({ key, value: [...records, candidate] })
+  }
 }
