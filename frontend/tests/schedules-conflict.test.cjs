@@ -47,7 +47,7 @@ for(const choice of ["keep-local","use-cloud"]){
     const archive=(await h.db.meta.get(ARCHIVE)).value;assert.equal(archive.length,1);assert.equal(archive[0].choice,choice)
     assert.equal((await h.db.meta.get(PREFIX+ID)).value.source.clientUpdatedAt,REMOTE)
     assert.equal(JSON.stringify(await h.db.entries.toArray()),entries);assert.equal((await h.db.meta.get("lastSyncAt")).value,"P2-kept")
-    assert.equal((await h.db.meta.get("scheduleLastSyncAt")).value,"unchanged cursor");assert.equal(h.calls.length,2)
+    assert.equal((await h.db.meta.get("scheduleLastSyncAt")).value,"unchanged cursor");assert.equal(h.calls.length,3)
   })
 }
 for(const invalid of ["no-confirm","no-export","unknown-choice","wrong-review"]){
@@ -195,4 +195,20 @@ test("recognized empty schedule draft journal allows pending choice without rese
   const r=await h.resolver.review(ID);assert.equal(r.choices.length,2)
   assert.equal((await h.resolver.resolve(r.reviewId,"use-cloud",true,h.preserve)).applied,true)
   assert.equal(JSON.stringify((await h.db.meta.get("scheduleDraft")).value),JSON.stringify(slot))
+})
+
+for(const choice of ["keep-local","use-cloud"]){
+  test(`remote changes during preservation reject ${choice} without adopting or clearing candidates`,async()=>{
+    const options={duringExport:async h=>{options.remote={...h.cloud,title:"changed while saving",clientUpdatedAt:SERVER}}}
+    const h=await harness(options)
+    const r=await h.resolver.review(ID),before=all(h)
+    assert.equal((await h.resolver.resolve(r.reviewId,choice,true,h.preserve)).reason,"server_changed_reopen")
+    assert.equal(h.exports.length,1);assert.equal(h.calls.length,3);assert.equal(all(h),before)
+    assert.equal((await h.resolver.resolve(r.reviewId,choice,true,h.preserve)).applied,false)
+  })
+}
+test("owner changes during post-preservation GET cannot apply pending choice",async()=>{
+  const h=await harness({duringGet:async(h,n)=>{if(n===3)h.user("account-b")}}),r=await h.resolver.review(ID),before=all(h)
+  assert.equal((await h.resolver.resolve(r.reviewId,"use-cloud",true,h.preserve)).applied,false)
+  assert.equal(all(h),before);assert.equal(h.exports.length,1)
 })

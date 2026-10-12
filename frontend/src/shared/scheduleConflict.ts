@@ -97,6 +97,9 @@ export function createScheduleConflictResolver(port: ScheduleConflictPort, trans
         await port.verify(active)
         await preserve(conversionCopy(evidence))
         await port.verify(active)
+        const afterExport=parseScheduleWire(await transport.detail(active.id,conversionCopy(active.lease)),active.id)
+        if (conversionCanonical(afterExport)!==conversionCanonical(active.server)) {ticket=null;return {applied:false,reason:"server_changed_reopen"} }
+        await port.verify(active)
         await port.apply(active,choice,evidence)
         ticket=null
         return {applied:true,reason:choice==="keep-local"?"local_dirty_preserved":"cloud_adopted"}
