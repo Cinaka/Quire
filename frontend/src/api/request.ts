@@ -253,3 +253,21 @@ export async function getPinnedScheduleReview<T>(
   }
   return res.data.data
 }
+
+/** Current resource hashes are read-only evidence, never conversion or ownership confirmation. */
+export async function getPinnedScheduleResourceReview<T>(
+  id: string, lease: { ownerUserId: string; tokenGeneration: number },
+): Promise<T> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
+      !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0) {
+    throw new ApiError(-1, "资源核对ID或登录租约无效")
+  }
+  const options: AxiosRequestConfig & { _syncOwner: string; _tokenGeneration: number } = {
+    _syncOwner: lease.ownerUserId, _tokenGeneration: lease.tokenGeneration,
+  }
+  const res = await http.get<Envelope<T>>(`/schedules/${id}/review/resources`, options)
+  if (accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
+    throw new ApiError(-1, "旧资源核对响应已失效")
+  }
+  return res.data.data
+}
