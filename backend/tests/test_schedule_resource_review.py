@@ -52,7 +52,8 @@ def resource_fixture(tmp_path, monkeypatch, *, foreign_media=False, foreign_tag=
         ))
         db.session.add(Tag(
             id=ID, user_id=OTHER_USER_ID if foreign_tag else USER_ID,
-            name="private foreign label" if foreign_tag else "当前标签", color="green", created_at=AT,
+            name="private foreign label" if foreign_tag else "当前标签",
+            color="green", created_at=AT,
         ))
         db.session.add(EntryTag(entry_id=ID, tag_id=ID))
         db.session.commit()
