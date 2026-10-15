@@ -60,3 +60,8 @@ export class QuireDb extends Dexie {
 
 
 export const db = new QuireDb()
+
+/** Keep the current IndexedDB transaction alive while verifying immutable Blob snapshots. */
+export function waitForScheduleResourceBytes<T>(promise: Promise<T>): Promise<T> {
+  return Dexie.waitFor(promise, 10000)
+}

@@ -22,7 +22,7 @@ async function records(key: string): Promise<unknown[]> {
   if (row && !Array.isArray(row.value)) throw new Error("冲突元数据损坏")
   return row?.value as unknown[] ?? []
 }
-async function capture(id: string, lease: ConversionLease) {
+export async function captureScheduleResourceSnapshot(id: string, lease: ConversionLease) {
   return db.transaction("r", db.schedules, db.entries, db.tags, db.media, db.meta, async () => {
     await assertScheduleLease(lease)
     const draft = (await db.meta.get(SCHEDULE_META_KEYS.draft))?.value ?? null
@@ -57,7 +57,7 @@ async function base64(blob: Blob): Promise<string> {
   for (let i = 0; i < bytes.length; i += 8192) chunks.push(String.fromCharCode(...bytes.subarray(i, i + 8192)))
   return btoa(chunks.join(""))
 }
-async function encoded(snapshot: Awaited<ReturnType<typeof capture>>, id: string, lease: ConversionLease) {
+export async function encodeScheduleResourceSnapshot(snapshot: Awaited<ReturnType<typeof captureScheduleResourceSnapshot>>, id: string, lease: ConversionLease) {
   const media: ResourceEvidenceMedia[] = []; let binary = 0
   for (const row of snapshot.media as MediaItem[]) {
     const keys = ["id", "entryId", "blob", "thumbBlob", "mime", "width", "height", "size", "sortOrder", "remoteUrl", "thumbRemoteUrl", "createdAt", "dirty", "orphanedAt"]
@@ -78,6 +78,16 @@ async function encoded(snapshot: Awaited<ReturnType<typeof capture>>, id: string
   }
   return { state: snapshot.state, media, tags: snapshot.tags, mediaIds: snapshot.mediaIds, tagIds: snapshot.tagIds, draft: snapshot.draft, purges: snapshot.purges }
 }
+/** Internal reuse only; capture and encode retain their existing read-only behavior. */
+export function scheduleResourceSnapshotEvidence(value: Awaited<ReturnType<typeof encodeScheduleResourceSnapshot>>, id: string) {
+  const { draft: _draft, purges: _purges, ...portableValue } = value
+  const gotMedia = new Set(value.media.map(row => row.id)), gotTags = new Set(value.tags.map(row => row.id))
+  const missingMediaIds = value.mediaIds.filter(key => !gotMedia.has(key)), missingTagIds = value.tagIds.filter(key => !gotTags.has(key))
+  return checkScheduleResourceEvidence({ app: "quire", format: "terminal-local-resource-evidence", formatVersion: 1,
+    exportedAt: conversionUtc(new Date().toISOString()), scheduleId: id, ...portableValue, missingMediaIds, missingTagIds,
+    completeLocalResources: !missingMediaIds.length && !missingTagIds.length, entryPendingPurge: value.purges.includes(id), resolutionEnabled: false,
+    meaning: "local_snapshot_not_cloud_confirmation_or_restore" })
+}
 /** Read-only local bytes evidence. No GET/download/upload, archive, restore, ACK or protection release. */
 export function createInternalScheduleResourceEvidenceExporter() {
   let busy = false
@@ -86,21 +96,15 @@ export function createInternalScheduleResourceEvidenceExporter() {
     busy = true
     try {
       if (scheduleEntryId(id) !== id) throw new Error("来源ID无效")
-      const lease = await captureSyncContext(), first = await capture(id, lease)
-      const value = await encoded(first, id, lease), second = await capture(id, lease)
-      const verified = await encoded(second, id, lease)
+      const lease = await captureSyncContext(), first = await captureScheduleResourceSnapshot(id, lease)
+      const value = await encodeScheduleResourceSnapshot(first, id, lease), second = await captureScheduleResourceSnapshot(id, lease)
+      const verified = await encodeScheduleResourceSnapshot(second, id, lease)
       if (conversionCanonical(value) !== conversionCanonical(verified)) throw new Error("保全期间正文、候选、标签或媒体字节已变化")
-      const last = await capture(id, lease)
+      const last = await captureScheduleResourceSnapshot(id, lease)
       // Capture/encode is not a long Dexie transaction. Compare the final metadata boundary too.
       if (conversionCanonical(last) !== conversionCanonical(second)) throw new Error("保全期间数据已变化")
       await assertScheduleLease(lease)
-      const { draft: _draft, purges: _purges, ...portableValue } = value
-      const gotMedia = new Set(value.media.map(row => row.id)), gotTags = new Set(value.tags.map(row => row.id))
-      const missingMediaIds = value.mediaIds.filter(key => !gotMedia.has(key)), missingTagIds = value.tagIds.filter(key => !gotTags.has(key))
-      const evidence = checkScheduleResourceEvidence({ app: "quire", format: "terminal-local-resource-evidence", formatVersion: 1,
-        exportedAt: conversionUtc(new Date().toISOString()), scheduleId: id, ...portableValue, missingMediaIds, missingTagIds,
-        completeLocalResources: !missingMediaIds.length && !missingTagIds.length, entryPendingPurge: first.purges.includes(id), resolutionEnabled: false,
-        meaning: "local_snapshot_not_cloud_confirmation_or_restore" })
+      const evidence = scheduleResourceSnapshotEvidence(value, id)
       return { ready: true, reason: evidence.completeLocalResources ? "local_resources_captured" : "missing_local_resources", resolutionEnabled: false, evidence }
     } catch { return { ready: false, reason: "resource_evidence_unconfirmed", resolutionEnabled: false } }
     finally { busy = false }
