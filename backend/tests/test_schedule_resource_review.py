@@ -7,7 +7,7 @@ from copy import deepcopy
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
-from test_schedule_convert import client_fixture, diary
+from test_schedule_convert import client_fixture, diary, request
 from test_schedule_deletion import terminal
 from test_schedule_writes import AT, ID, OTHER_USER_ID, USER_ID, mysql_error, stored, success
 
@@ -16,9 +16,16 @@ from app.models.diary_entry import DiaryEntry
 from app.models.entry_tag import EntryTag
 from app.models.media import Media
 from app.models.tag import Tag
+from app.services.schedule_receipts import conversion_receipt, valid_receipt
 
 URL = f"/api/v1/schedules/{ID}/review/resources"
 PNG = b"\x89PNG\r\n\x1a\n" + b"test bytes"
+
+
+def resource_fixture_receipt():
+    # The first text conversion precedes the current image/tag edits.
+    return conversion_receipt(AT, request()["entry"])
+
 
 @contextmanager
 def resource_fixture(tmp_path, monkeypatch, *, foreign_media=False, foreign_tag=False,
@@ -28,7 +35,9 @@ def resource_fixture(tmp_path, monkeypatch, *, foreign_media=False, foreign_tag=
     body = {"schemaVersion": 1, "doc": {"type": "doc", "content": [
         {"type": "image", "attrs": {"src": f"local://media/{OTHER_USER_ID}"}},
     ]}}
-    source = terminal(converted_receipt=None) if unknown_receipt else terminal()
+    source = terminal(
+        converted_receipt=None if unknown_receipt else resource_fixture_receipt(),
+    )
     with client_fixture(
         [source], [diary(content=body)], authenticated=authenticated,
     ) as (client, db):
@@ -195,3 +204,20 @@ def test_current_deleted_or_absent_diary_is_not_restored(kind, tmp_path, monkeyp
         else:
             assert data["resources_complete"] and data["review"]["first_entry_deleted"] is False
         assert db.commits == db.flushes == 0
+
+
+
+def test_resource_fixture_explicitly_has_a_known_first_text_receipt():
+    receipt = resource_fixture_receipt()
+    assert valid_receipt(receipt)
+    assert receipt["entry_date"] == "2026-10-09" and receipt["deleted"] is False
+    assert receipt == conversion_receipt(AT, request()["entry"])
+
+
+def test_resource_fixture_receipt_is_independent_of_later_body_and_deletion():
+    first = resource_fixture_receipt()
+    later = request(content={"schemaVersion": 1, "doc": {"type": "doc", "content": [
+        {"type": "image", "attrs": {"src": f"local://media/{OTHER_USER_ID}"}},
+    ]}}, deleted_at=AT.isoformat())["entry"]
+    assert first != conversion_receipt(AT, later)
+    assert resource_fixture_receipt() == first
