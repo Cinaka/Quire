@@ -190,3 +190,76 @@ test("without a protected first intention a candidate cannot authorize importing
  const h=await fixture();await h.db.meta.put({key:"scheduleConversions",value:[]});const before=all(h)
  assert.equal((await h.prepare()).ready,false);assert.equal(all(h),before)
 })
+
+function compoundDocument(h,choice="cloud-source-use-diary"){
+ return {app:"quire",format:"terminal-matched-resource-conflict-evidence",formatVersion:1,exportedAt:AT,scheduleId:ID,choice,
+  local:structuredClone(h.evidence),cloud:structuredClone(h.reply),meaning:"explicit_choice_not_first_intent_confirmation"}
+}
+for(const choice of ["cloud-source-use-diary","cloud-source-keep-diary"])for(const missing of ["row","original","thumbnail","both"]){
+ test(`compound file ${choice}, missing ${missing}: only bytes are repaired, never replay the archived choice`,async()=>{
+  const h=await fixture({missing}),document=compoundDocument(h,choice),entryBefore=await h.db.entries.get(ID),sourceBefore=await h.db.schedules.get(ID)
+  document.cloud.review.entry.title="文件里历史云端的标题，不能恢复";h.fileText=JSON.stringify(document)
+  const before=all(h),r=await h.prepare();assert.equal(r.ready,true);assert.equal(all(h),before);assert.equal(r.fileFormat,document.format)
+  assert.equal(r.fileStatePolicy,"bytes_only_never_replay_archived_choice_or_business_state")
+  assert.equal((await h.repairer.repair(r.reviewId,true)).repaired,true)
+  assert.deepEqual(await h.db.entries.get(ID),entryBefore);assert.deepEqual(await h.db.schedules.get(ID),sourceBefore)
+  assert.equal((await meta(h,"scheduleConversions")).length,1);assert.equal((await meta(h,"scheduleConflicts")).length,2)
+  const archive=await meta(h,ARCHIVE);assert.equal(archive[0].fileFormat,document.format);assert.equal(archive[0].fileEvidence.choice,choice)
+  assert.equal(archive[0].fileEvidence.cloud.review.entry.title,document.cloud.review.entry.title);assert.match(archive[0].fileFingerprint,/^[0-9a-f]{64}$/)
+  assert.deepEqual(Buffer.from(await (await h.db.media.get(OTHER_ID)).blob.arrayBuffer()),bytes);assert.equal(h.reads,2)
+ })
+}
+for(const mode of ["version","root-private","cloud-private","choice","meaning","cloud-hash","wrong-id","unknown-format","downgrade-wrapper"]){
+ test(`compound ${mode} is rejected as a whole, not downgraded to its valid local bytes`,async()=>{
+  const h=await fixture(),document=compoundDocument(h)
+  if(mode==="version")document.formatVersion=2
+  if(mode==="root-private")document.ownerUserId="foreign"
+  if(mode==="cloud-private")document.cloud.user_id="foreign"
+  if(mode==="choice")document.choice="keep-local"
+  if(mode==="meaning")document.meaning="restore_everything"
+  if(mode==="cloud-hash")document.cloud.media[0].original.sha256="0".repeat(64)
+  if(mode==="wrong-id")document.scheduleId=EXTRA
+  if(mode==="unknown-format")document.format="future-compound-package"
+  if(mode==="downgrade-wrapper"){delete document.cloud;delete document.choice}
+  h.fileText=JSON.stringify(document);const before=all(h),r=await h.prepare();assert.equal(r.ready,false);assert.equal(all(h),before)
+ })
+}
+for(const mode of ["archived-choice","archived-cloud","export-time","format-swap"]){
+ test(`only compound ${mode} changing after preview invalidates the complete document fingerprint`,async()=>{
+  let after;const h=await fixture({duringRead:async(h,n)=>{if(n!==2)return;const document=JSON.parse(h.fileText)
+   if(mode==="archived-choice")document.choice="cloud-source-keep-diary"
+   if(mode==="archived-cloud")document.cloud.review.entry.title="另一份有效历史核对"
+   if(mode==="export-time")document.exportedAt="2026-10-08T10:00:01.000Z"
+   h.fileText=JSON.stringify(mode==="format-swap"?document.local:document);after=all(h)
+  }})
+  h.fileText=JSON.stringify(compoundDocument(h));const r=await h.prepare();assert.equal(r.ready,true)
+  assert.equal((await h.repairer.repair(r.reviewId,true)).repaired,false);assert.equal(all(h),after);assert.equal(await meta(h,ARCHIVE),undefined)
+ })
+}
+test("an unselected image with corrupt compound SHA fails full-package verification before preview",async()=>{
+ const h=await fixture({multi:true}),document=compoundDocument(h)
+ document.local.media.find(row=>row.id===SECOND).blobBase64=Buffer.alloc(bytes.length,6).toString("base64")
+ h.fileText=JSON.stringify(document);const before=all(h)
+ assert.equal((await h.repairer.prepare(ID,[OTHER_ID],h.file)).ready,false);assert.equal(all(h),before)
+})
+test("an intact old compound proof never replaces the required current cloud byte proof",async()=>{
+ const h=await fixture();h.fileText=JSON.stringify(compoundDocument(h));h.reply.media[0].original.sha256="0".repeat(64)
+ const before=all(h);assert.equal((await h.prepare()).ready,false);assert.equal(all(h),before)
+})
+test("compound no-thumbnail material does not invent a thumbnail or release an intention",async()=>{
+ const h=await fixture({noThumb:true});h.fileText=JSON.stringify(compoundDocument(h));const r=await h.prepare()
+ assert.equal(r.ready,true);assert.equal((await h.repairer.repair(r.reviewId,true)).repaired,true)
+ assert.equal((await h.db.media.get(OTHER_ID)).thumbBlob,null);assert.equal((await meta(h,"scheduleConversions")).length,1)
+})
+test("compound material is a single physical read and a read-only compatibility view",async()=>{
+ const h=await fixture(),document=compoundDocument(h);h.fileText=JSON.stringify(document);const before=all(h)
+ const io=h.load("io/scheduleResourceRepairFile.ts"),parsed=await io.readResourceRepairDocument(h.file,ID)
+ assert.equal(h.reads,1);assert.equal(parsed.local.format,"terminal-local-resource-evidence");assert.equal(parsed.document.format,document.format)
+ assert.equal(parsed.document.choice,document.choice);assert.match(parsed.fingerprint,/^[0-9a-f]{64}$/)
+ const local=await io.readResourceRepairMaterial(h.file,ID);assert.equal(local.scheduleId,ID);assert.equal(h.reads,2);assert.equal(all(h),before)
+})
+test("local-format evidence remains fully archived with an explicit format and complete fingerprint",async()=>{
+ const h=await fixture(),r=await h.prepare();assert.equal(r.fileFormat,"terminal-local-resource-evidence")
+ assert.equal((await h.repairer.repair(r.reviewId,true)).repaired,true)
+ const archive=await meta(h,ARCHIVE);assert.equal(archive[0].fileEvidence.format,"terminal-local-resource-evidence");assert.match(archive[0].fileFingerprint,/^[0-9a-f]{64}$/)
+})

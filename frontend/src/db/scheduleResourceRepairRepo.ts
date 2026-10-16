@@ -1,7 +1,8 @@
 import { captureSyncContext } from "@/api/syncContext"
 import type { ScheduleCloudResourceTransport } from "@/api/scheduleCloudResourceTransport"
 import type { ConflictEvidenceReadableFile } from "@/io/scheduleConflictEvidenceFile"
-import { assertResourceRepairImage, assertResourceRepairMaterial, inspectResourceRepairBlob, readResourceRepairMaterial, resourceRepairBlob } from "@/io/scheduleResourceRepairFile"
+import { assertResourceRepairImage, assertResourceRepairMaterial, inspectResourceRepairBlob, readResourceRepairDocument, resourceRepairBlob } from "@/io/scheduleResourceRepairFile"
+import type { ResourceRepairDocument } from "@/io/scheduleResourceRepairFile"
 import { parseScheduleCloudResourceReview } from "@/shared/scheduleCloudResources"
 import type { ScheduleCloudResourceReview } from "@/shared/scheduleCloudResources"
 import { conversionCanonical, conversionCopy, conversionUtc } from "@/shared/scheduleConversionSync"
@@ -39,7 +40,7 @@ async function snapshot(id: string, lease: ConversionLease, insideWrite = false)
 }
 type Snapshot = Awaited<ReturnType<typeof snapshot>>
 interface Ticket { id: string; lease: ConversionLease; fingerprint: string; local: ScheduleResourceEvidence; cloud: ScheduleCloudResourceReview
-  wire: unknown; selected: string[]; fileEvidence: ScheduleResourceEvidence; steps: ScheduleResourceRepairStep[]; file: ConflictEvidenceReadableFile }
+  wire: unknown; selected: string[]; fileEvidence: ScheduleResourceEvidence; fileDocument: ResourceRepairDocument; fileFingerprint: string; steps: ScheduleResourceRepairStep[]; file: ConflictEvidenceReadableFile }
 async function plan(current: Snapshot, cloud: ScheduleCloudResourceReview, selected: string[], file: ScheduleResourceEvidence): Promise<ScheduleResourceRepairStep[]> {
   assertResourceRepairTarget(current.local, cloud, selected)
   const steps: ScheduleResourceRepairStep[] = []
@@ -85,7 +86,7 @@ async function apply(ticket: Ticket, current: Snapshot) {
     const archive = await repairs()
     await db.meta.put({ key: SCHEDULE_RESOURCE_REPAIRS, value: [...archive, { ownerUserId: ticket.lease.ownerUserId, generation: ticket.lease.generation,
       scheduleId: ticket.id, kind: "missing-resource-from-evidence", at: conversionUtc(new Date().toISOString()), steps: ticket.steps,
-      before: ticket.local, cloud: ticket.wire, fileEvidence: ticket.fileEvidence, meaning: "bytes_repaired_protection_unchanged" }] })
+      before: ticket.local, cloud: ticket.wire, fileFormat: ticket.fileDocument.format, fileFingerprint: ticket.fileFingerprint, fileEvidence: ticket.fileDocument, meaning: "bytes_repaired_protection_unchanged" }] })
     await assertScheduleLease(ticket.lease)
   })
 }
@@ -99,17 +100,18 @@ export function createInternalScheduleResourceRepairer(transport: ScheduleCloudR
       try {
         if (scheduleEntryId(id) !== id) throw new Error("来源ID无效")
         const lease = await captureSyncContext(), current = await snapshot(id, lease)
-        const chosen = [...selected].sort(), fileEvidence = await readResourceRepairMaterial(file, id)
+        const chosen = [...selected].sort(), material = await readResourceRepairDocument(file, id), fileEvidence = material.local
         const wire = conversionCopy(await transport.review(id, conversionCopy(lease))), cloud = parseScheduleCloudResourceReview(wire, id)
         const steps = await plan(current, cloud, chosen, fileEvidence)
         const base = current.base
         if ((base && terminalVersionKey(base.serverUpdatedAt) > terminalVersionKey(cloud.review.schedule!.serverUpdatedAt)) ||
             (current.local.state.source!.serverUpdatedAt && terminalVersionKey(current.local.state.source!.serverUpdatedAt) > terminalVersionKey(cloud.review.schedule!.serverUpdatedAt)) ||
             (current.local.state.entry!.serverUpdatedAt && terminalVersionKey(current.local.state.entry!.serverUpdatedAt) > terminalVersionKey(cloud.review.entry!.serverUpdatedAt))) throw new Error("已知来源或日记水位领先本次云端证明")
-        const active = { id, lease, fingerprint: current.fingerprint, local: current.local, cloud, wire, selected: chosen, fileEvidence, steps, file }
+        const active = { id, lease, fingerprint: current.fingerprint, local: current.local, cloud, wire, selected: chosen, fileEvidence, fileDocument: material.document, fileFingerprint: material.fingerprint, steps, file }
         await verify(active); ticket = active
         return { ready: true, reason: "explicit_missing_bytes_confirmation", reviewId, steps: conversionCopy(steps), resolutionEnabled: false,
-          unusedFileMediaIds: fileEvidence.mediaIds.filter(key => !chosen.includes(key)), fileStatePolicy: "never_import_source_entry_tags_or_intents" }
+          unusedFileMediaIds: fileEvidence.mediaIds.filter(key => !chosen.includes(key)), fileFormat: material.document.format,
+          fileStatePolicy: "bytes_only_never_replay_archived_choice_or_business_state" }
       } catch { return { ready: false, reason: "resource_repair_unconfirmed", reviewId: 0 } }
       finally { busy = false }
     },
@@ -124,9 +126,9 @@ export function createInternalScheduleResourceRepairer(transport: ScheduleCloudR
           if (conversionCanonical(cloud) !== conversionCanonical(active.cloud)) { ticket = null; return { repaired: false, reason: "server_changed_reopen", resolutionEnabled: false } }
           current = await verify(active)
           if (boundary === "before_file") {
-            const evidence = await readResourceRepairMaterial(active.file, active.id)
-            if (conversionCanonical(evidence) !== conversionCanonical(active.fileEvidence)) throw new Error("证据文件已变化")
-            const steps = await plan(current, cloud, active.selected, evidence)
+            const material = await readResourceRepairDocument(active.file, active.id)
+            if (material.fingerprint !== active.fileFingerprint || material.document.format !== active.fileDocument.format) throw new Error("完整证据文件已变化")
+            const steps = await plan(current, cloud, active.selected, material.local)
             if (conversionCanonical(steps) !== conversionCanonical(active.steps)) throw new Error("待补齐项已变化")
             current = await verify(active)
           }
