@@ -70,6 +70,8 @@ def test_stale_image_proof_is_409_without_new_bytes(changes, tmp_path, monkeypat
         reply = client.get(URL, params=expected(**changes))
         assert reply.status_code == 409 and "data_base64" not in reply.text
         assert reply.headers["Cache-Control"] == "no-store"
+        assert reply.headers["Pragma"] == "no-cache"
+        assert reply.json()["data"] is None
         assert db.commits == db.flushes == 0
 
 
