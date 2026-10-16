@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import re
 import stat
 import uuid
 from dataclasses import dataclass
@@ -92,14 +93,21 @@ def _key(info):
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
-def probe_image(root, relative, expected_mime, remaining=MAX_PROOF_BYTES):
-    """Read through no-follow directory FDs, bound work, reject changing/unverified bytes."""
+@dataclass(frozen=True)
+class ImageRead:
+    proof: ImageProof
+    data: bytes | None = None
+
+
+def _read_image(root, relative, expected_mime, remaining, *, capture=False):
+    """One descriptor, one bounded read. Captured bytes and digest describe the same read."""
     if (not isinstance(relative, Path) or relative.is_absolute()
             or any(part in {".", ".."} for part in relative.parts) or not relative.parts
             or expected_mime not in MIME_SUFFIX.values() or remaining <= 0):
-        return ImageProof("unavailable")
+        return ImageRead(ImageProof("unavailable"))
     handles = []
     total = 0
+    blocks = [] if capture else None
     try:
         directory = os.open(Path(root).resolve(), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         handles.append(directory)
@@ -114,7 +122,7 @@ def probe_image(root, relative, expected_mime, remaining=MAX_PROOF_BYTES):
         before = os.fstat(fd)
         if (not stat.S_ISREG(before.st_mode) or before.st_size <= 0
                 or before.st_size > min(MAX_IMAGE_BYTES, remaining)):
-            return ImageProof("unavailable")
+            return ImageRead(ImageProof("unavailable"))
         digest = hashlib.sha256()
         total, header = 0, b""
         while True:
@@ -125,18 +133,40 @@ def probe_image(root, relative, expected_mime, remaining=MAX_PROOF_BYTES):
                 header = block[:12]
             total += len(block)
             if total > before.st_size:
-                return ImageProof("unavailable", read_bytes=total)
+                return ImageRead(ImageProof("unavailable", read_bytes=total))
             digest.update(block)
+            if blocks is not None:
+                blocks.append(block)
         after = os.fstat(fd)
         current = os.stat(name, dir_fd=directory, follow_symlinks=False)
         if (total != before.st_size or _key(before) != _key(after)
                 or _key(after) != _key(current) or _mime(header) != expected_mime):
-            return ImageProof("unavailable", read_bytes=total)
-        return ImageProof("verified", total, digest.hexdigest(), expected_mime, total)
+            return ImageRead(ImageProof("unavailable", read_bytes=total))
+        proof = ImageProof("verified", total, digest.hexdigest(), expected_mime, total)
+        return ImageRead(proof, b"".join(blocks) if blocks is not None else None)
     except FileNotFoundError:
-        return ImageProof("missing")
+        return ImageRead(ImageProof("missing"))
     except OSError:
-        return ImageProof("unavailable", read_bytes=total)
+        return ImageRead(ImageProof("unavailable", read_bytes=total))
     finally:
         for fd in reversed(handles):
             os.close(fd)
+
+
+def probe_image(root, relative, expected_mime, remaining=MAX_PROOF_BYTES):
+    """Read-only proof API stays byte-free; never perform a second, unbound file read."""
+    return _read_image(root, relative, expected_mime, remaining).proof
+
+
+def read_expected_image(root, relative, expected_mime, expected_size, expected_sha256):
+    """Return bytes only if the exact bounded descriptor read matches the caller's proof."""
+    if (type(expected_size) is not int or not 1 <= expected_size <= MAX_IMAGE_BYTES
+            or not isinstance(expected_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None):
+        return ImageRead(ImageProof("unavailable"))
+    result = _read_image(root, relative, expected_mime, expected_size, capture=True)
+    if result.proof.state != "verified":
+        return result
+    if result.proof.size != expected_size or result.proof.sha256 != expected_sha256:
+        return ImageRead(ImageProof("unavailable", read_bytes=result.proof.read_bytes))
+    return result

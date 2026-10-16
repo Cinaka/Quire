@@ -7,6 +7,7 @@ from app.api.v1 import (
     health,
     media,
     schedule_conversion,
+    schedule_resource_download,
     schedule_resource_review,
     schedule_review,
     schedule_sync,
@@ -27,6 +28,7 @@ api_router.include_router(sync.router)
 api_router.include_router(checkins.router)
 api_router.include_router(schedule_conversion.router)
 api_router.include_router(schedule_review.router)
+api_router.include_router(schedule_resource_download.router)
 api_router.include_router(schedule_resource_review.router)
 api_router.include_router(schedule_sync.router)
 api_router.include_router(schedules.router)
