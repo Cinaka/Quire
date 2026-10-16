@@ -50,3 +50,11 @@ export async function resourceFixtureProof(): Promise<unknown> {
   parseScheduleCloudResourceReview(proof, RESOURCE_SOURCE_ID)
   return proof
 }
+
+/** Distinguishable current-cloud title only for the explicit handoff exercise; no network. */
+export async function resourceResolutionProof(): Promise<unknown> {
+  const proof = await resourceFixtureProof() as { review: { entry: { title: string } } }
+  proof.review.entry.title = "验收：模拟云端当前图片日记"
+  parseScheduleCloudResourceReview(proof, RESOURCE_SOURCE_ID)
+  return proof
+}
