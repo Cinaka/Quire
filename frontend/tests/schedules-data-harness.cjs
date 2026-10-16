@@ -38,6 +38,7 @@ function multiDB() {
   const clone = value => value === undefined ? undefined : structuredClone(value)
   function scope(name) {
     const context = txStorage.getStore()
+    if (context?.aborted) throw new Error("transaction aborted")
     if (context && !context.tables.has(stores[name])) throw new Error(`table outside transaction: ${name}`)
   }
   function trip(name, operation) {
@@ -92,9 +93,9 @@ function multiDB() {
       }
       return fn()
     }
-    const task = queue.then(() => txStorage.run({ db, tables }, async () => {
+    const task = queue.then(() => txStorage.run({ db, tables, aborted: false }, async () => {
       const snapshots = Object.fromEntries(Object.entries(stores).map(([name, store]) => [name, clone(store.rows)]))
-      try { return await fn() } catch (error) {
+      try { const result = await fn(); if (txStorage.getStore().aborted) throw new Error("transaction aborted"); return result } catch (error) {
         for (const [name, store] of Object.entries(stores)) {
           store.rows.clear()
           for (const [key, row] of snapshots[name]) store.rows.set(key, row)
@@ -105,7 +106,12 @@ function multiDB() {
     queue = task.catch(() => {})
     return task
   } }
-  return { db, stores, failNext: (name, operation = "put") => { failName = name; failAt = operation } }
+  const transactionAborter = () => {
+    const context = txStorage.getStore()
+    if (!context) throw new Error("not in transaction")
+    return () => { context.aborted = true }
+  }
+  return { db, stores, transactionAborter, failNext: (name, operation = "put") => { failName = name; failAt = operation } }
 }
 function setup(extraMocks = {}, extraGlobals = {}) {
   const memory = multiDB()
@@ -115,7 +121,7 @@ function setup(extraMocks = {}, extraGlobals = {}) {
   const ids = { newId: () => `019a0300-1234-7000-8000-${String(++next).padStart(12, "0")}` }
   const tokens = { accessTokenSubject: () => user, tokenGeneration: () => gen }
   const mocks = {
-    "./schema": { db: memory.db }, "@/db/schema": { db: memory.db },
+    "./schema": { db: memory.db, scheduleResourceTransactionAborter: memory.transactionAborter }, "@/db/schema": { db: memory.db, scheduleResourceTransactionAborter: memory.transactionAborter },
     "@/shared/ids": ids, "@/shared/tags": { normalizeTagName: name => name.trim().toLowerCase() },
     "./mediaRepo": { localMediaRepo: { reconcileAll: async () => 0 } },
     "./tokenStore": tokens, ...extraMocks,

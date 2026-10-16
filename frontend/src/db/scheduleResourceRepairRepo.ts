@@ -16,7 +16,7 @@ import { scheduleEntryId } from "@/shared/schedules"
 
 import { captureScheduleResourceSnapshot, encodeScheduleResourceSnapshot, scheduleResourceSnapshotEvidence } from "./scheduleResourceEvidenceRepo"
 import { assertScheduleLease, readScheduleServerState } from "./scheduleSyncStateRepo"
-import { db, waitForScheduleResourceBytes } from "./schema"
+import { db, scheduleResourceTransactionAborter, waitForScheduleResourceBytes } from "./schema"
 
 export const SCHEDULE_RESOURCE_REPAIRS = "scheduleResourceRepairs"
 async function repairs(): Promise<unknown[]> {
@@ -68,9 +68,12 @@ async function verify(ticket: Ticket) {
   if (current.fingerprint !== ticket.fingerprint) throw new Error("本机内容、保护或图片字节已变化")
   return current
 }
-async function apply(ticket: Ticket, current: Snapshot) {
+async function apply(ticket: Ticket, current: Snapshot, check: () => void, registerAbort: (abort: () => void) => void) {
+  check()
   await db.transaction("rw", db.schedules, db.entries, db.tags, db.media, db.meta, async () => {
+    registerAbort(scheduleResourceTransactionAborter()); check()
     const latest = await snapshot(ticket.id, ticket.lease, true)
+    check()
     if (latest.fingerprint !== current.fingerprint || latest.fingerprint !== ticket.fingerprint) throw new Error("事务内资源已变化")
     // Nothing from the file's source/entry/tag/intent metadata is restored.
     for (const step of ticket.steps) {
@@ -82,61 +85,77 @@ async function apply(ticket: Ticket, current: Snapshot) {
       if (step.fillThumbnail) row.thumbBlob = resourceRepairBlob(material.thumbBase64!, material.thumbMime!)
       // Existing dirty, timestamps, URLs and other bytes remain exactly as they were.
       if (existing) await db.media.put(row); else await db.media.add(row)
+      check()
     }
     const archive = await repairs()
+    check()
     await db.meta.put({ key: SCHEDULE_RESOURCE_REPAIRS, value: [...archive, { ownerUserId: ticket.lease.ownerUserId, generation: ticket.lease.generation,
       scheduleId: ticket.id, kind: "missing-resource-from-evidence", at: conversionUtc(new Date().toISOString()), steps: ticket.steps,
       before: ticket.local, cloud: ticket.wire, fileFormat: ticket.fileDocument.format, fileFingerprint: ticket.fileFingerprint, fileEvidence: ticket.fileDocument, meaning: "bytes_repaired_protection_unchanged" }] })
+    check()
     await assertScheduleLease(ticket.lease)
+    check()
   })
 }
-/** Explicit missing-byte import only. Never imports diaries/tags, ACKs an intention or runs sync. */
+/** Explicit missing-byte import only. Cancellation never undoes an already committed write. */
 export function createInternalScheduleResourceRepairer(transport: ScheduleCloudResourceTransport) {
-  let ticket: Ticket | null = null, serial = 0, busy = false
+  let ticket: Ticket | null = null, serial = 0, busy = false, operation = 0
+  let abortWrite: (() => void) | null = null
+  const guard = (run: number) => { if (run !== operation) throw new Error("资源补齐操作已取消") }
   return {
+    cancel() {
+      operation++; ticket = null
+      // Keep busy until all old asynchronous work settles. A committed transaction cannot be undone.
+      try { abortWrite?.() } catch { /* Already committed/aborted: the caller must recheck. */ }
+    },
     async prepare(id: string, selected: string[], file: ConflictEvidenceReadableFile) {
       if (busy) return { ready: false, reason: "busy", reviewId: 0 }
-      busy = true; ticket = null; const reviewId = ++serial
+      busy = true; ticket = null; const reviewId = ++serial, run = ++operation, check = () => guard(run)
       try {
         if (scheduleEntryId(id) !== id) throw new Error("来源ID无效")
-        const lease = await captureSyncContext(), current = await snapshot(id, lease)
-        const chosen = [...selected].sort(), material = await readResourceRepairDocument(file, id), fileEvidence = material.local
-        const wire = conversionCopy(await transport.review(id, conversionCopy(lease))), cloud = parseScheduleCloudResourceReview(wire, id)
-        const steps = await plan(current, cloud, chosen, fileEvidence)
+        const lease = await captureSyncContext(); check()
+        const current = await snapshot(id, lease); check()
+        const chosen = [...selected].sort(), material = await readResourceRepairDocument(file, id); check()
+        const fileEvidence = material.local
+        const wire = conversionCopy(await transport.review(id, conversionCopy(lease))); check()
+        const cloud = parseScheduleCloudResourceReview(wire, id)
+        const steps = await plan(current, cloud, chosen, fileEvidence); check()
         const base = current.base
         if ((base && terminalVersionKey(base.serverUpdatedAt) > terminalVersionKey(cloud.review.schedule!.serverUpdatedAt)) ||
             (current.local.state.source!.serverUpdatedAt && terminalVersionKey(current.local.state.source!.serverUpdatedAt) > terminalVersionKey(cloud.review.schedule!.serverUpdatedAt)) ||
             (current.local.state.entry!.serverUpdatedAt && terminalVersionKey(current.local.state.entry!.serverUpdatedAt) > terminalVersionKey(cloud.review.entry!.serverUpdatedAt))) throw new Error("已知来源或日记水位领先本次云端证明")
         const active = { id, lease, fingerprint: current.fingerprint, local: current.local, cloud, wire, selected: chosen, fileEvidence, fileDocument: material.document, fileFingerprint: material.fingerprint, steps, file }
-        await verify(active); ticket = active
+        await verify(active); check(); ticket = active
         return { ready: true, reason: "explicit_missing_bytes_confirmation", reviewId, steps: conversionCopy(steps), resolutionEnabled: false,
           unusedFileMediaIds: fileEvidence.mediaIds.filter(key => !chosen.includes(key)), fileFormat: material.document.format,
           fileStatePolicy: "bytes_only_never_replay_archived_choice_or_business_state" }
-      } catch { return { ready: false, reason: "resource_repair_unconfirmed", reviewId: 0 } }
+      } catch { return { ready: false, reason: run !== operation ? "cancelled_recheck" : "resource_repair_unconfirmed", reviewId: 0 } }
       finally { busy = false }
     },
     async repair(reviewId: number, confirmed: boolean) {
       if (busy) return { repaired: false, reason: "busy", resolutionEnabled: false }
       if (!ticket || reviewId !== serial || confirmed !== true) return { repaired: false, reason: "explicit_confirmation_required", resolutionEnabled: false }
-      busy = true; const active = ticket
+      busy = true; const active = ticket, run = ++operation, check = () => guard(run)
       try {
-        let current = await verify(active)
+        let current = await verify(active); check()
         for (const boundary of ["before_file", "after_file"] as const) {
-          const cloud = parseScheduleCloudResourceReview(await transport.review(active.id, conversionCopy(active.lease)), active.id)
+          const wire = await transport.review(active.id, conversionCopy(active.lease)); check()
+          const cloud = parseScheduleCloudResourceReview(wire, active.id)
           if (conversionCanonical(cloud) !== conversionCanonical(active.cloud)) { ticket = null; return { repaired: false, reason: "server_changed_reopen", resolutionEnabled: false } }
-          current = await verify(active)
+          current = await verify(active); check()
           if (boundary === "before_file") {
-            const material = await readResourceRepairDocument(active.file, active.id)
+            const material = await readResourceRepairDocument(active.file, active.id); check()
             if (material.fingerprint !== active.fileFingerprint || material.document.format !== active.fileDocument.format) throw new Error("完整证据文件已变化")
-            const steps = await plan(current, cloud, active.selected, material.local)
+            const steps = await plan(current, cloud, active.selected, material.local); check()
             if (conversionCanonical(steps) !== conversionCanonical(active.steps)) throw new Error("待补齐项已变化")
-            current = await verify(active)
+            current = await verify(active); check()
           }
         }
-        await apply(active, current); ticket = null
+        // The abort handle remains registered until the transaction promise has settled, including commit.
+        await apply(active, current, check, abort => { abortWrite = abort }); check(); ticket = null
         return { repaired: true, reason: "local_missing_bytes_repaired", resolutionEnabled: false, intentStatus: "unchanged_protected" }
-      } catch { ticket = null; return { repaired: false, reason: "resource_repair_unconfirmed", resolutionEnabled: false } }
-      finally { busy = false }
+      } catch { ticket = null; return { repaired: false, reason: run !== operation ? "cancelled_recheck" : "resource_repair_unconfirmed", resolutionEnabled: false } }
+      finally { abortWrite = null; busy = false }
     },
   }
 }

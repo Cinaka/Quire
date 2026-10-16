@@ -65,3 +65,10 @@ export const db = new QuireDb()
 export function waitForScheduleResourceBytes<T>(promise: Promise<T>): Promise<T> {
   return Dexie.waitFor(promise, 10000)
 }
+
+/** Capture within the write transaction; cancellation can then abort it outside its zone. */
+export function scheduleResourceTransactionAborter(): () => void {
+  const transaction = Dexie.currentTransaction
+  if (!transaction) throw new Error("资源补齐不在事务内")
+  return () => transaction.abort()
+}

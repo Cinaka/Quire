@@ -263,3 +263,46 @@ test("local-format evidence remains fully archived with an explicit format and c
  assert.equal((await h.repairer.repair(r.reviewId,true)).repaired,true)
  const archive=await meta(h,ARCHIVE);assert.equal(archive[0].fileEvidence.format,"terminal-local-resource-evidence");assert.match(archive[0].fileFingerprint,/^[0-9a-f]{64}$/)
 })
+
+for(const boundary of ["prepare-file","prepare-get","repair-file","repair-get-2","repair-get-3"])test(`cancel at ${boundary} invalidates the ticket and starts no later write`,async()=>{
+ const h=await fixture({duringRead:async(h,n)=>{if((boundary==="prepare-file"&&n===1)||(boundary==="repair-file"&&n===2))h.repairer.cancel()},duringGet:async(h,n)=>{if((boundary==="prepare-get"&&n===1)||boundary===`repair-get-${n}`)h.repairer.cancel()}})
+ const before=all(h),r=await h.prepare()
+ if(boundary.startsWith("prepare")){assert.equal(r.ready,false);assert.equal(r.reason,"cancelled_recheck")}
+ else{assert.equal(r.ready,true);const result=await h.repairer.repair(r.reviewId,true);assert.equal(result.repaired,false);assert.equal(result.reason,"cancelled_recheck")}
+ assert.equal(all(h),before);assert.equal(await meta(h,ARCHIVE),undefined)
+ assert.equal((await h.repairer.repair(r.reviewId,true)).repaired,false)
+ if(boundary==="prepare-file")assert.equal(h.calls.length,0)
+ if(boundary==="repair-get-2")assert.equal(h.reads,1)
+})
+test("cancel after prepared preview prevents an old explicit confirmation from importing",async()=>{
+ const h=await fixture(),r=await h.prepare(),before=all(h);h.repairer.cancel()
+ assert.equal((await h.repairer.repair(r.reviewId,true)).repaired,false);assert.equal(all(h),before)
+ const fresh=await h.prepare();assert.equal(fresh.ready,true);assert.notEqual(fresh.reviewId,r.reviewId)
+ assert.equal((await h.repairer.repair(fresh.reviewId,true)).repaired,true)
+})
+for(const after of ["media","archive","final-lease"])test(`cancel after ${after} in an active write transaction rolls back bytes and archive`,async()=>{
+ const h=await fixture(),r=await h.prepare(),before=all(h)
+ if(after==="media"){const add=h.db.media.add;h.db.media.add=async row=>{await add(row);h.repairer.cancel()}}
+ if(after==="archive"){const put=h.db.meta.put;h.db.meta.put=async row=>{await put(row);if(row.key===ARCHIVE)h.repairer.cancel()}}
+ if(after==="final-lease"){const get=h.db.meta.get;h.db.meta.get=async key=>{const row=await get(key);if(key==="ownerUserId"&&h.stores.meta.rows.has(ARCHIVE))h.repairer.cancel();return row}}
+ const result=await h.repairer.repair(r.reviewId,true);assert.equal(result.reason,"cancelled_recheck")
+ assert.equal(result.repaired,false);assert.equal(all(h),before);assert.equal(await meta(h,ARCHIVE),undefined)
+})
+test("cancellation waits for a deferred read to settle and cannot overlap a second operation",async()=>{
+ let release,entered;const held=new Promise(resolve=>{release=resolve}),started=new Promise(resolve=>{entered=resolve})
+ const h=await fixture({duringGet:async()=>{entered();await held}}),pending=h.prepare();await started;h.repairer.cancel()
+ assert.equal((await h.prepare()).reason,"busy");assert.equal((await h.repairer.repair(1,true)).reason,"busy")
+ release();assert.equal((await pending).reason,"cancelled_recheck");assert.equal((await h.prepare()).ready,true)
+})
+test("cancel before transaction callback begins prevents even the first media write",async()=>{
+ const h=await fixture(),r=await h.prepare(),before=all(h),transaction=h.db.transaction
+ h.db.transaction=async function(...args){if(args[0]==="rw")h.repairer.cancel();return transaction.apply(this,args)}
+ assert.equal((await h.repairer.repair(r.reviewId,true)).reason,"cancelled_recheck");assert.equal(all(h),before)
+})
+test("cancel after commit reports recheck and never pretends committed bytes were undone",async()=>{
+ const h=await fixture(),r=await h.prepare(),transaction=h.db.transaction
+ h.db.transaction=async function(...args){const result=await transaction.apply(this,args);if(args[0]==="rw")h.repairer.cancel();return result}
+ const result=await h.repairer.repair(r.reviewId,true);assert.equal(result.repaired,false);assert.equal(result.reason,"cancelled_recheck")
+ assert.deepEqual(Buffer.from(await (await h.db.media.get(OTHER_ID)).blob.arrayBuffer()),bytes)
+ assert.equal((await meta(h,ARCHIVE)).length,1);assert.equal((await meta(h,"scheduleConversions")).length,1)
+})
