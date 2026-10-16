@@ -271,3 +271,43 @@ export async function getPinnedScheduleResourceReview<T>(
   }
   return res.data.data
 }
+
+/** Bounded P4 image JSON only, never a caller-provided URL or an unpinned generic GET. */
+export async function getPinnedScheduleResourceImage(
+  id: string, mediaId: string, variant: "original" | "thumbnail",
+  proof: { state: string; size: number | null; mime: string | null; sha256: string | null },
+  lease: { ownerUserId: string; tokenGeneration: number }, signal: AbortSignal,
+): Promise<unknown> {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+  if (!uuid.test(id) || !uuid.test(mediaId) || !["original", "thumbnail"].includes(variant) ||
+      proof.state !== "verified" || !Number.isSafeInteger(proof.size) || !proof.size || proof.size < 1 || proof.size > 10 * 1024 * 1024 ||
+      !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(proof.mime ?? "") ||
+      !/^[0-9a-f]{64}$/.test(proof.sha256 ?? "") || !lease.ownerUserId ||
+      !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0 || signal.aborted) {
+    throw new ApiError(-1, "图片下载证明、身份或会话无效")
+  }
+  const controller = new AbortController(), abort = () => controller.abort()
+  signal.addEventListener("abort", abort, { once: true })
+  // Bound transfer before JSON parsing; browser progress limits are supplemented by a final text limit.
+  const limit = Math.ceil(proof.size / 3) * 4 + 4096
+  try {
+    const options: AxiosRequestConfig & { _syncOwner: string; _tokenGeneration: number } = {
+      params: { expected_size: proof.size, expected_mime: proof.mime, expected_sha256: proof.sha256 },
+      _syncOwner: lease.ownerUserId, _tokenGeneration: lease.tokenGeneration, signal: controller.signal,
+      responseType: "text", transformResponse: [(value: unknown) => value], maxContentLength: limit,
+      onDownloadProgress: (progress: { loaded: number }) => { if (progress.loaded > limit) controller.abort() },
+    }
+    const res = await http.get<string>(`/schedules/${id}/review/resources/${mediaId}/${variant}`, options)
+    if (signal.aborted || controller.signal.aborted || accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
+      throw new ApiError(-1, "旧图片下载响应已失效")
+    }
+    if (res.status !== 200 || typeof res.data !== "string" || res.data.length > limit) throw new ApiError(-1, "图片响应超限或格式无效")
+    const body: unknown = JSON.parse(res.data)
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new ApiError(-1, "图片响应信封无效")
+    const r = body as Record<string, unknown>
+    if (Object.keys(r).length !== 3 || !["code", "message", "data"].every(key => key in r) || r.code !== 0 || typeof r.message !== "string") {
+      throw new ApiError(-1, "图片响应未确认")
+    }
+    return r.data
+  } finally { signal.removeEventListener("abort", abort) }
+}

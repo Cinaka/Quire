@@ -1,4 +1,6 @@
 import { captureSyncContext } from "@/api/syncContext"
+import type { ScheduleCloudResourceImageTransport } from "@/api/scheduleCloudResourceImageTransport"
+import { downloadScheduleResourceImages } from "@/io/scheduleResourceImageDownload"
 import type { ScheduleCloudResourceTransport } from "@/api/scheduleCloudResourceTransport"
 import type { ConflictEvidenceReadableFile } from "@/io/scheduleConflictEvidenceFile"
 import { assertResourceRepairImage, assertResourceRepairMaterial, inspectResourceRepairBlob, readResourceRepairDocument, resourceRepairBlob } from "@/io/scheduleResourceRepairFile"
@@ -9,7 +11,7 @@ import { conversionCanonical, conversionCopy, conversionUtc } from "@/shared/sch
 import type { ConversionLease } from "@/shared/scheduleConversionSync"
 import { assertResourceRepairTarget } from "@/shared/scheduleResourceRepair"
 import type { ScheduleResourceRepairStep } from "@/shared/scheduleResourceRepair"
-import type { ScheduleResourceEvidence } from "@/shared/scheduleResourceEvidence"
+import type { ResourceEvidenceMedia, ScheduleResourceEvidence } from "@/shared/scheduleResourceEvidence"
 import type { MediaItem } from "@/shared/types"
 import { terminalVersionKey } from "@/shared/scheduleTerminalConflict"
 import { scheduleEntryId } from "@/shared/schedules"
@@ -40,15 +42,14 @@ async function snapshot(id: string, lease: ConversionLease, insideWrite = false)
 }
 type Snapshot = Awaited<ReturnType<typeof snapshot>>
 interface Ticket { id: string; lease: ConversionLease; fingerprint: string; local: ScheduleResourceEvidence; cloud: ScheduleCloudResourceReview
-  wire: unknown; selected: string[]; fileEvidence: ScheduleResourceEvidence; fileDocument: ResourceRepairDocument; fileFingerprint: string; steps: ScheduleResourceRepairStep[]; file: ConflictEvidenceReadableFile }
-async function plan(current: Snapshot, cloud: ScheduleCloudResourceReview, selected: string[], file: ScheduleResourceEvidence): Promise<ScheduleResourceRepairStep[]> {
+  wire: unknown; selected: string[]; material: ResourceEvidenceMedia[]; steps: ScheduleResourceRepairStep[]
+  origin: "evidence_file" | "cloud_download"; fileEvidence?: ScheduleResourceEvidence; fileDocument?: ResourceRepairDocument; fileFingerprint?: string; file?: ConflictEvidenceReadableFile }
+async function targetPlan(current: Snapshot, cloud: ScheduleCloudResourceReview, selected: string[]): Promise<ScheduleResourceRepairStep[]> {
   assertResourceRepairTarget(current.local, cloud, selected)
   const steps: ScheduleResourceRepairStep[] = []
   for (const mediaId of selected) {
-    const proof = cloud.media.find(row => row.id === mediaId)!, material = file.media.find(row => row.id === mediaId)
-    if (!material) throw new Error("证据文件缺少明确选择的图片")
-    await assertResourceRepairMaterial(material, proof, current.local.scheduleId)
-    const existing = current.raw.media.find(row => row.id === mediaId), bytes = current.bytes.find(row => row.id === mediaId)
+    const proof = cloud.media.find(row => row.id === mediaId)!
+    const existing = current.raw.media.find((row: MediaItem) => row.id === mediaId), bytes = current.bytes.find(row => row.id === mediaId)
     if (existing) {
       if (existing.entryId !== current.local.scheduleId || existing.orphanedAt != null || existing.mime !== proof.original.mime ||
           existing.width !== proof.width || existing.height !== proof.height || existing.size !== proof.size || existing.sortOrder !== proof.sortOrder ||
@@ -60,6 +61,19 @@ async function plan(current: Snapshot, cloud: ScheduleCloudResourceReview, selec
     const fillOriginal = !bytes?.original.size, fillThumbnail = proof.thumbnail.state === "verified" && !bytes?.thumbnail?.size
     if (!fillOriginal && !fillThumbnail) throw new Error("选择包含无需补齐的媒体，未执行空操作")
     steps.push({ mediaId, createRow: !existing, fillOriginal, fillThumbnail })
+  }
+  const base = current.base
+  if ((base && terminalVersionKey(base.serverUpdatedAt) > terminalVersionKey(cloud.review.schedule!.serverUpdatedAt)) ||
+      (current.local.state.source!.serverUpdatedAt && terminalVersionKey(current.local.state.source!.serverUpdatedAt) > terminalVersionKey(cloud.review.schedule!.serverUpdatedAt)) ||
+      (current.local.state.entry!.serverUpdatedAt && terminalVersionKey(current.local.state.entry!.serverUpdatedAt) > terminalVersionKey(cloud.review.entry!.serverUpdatedAt))) throw new Error("已知来源或日记水位领先本次云端证明")
+  return steps
+}
+async function plan(current: Snapshot, cloud: ScheduleCloudResourceReview, selected: string[], material: ResourceEvidenceMedia[]): Promise<ScheduleResourceRepairStep[]> {
+  const steps = await targetPlan(current, cloud, selected)
+  for (const mediaId of selected) {
+    const row = material.find(item => item.id === mediaId)
+    if (!row) throw new Error("补齐材料缺少明确选择的图片")
+    await assertResourceRepairMaterial(row, cloud.media.find(item => item.id === mediaId)!, current.local.scheduleId)
   }
   return steps
 }
@@ -77,8 +91,8 @@ async function apply(ticket: Ticket, current: Snapshot, check: () => void, regis
     if (latest.fingerprint !== current.fingerprint || latest.fingerprint !== ticket.fingerprint) throw new Error("事务内资源已变化")
     // Nothing from the file's source/entry/tag/intent metadata is restored.
     for (const step of ticket.steps) {
-      const material = ticket.fileEvidence.media.find(row => row.id === step.mediaId)!, proof = ticket.cloud.media.find(row => row.id === step.mediaId)!
-      const existing = latest.raw.media.find(row => row.id === step.mediaId)
+      const material = ticket.material.find(row => row.id === step.mediaId)!, proof = ticket.cloud.media.find(row => row.id === step.mediaId)!
+      const existing = latest.raw.media.find((row: MediaItem) => row.id === step.mediaId)
       const row: MediaItem = existing ? { ...existing } : { id: step.mediaId, entryId: ticket.id, mime: proof.original.mime!, width: proof.width, height: proof.height,
         size: proof.size!, sortOrder: proof.sortOrder, createdAt: proof.createdAt, dirty: 1 as const, remoteUrl: "", thumbRemoteUrl: "", blob: new Blob([]), thumbBlob: null }
       if (step.fillOriginal) row.blob = resourceRepairBlob(material.blobBase64, material.mime)
@@ -90,21 +104,21 @@ async function apply(ticket: Ticket, current: Snapshot, check: () => void, regis
     const archive = await repairs()
     check()
     await db.meta.put({ key: SCHEDULE_RESOURCE_REPAIRS, value: [...archive, { ownerUserId: ticket.lease.ownerUserId, generation: ticket.lease.generation,
-      scheduleId: ticket.id, kind: "missing-resource-from-evidence", at: conversionUtc(new Date().toISOString()), steps: ticket.steps,
-      before: ticket.local, cloud: ticket.wire, fileFormat: ticket.fileDocument.format, fileFingerprint: ticket.fileFingerprint, fileEvidence: ticket.fileDocument, meaning: "bytes_repaired_protection_unchanged" }] })
+      scheduleId: ticket.id, kind: ticket.origin === "cloud_download" ? "missing-resource-from-cloud" : "missing-resource-from-evidence", at: conversionUtc(new Date().toISOString()), steps: ticket.steps,
+      before: ticket.local, cloud: ticket.wire, ...(ticket.origin === "evidence_file" ? { fileFormat: ticket.fileDocument!.format, fileFingerprint: ticket.fileFingerprint, fileEvidence: ticket.fileDocument } : { materialOrigin: "authenticated_current_image_bytes", downloadedMediaIds: ticket.selected }), meaning: "bytes_repaired_protection_unchanged" }] })
     check()
     await assertScheduleLease(ticket.lease)
     check()
   })
 }
 /** Explicit missing-byte import only. Cancellation never undoes an already committed write. */
-export function createInternalScheduleResourceRepairer(transport: ScheduleCloudResourceTransport) {
+export function createInternalScheduleResourceRepairer(transport: ScheduleCloudResourceTransport, images?: ScheduleCloudResourceImageTransport) {
   let ticket: Ticket | null = null, serial = 0, busy = false, operation = 0
-  let abortWrite: (() => void) | null = null
+  let abortWrite: (() => void) | null = null, abortDownload: AbortController | null = null
   const guard = (run: number) => { if (run !== operation) throw new Error("资源补齐操作已取消") }
   return {
     cancel() {
-      operation++; ticket = null
+      operation++; ticket = null; abortDownload?.abort()
       // Keep busy until all old asynchronous work settles. A committed transaction cannot be undone.
       try { abortWrite?.() } catch { /* Already committed/aborted: the caller must recheck. */ }
     },
@@ -119,18 +133,44 @@ export function createInternalScheduleResourceRepairer(transport: ScheduleCloudR
         const fileEvidence = material.local
         const wire = conversionCopy(await transport.review(id, conversionCopy(lease))); check()
         const cloud = parseScheduleCloudResourceReview(wire, id)
-        const steps = await plan(current, cloud, chosen, fileEvidence); check()
-        const base = current.base
-        if ((base && terminalVersionKey(base.serverUpdatedAt) > terminalVersionKey(cloud.review.schedule!.serverUpdatedAt)) ||
-            (current.local.state.source!.serverUpdatedAt && terminalVersionKey(current.local.state.source!.serverUpdatedAt) > terminalVersionKey(cloud.review.schedule!.serverUpdatedAt)) ||
-            (current.local.state.entry!.serverUpdatedAt && terminalVersionKey(current.local.state.entry!.serverUpdatedAt) > terminalVersionKey(cloud.review.entry!.serverUpdatedAt))) throw new Error("已知来源或日记水位领先本次云端证明")
-        const active = { id, lease, fingerprint: current.fingerprint, local: current.local, cloud, wire, selected: chosen, fileEvidence, fileDocument: material.document, fileFingerprint: material.fingerprint, steps, file }
+        const steps = await plan(current, cloud, chosen, fileEvidence.media); check()
+        const active: Ticket = { id, lease, fingerprint: current.fingerprint, local: current.local, cloud, wire, selected: chosen,
+          material: fileEvidence.media, origin: "evidence_file", fileEvidence, fileDocument: material.document, fileFingerprint: material.fingerprint, steps, file }
         await verify(active); check(); ticket = active
         return { ready: true, reason: "explicit_missing_bytes_confirmation", reviewId, steps: conversionCopy(steps), resolutionEnabled: false,
           unusedFileMediaIds: fileEvidence.mediaIds.filter(key => !chosen.includes(key)), fileFormat: material.document.format,
           fileStatePolicy: "bytes_only_never_replay_archived_choice_or_business_state" }
       } catch { return { ready: false, reason: run !== operation ? "cancelled_recheck" : "resource_repair_unconfirmed", reviewId: 0 } }
       finally { busy = false }
+    },
+    async prepareDownload(id: string, selected: string[]) {
+      if (busy) return { ready: false, reason: "busy", reviewId: 0 }
+      busy = true; ticket = null; const reviewId = ++serial, run = ++operation, check = () => guard(run)
+      const controller = new AbortController(); abortDownload = controller
+      try {
+        if (!images || scheduleEntryId(id) !== id || !Array.isArray(selected)) throw new Error("下载来源或传输未配置")
+        const chosen = [...selected].sort() // Pin explicit selection before the first asynchronous boundary.
+        const lease = await captureSyncContext(); check()
+        const current = await snapshot(id, lease); check()
+        const wire = conversionCopy(await transport.review(id, conversionCopy(lease))); check()
+        const cloud = parseScheduleCloudResourceReview(wire, id)
+        const steps = await targetPlan(current, cloud, chosen); check()
+        const active: Ticket = { id, lease, fingerprint: current.fingerprint, local: current.local, cloud, wire,
+          selected: chosen, material: [], steps, origin: "cloud_download" }
+        await verify(active); check()
+        const retained = current.bytes.map(row => ({ id: row.id, original: row.original.size ? row.original.base64 : null,
+          thumbnail: row.thumbnail?.size ? row.thumbnail.base64 : null }))
+        active.material = await downloadScheduleResourceImages(id, cloud, steps, retained, images, lease, controller.signal,
+          async () => { check(); await assertScheduleLease(lease); check() }); check()
+        const latest = parseScheduleCloudResourceReview(await transport.review(id, conversionCopy(lease)), id); check()
+        if (conversionCanonical(latest) !== conversionCanonical(cloud)) throw new Error("下载期间云端完整证明已变化")
+        await verify(active); check()
+        if (conversionCanonical(await plan(current, cloud, chosen, active.material)) !== conversionCanonical(steps)) throw new Error("下载计划已变化")
+        check(); ticket = active
+        return { ready: true, reason: "explicit_cloud_missing_bytes_confirmation", reviewId, steps: conversionCopy(steps),
+          resolutionEnabled: false, materialOrigin: "authenticated_current_image_bytes", downloaded: true }
+      } catch { return { ready: false, reason: run !== operation ? "cancelled_recheck" : "cloud_resource_download_unconfirmed", reviewId: 0 } }
+      finally { abortDownload = null; busy = false }
     },
     async repair(reviewId: number, confirmed: boolean) {
       if (busy) return { repaired: false, reason: "busy", resolutionEnabled: false }
@@ -144,9 +184,12 @@ export function createInternalScheduleResourceRepairer(transport: ScheduleCloudR
           if (conversionCanonical(cloud) !== conversionCanonical(active.cloud)) { ticket = null; return { repaired: false, reason: "server_changed_reopen", resolutionEnabled: false } }
           current = await verify(active); check()
           if (boundary === "before_file") {
-            const material = await readResourceRepairDocument(active.file, active.id); check()
-            if (material.fingerprint !== active.fileFingerprint || material.document.format !== active.fileDocument.format) throw new Error("完整证据文件已变化")
-            const steps = await plan(current, cloud, active.selected, material.local); check()
+            if (active.origin === "evidence_file") {
+              const material = await readResourceRepairDocument(active.file!, active.id); check()
+              if (material.fingerprint !== active.fileFingerprint || material.document.format !== active.fileDocument!.format) throw new Error("完整证据文件已变化")
+              active.material = material.local.media
+            }
+            const steps = await plan(current, cloud, active.selected, active.material); check()
             if (conversionCanonical(steps) !== conversionCanonical(active.steps)) throw new Error("待补齐项已变化")
             current = await verify(active); check()
           }
@@ -158,4 +201,10 @@ export function createInternalScheduleResourceRepairer(transport: ScheduleCloudR
       finally { abortWrite = null; busy = false }
     },
   }
+}
+
+/** Separate internal capability: no default UI/router/repo registration and no evidence-file replay. */
+export function createInternalScheduleCloudResourceRepairer(transport: ScheduleCloudResourceImageTransport) {
+  const engine = createInternalScheduleResourceRepairer(transport, transport)
+  return { prepare: engine.prepareDownload, repair: engine.repair, cancel: engine.cancel }
 }
