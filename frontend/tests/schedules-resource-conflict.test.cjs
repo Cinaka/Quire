@@ -191,3 +191,39 @@ for(const when of [1,2,3])test(`pinned account switch at GET ${when} invalidates
  else assert.equal((await h.resolver.resolve(r.reviewId,CLOUD,true,h.preserve)).applied,false)
  assert.equal(all(h),before);assert.equal(await meta(h,ARCHIVE),undefined)
 })
+
+for(const value of ["true",1,{},null])test(`resource confirmation ${JSON.stringify(value)} is not a strict boolean`,async()=>{
+ const h=await fixture(),r=await h.resolver.review(ID),before=all(h)
+ assert.equal((await h.resolver.resolve(r.reviewId,CLOUD,value,h.preserve)).applied,false);assert.equal(all(h),before);assert.equal(h.exports.length,0)
+})
+for(const boundary of ["review-get","resolve-get-2","resolve-get-3","preserve"])test(`cancel at ${boundary} invalidates resource choice before business write`,async()=>{
+ const h=await fixture({duringGet:async(h,n)=>{if((boundary==="review-get"&&n===1)||boundary===`resolve-get-${n}`)h.resolver.cancel()},duringExport:async h=>{if(boundary==="preserve")h.resolver.cancel()}}),before=all(h),r=await h.resolver.review(ID)
+ if(boundary==="review-get"){assert.equal(r.ready,false);assert.equal(r.reason,"cancelled_recheck")}
+ else{assert.equal(r.ready,true);assert.equal((await h.resolver.resolve(r.reviewId,CLOUD,true,h.preserve)).reason,"cancelled_recheck")}
+ assert.equal(all(h),before);assert.equal(await meta(h,ARCHIVE),undefined)
+})
+for(const point of ["archive","baseline","source","entry","queue","candidates","final-lease"])test(`cancel after transaction ${point} rolls back the whole resource handoff`,async()=>{
+ const h=await fixture(),r=await h.resolver.review(ID),before=all(h)
+ if(["source","entry"].includes(point)){const table=point==="source"?h.db.schedules:h.db.entries,put=table.put;table.put=async row=>{await put(row);h.resolver.cancel()}}
+ else if(point==="final-lease"){const get=h.db.meta.get;h.db.meta.get=async key=>{const row=await get(key);if(key==="ownerUserId"&&h.stores.meta.rows.get("scheduleConversions")?.value.length===0)h.resolver.cancel();return row}}
+ else{const put=h.db.meta.put,key={archive:ARCHIVE,baseline:`scheduleServerState:${ID}`,queue:"scheduleConversions",candidates:"scheduleConflicts"}[point];h.db.meta.put=async row=>{await put(row);if(row.key===key)h.resolver.cancel()}}
+ assert.equal((await h.resolver.resolve(r.reviewId,CLOUD,true,h.preserve)).reason,"cancelled_recheck");assert.equal(all(h),before)
+})
+test("cancel after already committed handoff reports recheck, not rollback or automatic replay",async()=>{
+ const h=await fixture(),r=await h.resolver.review(ID),transaction=h.db.transaction
+ h.db.transaction=async function(...args){const result=await transaction.apply(this,args);if(args[0]==="rw")h.resolver.cancel();return result}
+ assert.equal((await h.resolver.resolve(r.reviewId,CLOUD,true,h.preserve)).reason,"cancelled_recheck")
+ assert.equal((await meta(h,"scheduleConversions")).length,0);assert.equal((await meta(h,ARCHIVE)).length,1)
+})
+test("cancellation during delayed preservation keeps busy until the file task settles",async()=>{
+ let release,started;const gate=new Promise(r=>release=r),began=new Promise(r=>started=r)
+ const h=await fixture({duringExport:async()=>{started();await gate}}),r=await h.resolver.review(ID),before=all(h),pending=h.resolver.resolve(r.reviewId,CLOUD,true,h.preserve);await began
+ h.resolver.cancel();assert.equal((await h.resolver.review(ID)).reason,"busy");release();assert.equal((await pending).reason,"cancelled_recheck");assert.equal(all(h),before)
+})
+test("actual new file target and UI panel compose with the real resolver before a resource handoff",async()=>{
+ const h=await fixture({thumb:true}),file=fileHandle(),target=h.load("io/scheduleResourceSavePicker.ts").createResourceConflictSaveTarget(file,"chosen.json")
+ const panel=h.load("shared/scheduleResourceConflictPanel.ts").createScheduleResourceConflictPanel(h.resolver,ID,async()=>target)
+ assert.equal(await panel.review(),true);panel.choose(CLOUD);assert.equal(await panel.pickFile(),true);panel.confirm(true)
+ assert.equal(await panel.resolve(),true);assert.equal(file.closed,1);assert.equal((await meta(h,"scheduleConversions")).length,0);assert.equal((await meta(h,ARCHIVE)).length,1)
+ assert.equal((await h.fileIO.readScheduleResourceConflictFile(await file.getFile())).choice,CLOUD)
+})

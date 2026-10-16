@@ -16,7 +16,7 @@ import { toPlainText } from "@/shared/text"
 
 import { captureScheduleResourceSnapshot, encodeScheduleResourceSnapshot, scheduleResourceSnapshotEvidence } from "./scheduleResourceEvidenceRepo"
 import { assertScheduleLease, readCheckedConversionQueue, readScheduleServerState, rememberScheduleServerState } from "./scheduleSyncStateRepo"
-import { db, waitForScheduleResourceBytes } from "./schema"
+import { db, scheduleResourceTransactionAborter, waitForScheduleResourceBytes } from "./schema"
 
 interface Ticket {
   id: string; lease: ConversionLease; fingerprint: string; local: ScheduleResourceEvidence
@@ -40,75 +40,94 @@ async function verify(ticket: Ticket) {
   const latest = await current(ticket.id, ticket.lease)
   if (latest.fingerprint !== ticket.fingerprint) throw new Error("来源、候选、媒体字节、标签或保护已变化")
 }
-async function apply(ticket: Ticket, choice: TerminalConflictChoice, evidence: ScheduleResourceConflictEvidence) {
+async function apply(ticket: Ticket, choice: TerminalConflictChoice, evidence: ScheduleResourceConflictEvidence, check: () => void, registerAbort: (abort: () => void) => void) {
+  check()
   await db.transaction("rw", db.schedules, db.entries, db.tags, db.media, db.meta, async () => {
+    registerAbort(scheduleResourceTransactionAborter()); check()
     const latest = await current(ticket.id, ticket.lease, true)
+    check()
     if (latest.fingerprint !== ticket.fingerprint) throw new Error("事务内资源已经变化")
     const cloud = ticket.cloud.review.schedule!, remote = ticket.cloud.review.entry!, source = ticket.local.state.source!, entry = ticket.local.state.entry!
     const base = await readScheduleServerState(ticket.lease, ticket.id)
+    check()
     if ((base && terminalVersionKey(base.serverUpdatedAt) > terminalVersionKey(cloud.serverUpdatedAt)) ||
         (source.serverUpdatedAt && terminalVersionKey(source.serverUpdatedAt) > terminalVersionKey(cloud.serverUpdatedAt)) ||
         (entry.serverUpdatedAt && terminalVersionKey(entry.serverUpdatedAt) > terminalVersionKey(remote.serverUpdatedAt))) throw new Error("本机已知水位领先云端证明")
     if (base && base.serverUpdatedAt === cloud.serverUpdatedAt && conversionCanonical(base) !== conversionCanonical(cloud)) throw new Error("同水位来源证明矛盾")
     const chosen = chosenResourceEntry(ticket.local, ticket.cloud, choice, evidence.exportedAt), archive = await archiveRows()
+    check()
     await db.meta.put({ key: SCHEDULE_CONFLICT_ARCHIVE, value: [...archive, { ownerUserId: ticket.lease.ownerUserId,
       generation: ticket.lease.generation, scheduleId: ticket.id, kind: "terminal-matched-resource-resolution", choice,
       evidence: conversionCopy(evidence), result: conversionCopy(chosen) }] })
+    check()
     await rememberScheduleServerState(ticket.lease, cloud)
+    check()
     await db.schedules.put({ ...conversionCopy(cloud), contentText: toPlainText(cloud.content), dirty: 0 })
+    check()
     await db.entries.put({ ...chosen, contentText: toPlainText(chosen.content) })
+    check()
     const queue = await readCheckedConversionQueue(ticket.lease.ownerUserId)
     await db.meta.put({ key: SCHEDULE_META_KEYS.conversions, value: queue.filter(row => row.scheduleId !== ticket.id) })
+    check()
     const candidates = (await db.meta.get(SCHEDULE_META_KEYS.conflicts))?.value
+    check()
     if (!Array.isArray(candidates)) throw new Error("候选元数据损坏")
     await db.meta.put({ key: SCHEDULE_META_KEYS.conflicts, value: candidates.filter(raw => !raw || typeof raw !== "object" || !("scheduleId" in raw) || raw.scheduleId !== ticket.id) })
     // Shared tag definitions, media bytes/IDs/dirty, P2 conflicts, cursors and purge queues are read-only.
+    check()
     await assertScheduleLease(ticket.lease)
+    check()
   })
 }
 /** Unmounted explicit handoff for already-present, byte-identical current cloud resources only. */
 export function createInternalScheduleResourceConflictResolver(transport: ScheduleCloudResourceTransport) {
-  let ticket: Ticket | null = null, serial = 0, busy = false
+  let ticket: Ticket | null = null, serial = 0, busy = false, operation = 0
+  let abortWrite: (() => void) | null = null
+  const guard = (run: number) => { if (run !== operation) throw new Error("资源取舍已取消，须重新核对") }
   return {
+    cancel() { operation++; ticket = null; try { abortWrite?.() } catch { /* A committed transaction is not undone. */ } },
     async review(id: string) {
       if (busy) return { ready: false, reason: "busy", reviewId: 0, choices: [] as TerminalConflictChoice[] }
-      busy = true; ticket = null; const reviewId = ++serial
+      busy = true; ticket = null; const reviewId = ++serial, run = ++operation, check = () => guard(run)
       try {
         if (scheduleEntryId(id) !== id) throw new Error("来源ID无效")
-        const lease = await captureSyncContext(), snapshot = await current(id, lease)
-        const wire = conversionCopy(await transport.review(id, conversionCopy(lease))), cloud = parseScheduleCloudResourceReview(wire, id)
+        const lease = await captureSyncContext(); check()
+        const snapshot = await current(id, lease); check()
+        const wire = conversionCopy(await transport.review(id, conversionCopy(lease))); check()
+        const cloud = parseScheduleCloudResourceReview(wire, id)
         const active = { id, lease, ...snapshot, cloud, wire }
-        await verify(active)
+        await verify(active); check()
         let choices: TerminalConflictChoice[] = []
         try { await assertMatchedResourceBytes(snapshot.local, cloud); choices = matchedResourceChoices(snapshot.local, cloud) } catch { /* keep protected */ }
-        await verify(active); ticket = conversionCopy(active)
+        check(); await verify(active); check(); ticket = conversionCopy(active)
         return { ready: true, reason: choices.length ? "explicit_matched_resource_choices" : "read_only_protected", reviewId, choices,
           local: conversionCopy(snapshot.local), server: conversionCopy(cloud), sourcePolicy: "accept-cloud-terminal" }
-      } catch { return { ready: false, reason: "resource_review_unconfirmed", reviewId: 0, choices: [] as TerminalConflictChoice[] } }
+      } catch { return { ready: false, reason: run !== operation ? "cancelled_recheck" : "resource_review_unconfirmed", reviewId: 0, choices: [] as TerminalConflictChoice[] } }
       finally { busy = false }
     },
     async resolve(reviewId: number, choice: TerminalConflictChoice, confirmed: boolean, preserve?: (evidence: ScheduleResourceConflictEvidence) => Promise<void>) {
       if (busy) return { applied: false, reason: "busy" }
-      if (!ticket || reviewId !== serial || !confirmed || typeof preserve !== "function" ||
+      if (!ticket || reviewId !== serial || confirmed !== true || typeof preserve !== "function" ||
           !["cloud-source-keep-diary", "cloud-source-use-diary"].includes(choice)) return { applied: false, reason: "explicit_choice_and_export_required" }
-      busy = true; const active = conversionCopy(ticket)
+      busy = true; const active = conversionCopy(ticket), run = ++operation, check = () => guard(run)
       try {
         const evidence = checkResourceConflictEvidence({ app: "quire", format: "terminal-matched-resource-conflict-evidence", formatVersion: 1,
           exportedAt: conversionUtc(new Date().toISOString()), scheduleId: active.id, choice, local: active.local, cloud: active.wire,
           meaning: "explicit_choice_not_first_intent_confirmation" })
-        await assertMatchedResourceBytes(active.local, active.cloud)
-        await verify(active)
+        await assertMatchedResourceBytes(active.local, active.cloud); check()
+        await verify(active); check()
         for (const boundary of ["before_export", "after_export"] as const) {
-          const cloud = parseScheduleCloudResourceReview(await transport.review(active.id, conversionCopy(active.lease)), active.id)
+          const wire = await transport.review(active.id, conversionCopy(active.lease)); check()
+          const cloud = parseScheduleCloudResourceReview(wire, active.id)
           if (conversionCanonical(cloud) !== conversionCanonical(active.cloud)) { ticket = null; return { applied: false, reason: "server_changed_reopen" } }
-          await verify(active)
-          if (boundary === "before_export") { await preserve(conversionCopy(evidence)); await verify(active) }
+          await verify(active); check()
+          if (boundary === "before_export") { await preserve(conversionCopy(evidence)); check(); await verify(active); check() }
         }
-        await apply(active, choice, evidence); ticket = null
+        await apply(active, choice, evidence, check, abort => { abortWrite = abort }); check(); ticket = null
         return { applied: true, reason: choice === "cloud-source-keep-diary" ? "local_diary_ready_for_p2" : "cloud_diary_adopted",
           localIntentStatus: active.local.state.intentions.length ? "superseded_by_explicit_choice" : "no_local_intent" }
-      } catch { ticket = null; return { applied: false, reason: "resource_resolution_unconfirmed" } }
-      finally { busy = false }
+      } catch { ticket = null; return { applied: false, reason: run !== operation ? "cancelled_recheck" : "resource_resolution_unconfirmed" } }
+      finally { abortWrite = null; busy = false }
     },
   }
 }
