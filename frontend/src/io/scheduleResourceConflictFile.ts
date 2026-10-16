@@ -7,7 +7,7 @@ import type { ScheduleResourceEvidence } from "@/shared/scheduleResourceEvidence
 import { createVerifiedEvidenceFilePreserver, readVerifiedEvidenceFile } from "./scheduleConflictEvidenceFile"
 import type { ConflictEvidenceFileHandle, ConflictEvidenceReadableFile, EvidenceFileCodec } from "./scheduleConflictEvidenceFile"
 
-async function digest(base64: string) {
+export async function digestScheduleResourceBytes(base64: string) {
   const bytes = Uint8Array.from(atob(base64), value => value.charCodeAt(0))
   const hash = await crypto.subtle.digest("SHA-256", bytes)
   return { size: bytes.byteLength, sha256: [...new Uint8Array(hash)].map(value => value.toString(16).padStart(2, "0")).join("") }
@@ -19,7 +19,7 @@ export async function assertMatchedResourceBytes(local: ScheduleResourceEvidence
     const row = local.media.find(item => item.id === proof.id)!
     for (const [base64, expected] of [[row.blobBase64, proof.original], [row.thumbBase64, proof.thumbnail]] as const) {
       if (base64 === null) { if (expected.state !== "not_present") throw new Error("缩略图字节缺失"); continue }
-      const actual = await digest(base64)
+      const actual = await digestScheduleResourceBytes(base64)
       if (actual.size !== expected.size || actual.sha256 !== expected.sha256) throw new Error("图片字节与当前云端证明不同")
     }
   }
