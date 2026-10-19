@@ -193,3 +193,179 @@ test("ordinary P2 after adoption does not re-upload the superseded local image o
   assert.equal(uploads.length,0);assert.ok(sent.every(body=>body.entries.length===0&&body.mediaMeta.length===0))
   assert.deepEqual(Buffer.from(await (await h.db.media.get(OTHER_ID)).blob.arrayBuffer()),cloudBytes)
 })
+
+const KEEP = "cloud-source-keep-diary"
+async function keepFixture(options={}) {
+  const h=await fixture(options)
+  if(options.newId)h.mocks["@/shared/ids"].newId=options.newId
+  h.adopter=h.load("db/scheduleDualResourceAdoptionRepo.ts").createInternalDualResourceLocalKeeper(h.transport)
+  h.review=()=>h.adopter.review(ID,h.file)
+  return h
+}
+for(const noCloudThumb of [false,true])test(`local keep forks images without overwriting server IDs; cloud thumbnail absent=${noCloudThumb}`,async()=>{
+  const h=await keepFixture({noCloudThumb}),before=all(h),fileBefore=h.fileText,tag=await h.db.tags.get(TAG),r=await h.review()
+  assert.equal(r.ready,true);assert.deepEqual([...r.choices],[KEEP]);assert.equal(all(h),before)
+  const done=await h.adopter.resolve(r.reviewId,KEEP,true);assert.equal(done.applied,true)
+  assert.equal(done.reason,"local_diary_with_fresh_image_ids_ready_for_p2")
+  const saved=await h.db.entries.get(ID),archive=(await meta(h,ARCHIVE))[0],mapping=archive.resourceIdMap
+  assert.equal(saved.title,"本机版本");assert.equal(saved.id,ID);assert.equal(saved.fromScheduleId,ID);assert.equal(saved.dirty,1)
+  assert.equal(saved.serverUpdatedAt,SERVER);assert.ok(Date.parse(saved.clientUpdatedAt)>Date.parse(AT))
+  assert.equal(mapping.length,1);assert.equal(mapping[0].from,OTHER_ID);assert.notEqual(mapping[0].to,OTHER_ID)
+  assert.equal(saved.content.doc.content[0].attrs.src,`local://media/${mapping[0].to}`)
+  const media=await h.db.media.get(mapping[0].to)
+  assert.deepEqual(Buffer.from(await media.blob.arrayBuffer()),localBytes);assert.deepEqual(Buffer.from(await media.thumbBlob.arrayBuffer()),localThumb)
+  assert.equal(media.dirty,1);assert.equal(media.entryId,ID);assert.equal(media.remoteUrl,"");assert.equal(media.thumbRemoteUrl,"")
+  assert.equal(await h.db.media.get(OTHER_ID),undefined);assert.equal(await meta(h,"pendingPurges"),undefined)
+  assert.equal(archive.kind,"terminal-dual-resource-local-keep");assert.equal(archive.choice,KEEP)
+  assert.equal(archive.evidence.local.media[0].blobBase64,localBytes.toString("base64"));assert.equal(archive.evidence.cloudMedia[0].blobBase64,cloudBytes.toString("base64"))
+  assert.deepEqual(archive.result,saved);assert.equal(h.fileText,fileBefore);assert.deepEqual(await h.db.tags.get(TAG),tag)
+  assert.equal((await meta(h,"scheduleConversions")).length,0);assert.equal((await meta(h,"scheduleConflicts")).length,1)
+  assert.equal((await h.load("db/scheduleStateRepo.ts").protectedConversions()).entryIds.has(ID),false)
+  assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,false)
+})
+test("local keep remaps repeated/nested images once and preserves formatting, text and unrelated attributes",async()=>{
+  const h=await keepFixture(),packet=JSON.parse(h.fileText)
+  const body={schemaVersion:1,doc:{type:"doc",content:[{type:"paragraph",attrs:{align:"center"},content:[{type:"text",text:`literal local://media/${OTHER_ID}`,marks:[{type:"bold"}]}]},
+    {type:"image",attrs:{src:`local://media/${OTHER_ID}`,alt:"do not change",title:"image"}},
+    {type:"blockquote",content:[{type:"image",attrs:{src:`local://media/${OTHER_ID}`}}]}]}}
+  await h.db.entries.update(ID,{content:body});packet.local.state.entry.content=body;packet.local.state.linkedEntries[0].content=body
+  h.fileText=JSON.stringify(packet)
+  const r=await h.review();assert.equal(r.ready,true);assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,true)
+  const saved=await h.db.entries.get(ID),map=(await meta(h,ARCHIVE))[0].resourceIdMap
+  assert.equal(map.length,1);assert.equal(h.stores.media.rows.size,1)
+  assert.equal(saved.content.doc.content[0].content[0].text,`literal local://media/${OTHER_ID}`)
+  assert.equal(saved.content.doc.content[0].content[0].marks[0].type,"bold")
+  assert.equal(saved.content.doc.content[1].attrs.alt,"do not change")
+  assert.equal(saved.content.doc.content[2].content[0].attrs.src,`local://media/${map[0].to}`)
+  assert.equal(packet.local.state.entry.content.doc.content[1].attrs.src,`local://media/${OTHER_ID}`)
+})
+test("keeping a currently text-only local diary archives historical images without inventing new active copies",async()=>{
+  const h=await keepFixture(),packet=JSON.parse(h.fileText)
+  await h.db.entries.update(ID,{content:null});packet.local.state.entry.content=null;packet.local.state.linkedEntries[0].content=null
+  h.fileText=JSON.stringify(packet)
+  const r=await h.review();assert.equal(r.ready,true);assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,true)
+  assert.equal((await h.db.entries.get(ID)).content,null);assert.equal(h.stores.media.rows.size,0)
+  assert.equal((await meta(h,ARCHIVE))[0].resourceIdMap.length,0)
+  assert.equal((await meta(h,ARCHIVE))[0].evidence.local.media.length,1)
+})
+for(const mode of ["bad-signature","mime-mismatch","bad-thumb"])test(`local keep refuses nonuploadable ${mode} while retaining all evidence`,async()=>{
+  const h=await keepFixture(),packet=JSON.parse(h.fileText),row=await h.db.media.get(OTHER_ID)
+  if(mode==="bad-signature"){row.blob=blob(Buffer.alloc(localBytes.length,1));packet.local.media[0].blobBase64=Buffer.alloc(localBytes.length,1).toString("base64")}
+  if(mode==="mime-mismatch"){row.mime="image/jpeg";packet.local.media[0].mime="image/jpeg"}
+  if(mode==="bad-thumb"){row.thumbBlob=blob(Buffer.alloc(localThumb.length,1));packet.local.media[0].thumbBase64=Buffer.alloc(localThumb.length,1).toString("base64")}
+  await h.db.media.put(row);h.fileText=JSON.stringify(packet);const before=all(h)
+  assert.equal((await h.review()).ready,false);assert.equal(all(h),before)
+})
+for(const target of ["media","entries","schedules","tags","old-id","invalid","other-reference"])test(`fresh image ID ${target} collision never overwrites an existing identity`,async()=>{
+  const chosen=target==="old-id"?OTHER_ID:target==="invalid"?"not-a-uuid":SECOND
+  const h=await keepFixture({newId:()=>chosen})
+  if(target==="media")await h.db.media.put({id:SECOND,entryId:"",blob:blob(localBytes),dirty:0})
+  if(target==="entries")await h.db.entries.put(entry({id:SECOND,fromScheduleId:null,content:null}))
+  if(target==="schedules")await h.db.schedules.put({...terminal(),id:SECOND,convertedEntryId:SECOND,dirty:0,serverUpdatedAt:SERVER})
+  if(target==="tags")await h.db.tags.put({id:SECOND,name:"occupied",color:null,createdAt:AT,dirty:0})
+  if(target==="other-reference")await h.db.meta.put({key:"conflicts",value:[{entryId:OTHER_ENTRY,local:entry({id:OTHER_ENTRY,fromScheduleId:null,content:image(SECOND)})}]})
+  const r=await h.review();assert.equal(r.ready,true);const before=all(h)
+  assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,false);assert.equal(all(h),before)
+  assert.deepEqual(Buffer.from(await (await h.db.media.get(OTHER_ID)).blob.arrayBuffer()),localBytes)
+})
+for(const mode of ["shared-diary","other-intent","other-candidate","tag-difference","different-ids"])test(`local keep cannot bypass ${mode}`,async()=>{
+  const h=await keepFixture({tagDifference:mode==="tag-difference",differentIds:mode==="different-ids"})
+  if(mode==="shared-diary")await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:image(OTHER_ID)}))
+  if(mode==="other-intent")await h.db.meta.put({key:"scheduleConversions",value:[...await meta(h,"scheduleConversions"),intent({scheduleId:OTHER_ENTRY,source:{...intent().source,id:OTHER_ENTRY},entry:entry({id:OTHER_ENTRY,fromScheduleId:OTHER_ENTRY,content:image(OTHER_ID)}),ownerUserId:"account-a"})]})
+  if(mode==="other-candidate")await h.db.meta.put({key:"scheduleConflicts",value:[...await meta(h,"scheduleConflicts"),{scheduleId:OTHER_ENTRY,kind:"conversion-entry",serverEntry:entry({id:OTHER_ENTRY,fromScheduleId:OTHER_ENTRY,content:image(OTHER_ID)})}]})
+  const before=all(h);assert.equal((await h.review()).ready,false);assert.equal(all(h),before)
+})
+for(const mode of ["account","relogin","epoch","file","bytes","tag","cloud","purge","draft","shared"])test(`local keep rechecks ${mode} after preview`,async()=>{
+  const h=await keepFixture(),r=await h.review();assert.equal(r.ready,true)
+  if(mode==="account")h.user("account-b")
+  if(mode==="relogin"){h.user("account-b");h.user("account-a")}
+  if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"restore"})
+  if(mode==="file"){const packet=JSON.parse(h.fileText);packet.exportedAt=AT;h.fileText=JSON.stringify(packet)}
+  if(mode==="bytes")await h.db.media.update(OTHER_ID,{blob:blob(png(9))})
+  if(mode==="tag")await h.db.tags.update(TAG,{color:"red"})
+  if(mode==="cloud")h.reply.review.entry.title="changed"
+  if(mode==="purge")await h.db.meta.put({key:"pendingPurges",value:[ID]})
+  if(mode==="draft")await h.db.meta.put({key:"draft",value:{text:"keep"}})
+  if(mode==="shared")await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:image(OTHER_ID)}))
+  const before=all(h);assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,false);assert.equal(all(h),before)
+})
+for(const table of ["media","entries","schedules","meta"])test(`local keep write failure in ${table} restores old cache, clone rows, archive and protection`,async()=>{
+  const h=await keepFixture(),r=await h.review(),before=all(h);h.failNext(table)
+  assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,false);assert.equal(all(h),before)
+  assert.deepEqual(Buffer.from(await (await h.db.media.get(OTHER_ID)).blob.arrayBuffer()),localBytes)
+})
+for(const mode of ["cancel","account","epoch"])test(`local keep ${mode} after old-cache deletion cannot leave a half-remapped diary`,async()=>{
+  const h=await keepFixture(),r=await h.review(),before=all(h),remove=h.db.media.delete
+  h.db.media.delete=async id=>{await remove(id);if(mode==="cancel")h.adopter.cancel();if(mode==="account")h.user("account-b");if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"new"})}
+  assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,false);assert.equal(all(h),before)
+  assert.deepEqual(Buffer.from(await (await h.db.media.get(OTHER_ID)).blob.arrayBuffer()),localBytes)
+})
+test("local keep requires its own explicit choice; cloud and local factories cannot silently switch sides",async()=>{
+  const h=await keepFixture(),r=await h.review(),before=all(h)
+  assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,false)
+  assert.equal((await h.adopter.resolve(r.reviewId,KEEP,false)).applied,false)
+  assert.equal((await h.adopter.resolve(r.reviewId+1,KEEP,true)).applied,false);assert.equal(all(h),before)
+  assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,true)
+})
+test("P2 uploads retained bytes only under fresh IDs and updates the one stable diary",async()=>{
+  const h=await keepFixture(),r=await h.review();assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,true)
+  const fresh=(await meta(h,ARCHIVE))[0].resourceIdMap[0].to,uploads=[],sent=[]
+  h.mocks["@/api/mappers"]={fromWireEntry:r=>r,fromWireTag:r=>r,mediaPatchFromWire:r=>r,toWireEntry:r=>r,toWireTag:r=>r,toWireMediaMetaPush:r=>r}
+  h.mocks["@/api/endpoints"]={uploadMedia:async(id,bytes,options,owner)=>{uploads.push({id,bytes,options,owner})},pushBatch:async body=>{
+    sent.push(body);return {serverTime:SERVER,entries:body.entries.map(r=>({id:r.id,status:"applied"})),tags:body.tags.map(r=>({id:r.id,status:"applied"})),mediaMeta:body.mediaMeta.map(r=>({id:r.id,status:"applied"}))}},pullChanges:async()=>({serverTime:SERVER,syncUntil:SERVER,cursorId:"",hasMore:false,entries:[],tags:[],mediaMeta:[]})}
+  await h.load("api/sync.ts").runSync()
+  assert.equal(uploads.length,1);assert.equal(uploads[0].id,fresh);assert.equal(uploads[0].owner,"account-a")
+  assert.deepEqual(Buffer.from(await uploads[0].bytes.arrayBuffer()),localBytes)
+  assert.ok(sent.every(body=>body.mediaMeta.every(row=>row.id!==OTHER_ID)))
+  assert.equal(sent[0].entries[0].id,ID);assert.equal(sent[0].entries[0].fromScheduleId,ID)
+  assert.equal(sent[0].entries[0].content.doc.content[0].attrs.src,`local://media/${fresh}`)
+  assert.equal((await h.db.entries.get(ID)).dirty,0);assert.equal((await h.db.media.get(fresh)).dirty,0)
+  assert.equal(h.stores.entries.rows.size,1);assert.equal(h.reply.media[0].original.sha256,sha(cloudBytes))
+})
+async function twoImageKeepFixture(options={}) {
+  const h=await keepFixture(options),row=await h.db.media.get(OTHER_ID)
+  await h.db.media.put({...row,id:SECOND,sortOrder:1})
+  const body={schemaVersion:1,doc:{type:"doc",content:[{type:"image",attrs:{src:`local://media/${SECOND}`}},{type:"image",attrs:{src:`local://media/${OTHER_ID}`}},{type:"image",attrs:{src:`local://media/${SECOND}`}}]}}
+  await h.db.entries.update(ID,{content:body});h.reply.review.entry.content=body
+  h.reply.media_ids.push(SECOND);h.reply.media.push({...structuredClone(h.reply.media[0]),id:SECOND,sort_order:1})
+  let text=""
+  const handle={async getFile(){return {size:new Blob([text]).size,text:async()=>text}},async createWritable(){return {async write(value){text=value},async close(){},async abort(){}}}}
+  const exporter=h.load("db/scheduleDualResourceEvidenceRepo.ts").createInternalDualResourceEvidenceExporter(h.transport)
+  const r=await exporter.prepare(ID,true);assert.equal(r.ready,true)
+  assert.equal((await exporter.save(r.reviewId,true,handle)).saved,true)
+  h.fileText=text;h.calls=[];return h
+}
+test("two retained images receive unique new IDs in document order and repeated references reuse one clone",async()=>{
+  const h=await twoImageKeepFixture(),r=await h.review();assert.equal(r.ready,true)
+  assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,true)
+  const map=(await meta(h,ARCHIVE))[0].resourceIdMap,saved=await h.db.entries.get(ID)
+  assert.equal(map.length,2);assert.equal(map[0].from,SECOND);assert.equal(map[1].from,OTHER_ID);assert.notEqual(map[0].to,map[1].to)
+  assert.equal(saved.content.doc.content[0].attrs.src,saved.content.doc.content[2].attrs.src)
+  assert.equal((await h.db.media.get(map[0].to)).sortOrder,0);assert.equal((await h.db.media.get(map[1].to)).sortOrder,1)
+  assert.equal(h.stores.media.rows.size,2);assert.equal(await h.db.media.get(OTHER_ID),undefined);assert.equal(await h.db.media.get(SECOND),undefined)
+})
+test("duplicate generated IDs abort a whole multi-image keep without replacing the occupied mapping",async()=>{
+  const h=await twoImageKeepFixture({newId:()=>"019a0300-1234-7000-8000-000000000006"}),r=await h.review(),before=all(h)
+  assert.equal(r.ready,true);assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,false);assert.equal(all(h),before)
+  assert.equal(await meta(h,ARCHIVE),undefined);assert.equal(h.stores.media.rows.size,2)
+})
+test("cache eviction failure rolls back the earlier archive write",async()=>{
+  const h=await keepFixture(),r=await h.review(),before=all(h);h.failNext("media","delete")
+  assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,false);assert.equal(all(h),before)
+})
+test("local keep plan advances beyond microsecond revisions even with a backwards wall clock",async()=>{
+  const h=await keepFixture(),packet=JSON.parse(h.fileText),localAt="2026-10-08T10:00:01.123456Z",remoteAt="2026-10-08T10:00:02.999999Z"
+  packet.local.state.entry.clientUpdatedAt=localAt;packet.local.state.linkedEntries[0].clientUpdatedAt=localAt
+  packet.cloud.review.entry.client_updated_at=remoteAt
+  const before=JSON.stringify(packet),plan=h.load("shared/scheduleDualResourceAdoption.ts").planDualLocalKeep(packet,new Map([[OTHER_ID,SECOND]]),AT)
+  assert.equal(plan.entry.clientUpdatedAt,"2026-10-08T10:00:03.000Z")
+  assert.equal(plan.entry.updatedAt,plan.entry.clientUpdatedAt);assert.equal(plan.entry.entryDate,packet.local.state.entry.entryDate)
+  assert.equal(plan.entry.sortOrder,packet.local.state.entry.sortOrder);assert.deepEqual([...plan.entry.tagIds],packet.local.state.entry.tagIds)
+  assert.equal(JSON.stringify(packet),before)
+})
+test("cancel after clone insertion still rolls back clone, old-cache deletion, diary and evidence archive",async()=>{
+  const h=await keepFixture(),r=await h.review(),before=all(h),add=h.db.media.add
+  h.db.media.add=async row=>{await add(row);h.adopter.cancel()}
+  assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,false);assert.equal(all(h),before)
+  assert.deepEqual(Buffer.from(await (await h.db.media.get(OTHER_ID)).blob.arrayBuffer()),localBytes)
+})

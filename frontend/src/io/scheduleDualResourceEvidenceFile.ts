@@ -1,3 +1,5 @@
+import { localKeepImageIds } from "@/shared/scheduleDualResourceAdoption"
+import { digestScheduleResourceBytes } from "./scheduleResourceConflictFile"
 import { parseScheduleCloudResourceReview } from "@/shared/scheduleCloudResources"
 import { checkDualResourceEvidence, parseDualResourceEvidence, serializeDualResourceEvidence } from "@/shared/scheduleDualResourceEvidence"
 import type { ScheduleDualResourceEvidence } from "@/shared/scheduleDualResourceEvidence"
@@ -54,4 +56,21 @@ export function createDualResourceEvidenceFilePreserver(handle: ConflictEvidence
 }
 export async function readDualResourceEvidenceFile(file: ConflictEvidenceReadableFile) {
   return verifyDualResourceEvidence(await readVerifiedEvidenceFile(file, codec))
+}
+
+/** Retained local images need valid uploadable signatures too; no resize/re-encoding is performed. */
+export async function verifyDualLocalKeepImages(value: ScheduleDualResourceEvidence) {
+  for (const id of localKeepImageIds(value)) {
+    const row = value.local.media.find(item => item.id === id)!
+    for (const variant of ["original", "thumbnail"] as const) {
+      const base64 = variant === "original" ? row.blobBase64 : row.thumbBase64
+      if (base64 === null) continue
+      const mime = variant === "original" ? row.mime : row.thumbMime
+      const digest = await digestScheduleResourceBytes(base64)
+      const proof = { state: "verified" as const, ...digest, mime }
+      await validateScheduleResourceImage({ read_only: true, resolution_enabled: false, proof_scope: "current_entry_image_bytes",
+        schedule_id: value.scheduleId, media_id: id, variant, ...digest, mime, data_base64: base64 },
+      value.scheduleId, id, variant, proof)
+    }
+  }
 }
