@@ -86,6 +86,84 @@ async def image_proof(row, *, thumbnail, remaining):
     return await run_in_threadpool(probe_image, settings.MEDIA_ROOT, relative, mime, remaining)
 
 
+async def locked_resource_review(db, owner, schedule_id):
+    """Build the current proof under the caller's owner barrier; never commit/rollback."""
+    row = await locked_schedule(db, owner, schedule_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="预简不存在")
+    entry, collision = await linked_diary(db, owner, schedule_id) if row.status == 1 else (
+        None, False,
+    )
+    state = terminal_review_state(row, entry, collision)
+    safe_entry = entry if state.entry_state != "unknown" else None
+    snapshot = await response_snapshot(db, ConversionResult(
+        row if row.status in {0, 1} else None, safe_entry, state.reason,
+        entry_state=state.entry_state,
+    ))
+    review = ScheduleTerminalReviewResponse(
+        reviewable=state.reviewable, reason=state.reason,
+        schedule=snapshot.schedule, entry=snapshot.entry, entry_state=state.entry_state,
+        receipt_known=state.receipt_known, first_entry_date=state.first_entry_date,
+        first_entry_deleted=state.first_entry_deleted,
+    )
+    response = ScheduleResourceReviewResponse(
+        resource_state="no_entry", review=review, media_ids=[], tag_ids=[],
+        media=[], tags=[], missing_media_ids=[], missing_tag_ids=[],
+    )
+    if snapshot.entry is not None:
+        try:
+            media_ids, tag_ids = current_resource_ids(
+                snapshot.entry.content, snapshot.entry.tag_ids,
+            )
+        except (ValueError, TypeError, AttributeError):
+            response.resource_state = "unsupported"
+        else:
+            response.media_ids, response.tag_ids = media_ids, tag_ids
+            media_rows = list((await db.execute(select(Media).where(
+                Media.id.in_(media_ids), Media.user_id == owner.id,
+                Media.entry_id == schedule_id,
+            ).order_by(Media.id).with_for_update())).scalars()) if media_ids else []
+            tag_rows = list((await db.execute(select(Tag).where(
+                Tag.id.in_(tag_ids), Tag.user_id == owner.id,
+            ).order_by(Tag.id).with_for_update())).scalars()) if tag_ids else []
+            response.missing_media_ids = sorted(set(media_ids) - {m.id for m in media_rows})
+            response.missing_tag_ids = sorted(set(tag_ids) - {t.id for t in tag_rows})
+            remaining = MAX_PROOF_BYTES
+            for media in media_rows:
+                original = await image_proof(media, thumbnail=False, remaining=remaining)
+                remaining -= original.read_bytes
+                if original.state == "verified" and original.size != media.size:
+                    original = ImageProof("unavailable")
+                thumb = await image_proof(media, thumbnail=True, remaining=remaining)
+                remaining -= thumb.read_bytes
+                response.media.append(ResourceMediaProof(
+                    id=media.id, entry_id=schedule_id, sort_order=media.sort_order,
+                    width=media.width, height=media.height, size=media.size,
+                    created_at=media.created_at,
+                    original=ResourceImageProof(
+                        state=original.state, size=original.size,
+                        sha256=original.sha256, mime=original.mime,
+                    ),
+                    thumbnail=ResourceImageProof(
+                        state=thumb.state, size=thumb.size,
+                        sha256=thumb.sha256, mime=thumb.mime,
+                    ),
+                ))
+            response.tags = [ResourceTagProof(
+                id=t.id, name=t.name, color=t.color, created_at=t.created_at,
+            ) for t in tag_rows]
+            response.resources_complete = (
+                not response.missing_media_ids and not response.missing_tag_ids
+                and all(m.original.state == "verified" and m.thumbnail.state in {
+                    "verified", "not_present",
+                } for m in response.media)
+            )
+            response.resource_state = (
+                "verified" if response.resources_complete else "incomplete"
+            )
+    return response
+
+
 @router.get(
     "/{schedule_id}/review/resources",
     response_model=Envelope[ScheduleResourceReviewResponse],
@@ -100,79 +178,7 @@ async def get_resource_review(
     owner = ScheduleWriteOwner(user.id)
     try:
         await lock_schedule_owner(db, owner)
-        row = await locked_schedule(db, owner, schedule_id)
-        if row is None:
-            raise HTTPException(status_code=404, detail="预简不存在")
-        entry, collision = await linked_diary(db, owner, schedule_id) if row.status == 1 else (
-            None, False,
-        )
-        state = terminal_review_state(row, entry, collision)
-        safe_entry = entry if state.entry_state != "unknown" else None
-        snapshot = await response_snapshot(db, ConversionResult(
-            row if row.status in {0, 1} else None, safe_entry, state.reason,
-            entry_state=state.entry_state,
-        ))
-        review = ScheduleTerminalReviewResponse(
-            reviewable=state.reviewable, reason=state.reason,
-            schedule=snapshot.schedule, entry=snapshot.entry, entry_state=state.entry_state,
-            receipt_known=state.receipt_known, first_entry_date=state.first_entry_date,
-            first_entry_deleted=state.first_entry_deleted,
-        )
-        response = ScheduleResourceReviewResponse(
-            resource_state="no_entry", review=review, media_ids=[], tag_ids=[],
-            media=[], tags=[], missing_media_ids=[], missing_tag_ids=[],
-        )
-        if snapshot.entry is not None:
-            try:
-                media_ids, tag_ids = current_resource_ids(
-                    snapshot.entry.content, snapshot.entry.tag_ids,
-                )
-            except (ValueError, TypeError, AttributeError):
-                response.resource_state = "unsupported"
-            else:
-                response.media_ids, response.tag_ids = media_ids, tag_ids
-                media_rows = list((await db.execute(select(Media).where(
-                    Media.id.in_(media_ids), Media.user_id == owner.id,
-                    Media.entry_id == schedule_id,
-                ).order_by(Media.id).with_for_update())).scalars()) if media_ids else []
-                tag_rows = list((await db.execute(select(Tag).where(
-                    Tag.id.in_(tag_ids), Tag.user_id == owner.id,
-                ).order_by(Tag.id).with_for_update())).scalars()) if tag_ids else []
-                response.missing_media_ids = sorted(set(media_ids) - {m.id for m in media_rows})
-                response.missing_tag_ids = sorted(set(tag_ids) - {t.id for t in tag_rows})
-                remaining = MAX_PROOF_BYTES
-                for media in media_rows:
-                    original = await image_proof(media, thumbnail=False, remaining=remaining)
-                    remaining -= original.read_bytes
-                    if original.state == "verified" and original.size != media.size:
-                        original = ImageProof("unavailable")
-                    thumb = await image_proof(media, thumbnail=True, remaining=remaining)
-                    remaining -= thumb.read_bytes
-                    response.media.append(ResourceMediaProof(
-                        id=media.id, entry_id=schedule_id, sort_order=media.sort_order,
-                        width=media.width, height=media.height, size=media.size,
-                        created_at=media.created_at,
-                        original=ResourceImageProof(
-                            state=original.state, size=original.size,
-                            sha256=original.sha256, mime=original.mime,
-                        ),
-                        thumbnail=ResourceImageProof(
-                            state=thumb.state, size=thumb.size,
-                            sha256=thumb.sha256, mime=thumb.mime,
-                        ),
-                    ))
-                response.tags = [ResourceTagProof(
-                    id=t.id, name=t.name, color=t.color, created_at=t.created_at,
-                ) for t in tag_rows]
-                response.resources_complete = (
-                    not response.missing_media_ids and not response.missing_tag_ids
-                    and all(m.original.state == "verified" and m.thumbnail.state in {
-                        "verified", "not_present",
-                    } for m in response.media)
-                )
-                response.resource_state = (
-                    "verified" if response.resources_complete else "incomplete"
-                )
+        response = await locked_resource_review(db, owner, schedule_id)
         await db.rollback()
         return ok(response)
     except OperationalError as error:
