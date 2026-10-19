@@ -654,3 +654,203 @@ test("cloud tag install never overwrites a duplicate inserted after archive, eve
   h.db.meta.put=async row=>{await put(row);if(row.key===ARCHIVE)await h.db.tags.put({id:CLOUD_TAG,name:"do not replace",color:null,createdAt:AT,dirty:1})}
   assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,false);assert.equal(all(h),before)
 })
+
+// Independent naming is only a durable preparation, never an upload or diary handoff.
+async function copyFixture(choice=CHOICE,options={}) {
+  const h=await fixture({tagDifference:true,...options})
+  h.preparer=h.load("db/scheduleSharedTagCopyRepo.ts").createInternalSharedTagCopyPreparer(h.transport)
+  h.names=[{from:TAG,name:"用户明确的新标签"}];h.copyReview=()=>h.preparer.review(ID,h.file,choice,h.names)
+  return h
+}
+async function preparedCopy(choice=CHOICE,options={}) {
+  const h=await copyFixture(choice,options),r=await h.copyReview();assert.equal(r.ready,true)
+  h.done=await h.preparer.prepare(r.reviewId,true);assert.equal(h.done.prepared,true);return h
+}
+const resources=h=>JSON.stringify(Object.fromEntries(["entries","schedules","tags","media"].map(key=>[key,[...h.stores[key].rows.values()]])))
+for(const choice of [CHOICE,KEEP])test(`explicit independent names ${choice} reserve only archive identities, never live definitions or diary references`,async()=>{
+  const h=await copyFixture(choice)
+  await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:null,tagIds:[TAG],title:"共享标签的其他日记",dirty:1}))
+  const before=resources(h),queue=await meta(h,"scheduleConversions"),candidates=await meta(h,"scheduleConflicts"),r=await h.copyReview()
+  assert.equal(r.ready,true);assert.equal(r.resolutionEnabled,false)
+  const done=await h.preparer.prepare(r.reviewId,true);assert.equal(done.prepared,true)
+  assert.equal(done.cloudConfirmed,false);assert.equal(done.diarySyncEnabled,false);assert.equal(done.resolutionEnabled,false)
+  assert.equal(resources(h),before);assert.deepEqual(await meta(h,"scheduleConversions"),queue);assert.deepEqual(await meta(h,"scheduleConflicts"),candidates)
+  assert.equal(h.reads,2);assert.equal(h.calls.length,2);assert.equal(h.waits,2)
+  const plan=(await meta(h,ARCHIVE))[0];assert.equal(plan.choice,choice);assert.equal(plan.state,"prepared");assert.equal(plan.names[0].name,h.names[0].name)
+  assert.equal(plan.copies[0].from,TAG);assert.notEqual(plan.copies[0].tag.id,TAG);assert.notEqual(plan.copies[0].tag.id,plan.id)
+  assert.equal(await h.db.tags.get(plan.copies[0].tag.id),undefined);assert.equal(plan.copies[0].tag.color,"green")
+  assert.equal(plan.evidence.local.media[0].blobBase64,localBytes.toString("base64"));assert.equal(plan.evidence.cloudMedia[0].blobBase64,cloudBytes.toString("base64"))
+  assert.deepEqual(Buffer.from(await (await h.db.media.get(OTHER_ID)).blob.arrayBuffer()),localBytes)
+  const held=await h.load("db/scheduleStateRepo.ts").protectedConversions();assert.ok(held.tagIds.has(TAG));assert.ok(held.tagIds.has(plan.copies[0].tag.id));assert.ok(held.entryIds.has(ID));assert.ok(held.mediaIds.has(OTHER_ID))
+})
+for(const mode of ["empty","space","trim","long","existing","near-name","wrong-id","missing","extra","unknown-field","duplicate"])test(`independent naming rejects ${mode} without writes or implicit suffixes`,async()=>{
+  const h=await copyFixture();let names=h.names
+  if(mode==="empty")names=[{from:TAG,name:""}]
+  if(mode==="space")names=[{from:TAG,name:"  "}]
+  if(mode==="trim")names=[{from:TAG,name:" new "}]
+  if(mode==="long")names=[{from:TAG,name:"x".repeat(33)}]
+  if(mode==="existing")names=[{from:TAG,name:"共同标签"}]
+  if(mode==="near-name"){await h.db.tags.put({id:SECOND,name:"Café",color:null,createdAt:AT,dirty:0});names=[{from:TAG,name:"CAFE"}]}
+  if(mode==="wrong-id")names=[{from:SECOND,name:"new"}]
+  if(mode==="missing")names=[]
+  if(mode==="extra")names=[...names,{from:SECOND,name:"extra"}]
+  if(mode==="unknown-field")names=[{...names[0],automatic:true}]
+  if(mode==="duplicate")names=[...names,...names]
+  const before=all(h);assert.equal((await h.preparer.review(ID,h.file,CHOICE,names)).ready,false);assert.equal(all(h),before)
+})
+for(const choice of [CHOICE,KEEP])test(`same saved file and explicit names resume one stable preparation after reload for ${choice}`,async()=>{
+  const h=await preparedCopy(choice),before=all(h),first=h.done
+  h.preparer=h.load("db/scheduleSharedTagCopyRepo.ts").createInternalSharedTagCopyPreparer(h.transport)
+  const listed=await h.preparer.listPrepared();assert.equal(listed.length,1);assert.equal(listed[0].currentEpoch,true);assert.equal(listed[0].planId,first.planId)
+  const r=await h.copyReview();assert.equal(r.ready,true);const done=await h.preparer.prepare(r.reviewId,true)
+  assert.equal(done.prepared,true);assert.equal(done.planId,first.planId);assert.deepEqual(done.copies,first.copies);assert.equal(all(h),before)
+})
+for(const mode of ["confirm","review-id"])test(`independent preparation requires explicit ${mode} before rereading`,async()=>{
+  const h=await copyFixture(),r=await h.copyReview(),reads=h.reads,calls=h.calls.length,before=all(h)
+  assert.equal((await h.preparer.prepare(mode==="review-id"?r.reviewId+1:r.reviewId,mode!=="confirm")).prepared,false)
+  assert.equal(h.reads,reads);assert.equal(h.calls.length,calls);assert.equal(all(h),before)
+})
+for(const mode of ["account","relogin","epoch","file","local-bytes","tag","catalog","cloud","cancel"])test(`independent preparation rejects stale ${mode} without archive or remap`,async()=>{
+  const h=await copyFixture(),r=await h.copyReview();assert.equal(r.ready,true)
+  if(mode==="account")h.user("account-b")
+  if(mode==="relogin"){h.user("account-b");h.user("account-a")}
+  if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"restored"})
+  if(mode==="file"){const file=JSON.parse(h.fileText);file.exportedAt="2026-10-09T10:00:00.000Z";h.fileText=JSON.stringify(file)}
+  if(mode==="local-bytes")await h.db.media.update(OTHER_ID,{blob:blob(png(9))})
+  if(mode==="tag")await h.db.tags.update(TAG,{color:"red"})
+  if(mode==="catalog")await h.db.tags.put({id:SECOND,name:"new unrelated",color:null,createdAt:AT,dirty:0})
+  if(mode==="cloud")h.reply.tags[0].color="red"
+  if(mode==="cancel")h.preparer.cancel()
+  const before=all(h);assert.equal((await h.preparer.prepare(r.reviewId,true)).prepared,false);assert.equal(all(h),before);assert.equal(await meta(h,ARCHIVE),undefined)
+})
+for(const mode of ["cancel","account","epoch","failure"])test(`independent preparation late archive ${mode} rolls the transaction back`,async()=>{
+  const h=await copyFixture(),r=await h.copyReview(),before=all(h),put=h.db.meta.put
+  h.db.meta.put=async row=>{await put(row);if(row.key===ARCHIVE){if(mode==="cancel")h.preparer.cancel();if(mode==="account")h.user("account-b");if(mode==="epoch")await put({key:"ownerGeneration",value:"restored"});if(mode==="failure")throw Error("disk")}}
+  assert.equal((await h.preparer.prepare(r.reviewId,true)).prepared,false);assert.equal(all(h),before)
+})
+for(const mode of ["cancel","account","epoch","failure"])test(`independent preparation byte wait ${mode} cannot commit`,async()=>{
+  const h=await copyFixture(CHOICE,{onWait:async h=>{if(mode==="cancel")h.preparer.cancel();if(mode==="account")h.user("account-b");if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"restored"});if(mode==="failure")throw Error("wait")}})
+  const r=await h.copyReview(),before=all(h);assert.equal(r.ready,true);assert.equal((await h.preparer.prepare(r.reviewId,true)).prepared,false);assert.equal(all(h),before)
+})
+for(const mode of ["plan-collision","copy-collision","duplicate-generated","invalid-generated","dangling-reference"])test(`independent preparation ${mode} never reuses another identity`,async()=>{
+  const h=await copyFixture();let n=0
+  const fresh="019a0300-1234-7000-8000-000000001001"
+  h.mocks["@/shared/ids"].newId=()=>{n++;if(mode==="plan-collision")return TAG;if(mode==="copy-collision")return n===1?fresh:OTHER_ID;if(mode==="invalid-generated")return "random";if(mode==="dangling-reference")return SECOND;return fresh}
+  h.preparer=h.load("db/scheduleSharedTagCopyRepo.ts").createInternalSharedTagCopyPreparer(h.transport)
+  if(mode==="dangling-reference")await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:null,tagIds:[SECOND]}))
+  const r=await h.copyReview(),before=all(h);assert.equal(r.ready,true);assert.equal((await h.preparer.prepare(r.reviewId,true)).prepared,false);assert.equal(all(h),before)
+})
+for(const mode of ["names","choice","epoch"])test(`existing preparation is not replaced by different ${mode}`,async()=>{
+  const h=await preparedCopy(),beforePlans=await meta(h,ARCHIVE)
+  if(mode==="names")h.names=[{from:TAG,name:"另一个明确名称"}]
+  if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"restored"})
+  const r=await h.preparer.review(ID,h.file,mode==="choice"?KEEP:CHOICE,h.names);assert.equal(r.ready,true)
+  const before=all(h);assert.equal((await h.preparer.prepare(r.reviewId,true)).prepared,false);assert.equal(all(h),before);assert.deepEqual(await meta(h,ARCHIVE),beforePlans)
+})
+test("explicit discard only retires unpublished names and leaves original resources and conversion protected",async()=>{
+  const h=await preparedCopy(),before=resources(h),queue=await meta(h,"scheduleConversions"),plan=(await meta(h,ARCHIVE))[0]
+  assert.equal((await h.preparer.discard(plan.id,false)).discarded,false)
+  assert.equal((await h.preparer.discard(plan.id,true)).discarded,true);assert.equal(resources(h),before);assert.deepEqual(await meta(h,"scheduleConversions"),queue)
+  assert.equal((await meta(h,ARCHIVE))[0].state,"discarded");assert.equal((await h.preparer.listPrepared()).length,0)
+  const held=await h.load("db/scheduleStateRepo.ts").protectedConversions();assert.ok(held.entryIds.has(ID));assert.ok(held.tagIds.has(TAG));assert.equal(held.tagIds.has(plan.copies[0].tag.id),false)
+})
+for(const mode of ["epoch","local-change","catalog-change","write-failure"])test(`discard ${mode} leaves the preparation and original hold intact`,async()=>{
+  const h=await preparedCopy(),plan=(await meta(h,ARCHIVE))[0]
+  if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"restored"})
+  if(mode==="local-change")await h.db.entries.update(ID,{title:"new"})
+  if(mode==="catalog-change")await h.db.tags.put({id:SECOND,name:"new",color:null,createdAt:AT,dirty:0})
+  if(mode==="write-failure")h.failNext("meta")
+  const before=all(h);assert.equal((await h.preparer.discard(plan.id,true)).discarded,false);assert.equal(all(h),before)
+})
+for(const mode of ["version","state","field","mapping","hold-set","duplicate"])test(`malformed independent archive ${mode} stops protection-sensitive work`,async()=>{
+  const h=await preparedCopy(),plans=await meta(h,ARCHIVE),plan=plans[0]
+  if(mode==="version")plan.version=2
+  if(mode==="state")plan.state="confirmed"
+  if(mode==="field")plan.unknown=true
+  if(mode==="mapping")plan.copies[0].from=SECOND
+  if(mode==="hold-set")plan.originalTagIds=[]
+  if(mode==="duplicate")plans.push(structuredClone(plan))
+  await h.db.meta.put({key:ARCHIVE,value:plans});const before=all(h)
+  await assert.rejects(h.load("db/scheduleStateRepo.ts").protectedConversions());assert.equal(all(h),before)
+  await assert.rejects(h.preparer.listPrepared())
+})
+for(const epoch of ["epoch","restored"])test(`prepared holds survive missing queue and same-owner epoch ${epoch}`,async()=>{
+  const h=await preparedCopy(),plan=(await meta(h,ARCHIVE))[0]
+  await h.db.meta.put({key:"scheduleConversions",value:[]});await h.db.schedules.update(ID,{dirty:0,serverUpdatedAt:SERVER});await h.db.meta.put({key:"ownerGeneration",value:epoch})
+  const held=await h.load("db/scheduleStateRepo.ts").protectedConversions();assert.ok(held.entryIds.has(ID));assert.ok(held.tagIds.has(TAG));assert.ok(held.tagIds.has(plan.copies[0].tag.id));assert.ok(held.mediaIds.has(OTHER_ID))
+  assert.equal((await h.preparer.listPrepared())[0].currentEpoch,epoch==="epoch")
+})
+test("independent names preserve unrelated archive kinds and normalize microsecond catalog timestamps",async()=>{
+  const h=await copyFixture();await h.db.tags.put({id:SECOND,name:"unrelated",color:null,createdAt:"2026-10-08T10:00:00.123456Z",dirty:0})
+  await h.db.meta.put({key:ARCHIVE,value:[{kind:"other-history",opaque:{keep:true}}]})
+  const r=await h.copyReview();assert.equal(r.ready,true);assert.equal((await h.preparer.prepare(r.reviewId,true)).prepared,true)
+  const plans=await meta(h,ARCHIVE);assert.equal(plans.length,2);assert.equal(plans[0].opaque.keep,true);assert.equal(plans[1].catalog.find(t=>t.id===SECOND).createdAt,"2026-10-08T10:00:00.123456Z")
+})
+test("ordinary P2 cannot upload prepared names, original shared definitions or diaries using them; unrelated data continues",async()=>{
+  const h=await preparedCopy(),sent=[],plan=(await meta(h,ARCHIVE))[0]
+  await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:null,tagIds:[TAG],dirty:1}))
+  await h.db.tags.put({id:SECOND,name:"普通标签",color:null,createdAt:AT,dirty:1})
+  await h.db.entries.put(entry({id:LOCAL_TAG,fromScheduleId:null,content:null,tagIds:[SECOND],dirty:1}))
+  h.mocks["@/api/mappers"]={fromWireEntry:r=>r,fromWireTag:r=>r,mediaPatchFromWire:r=>r,toWireEntry:r=>r,toWireTag:r=>r,toWireMediaMetaPush:r=>r}
+  h.mocks["@/api/endpoints"]={uploadMedia:async()=>{throw Error("protected media uploaded")},pushBatch:async body=>{sent.push(body);return {serverTime:SERVER,entries:body.entries.map(r=>({id:r.id,status:"applied"})),tags:body.tags.map(r=>({id:r.id,status:"applied"})),mediaMeta:body.mediaMeta.map(r=>({id:r.id,status:"applied"}))}},pullChanges:async()=>({serverTime:SERVER,syncUntil:SERVER,cursorId:"",hasMore:false,entries:[],tags:[],mediaMeta:[]})}
+  await h.load("api/sync.ts").runSync();assert.ok(sent.length)
+  const entries=sent.flatMap(b=>b.entries),tags=sent.flatMap(b=>b.tags)
+  assert.deepEqual(entries.map(r=>r.id),[LOCAL_TAG]);assert.deepEqual(tags.map(r=>r.id),[SECOND]);assert.ok(!tags.some(r=>r.id===plan.copies[0].tag.id));assert.equal((await h.db.tags.get(TAG)).dirty,1);assert.equal((await h.db.entries.get(OTHER_ENTRY)).dirty,1)
+})
+for(const choice of [CHOICE,KEEP])test(`independent naming covers all current tags in selected diary order for ${choice}`,async()=>{
+  const h=await tagSetFixture("disjoint",choice)
+  h.preparer=h.load("db/scheduleSharedTagCopyRepo.ts").createInternalSharedTagCopyPreparer(h.transport)
+  const selected=choice===KEEP?await h.db.entries.get(ID):{tagIds:h.reply.review.entry.tag_ids}
+  const names=selected.tagIds.map((from,index)=>({from,name:`独立命名${index+1}`})),r=await h.preparer.review(ID,h.file,choice,[...names].reverse())
+  assert.equal(r.ready,true);const done=await h.preparer.prepare(r.reviewId,true);assert.equal(done.prepared,true)
+  assert.deepEqual(done.copies.map(row=>row.from),selected.tagIds);assert.deepEqual(done.copies.map(row=>row.tag.name),names.map(row=>row.name))
+  assert.equal(new Set(done.copies.map(row=>row.tag.id)).size,names.length)
+})
+for(const names of [[{from:TAG,name:"新名称"},{from:CLOUD_TAG,name:"新名称"}],[{from:TAG,name:"Café"},{from:CLOUD_TAG,name:"CAFE"}]])test(`duplicate new names across selected tags are not auto-adjusted: ${names[0].name}`,async()=>{
+  const h=await tagSetFixture("disjoint"),preparer=h.load("db/scheduleSharedTagCopyRepo.ts").createInternalSharedTagCopyPreparer(h.transport),before=all(h)
+  assert.equal((await preparer.review(ID,h.file,CHOICE,names)).ready,false);assert.equal(all(h),before)
+})
+test("tag-only shared definition conflict can prepare names without downloading or creating any image",async()=>{
+  const h=await tagSetFixture("disjoint",KEEP,{noImages:true}),preparer=h.load("db/scheduleSharedTagCopyRepo.ts").createInternalSharedTagCopyPreparer(h.transport)
+  const current=await h.db.entries.get(ID),r=await preparer.review(ID,h.file,KEEP,current.tagIds.map((from,i)=>({from,name:`无图独立${i}`})))
+  assert.equal(r.ready,true);assert.equal((await preparer.prepare(r.reviewId,true)).prepared,true);assert.equal((await h.db.media.toArray()).length,0)
+})
+test("a name already reserved by another source blocks preparation without silently replacing that plan",async()=>{
+  const h=await copyFixture(),packet=JSON.parse(h.fileText),check=h.load("shared/scheduleSharedTagCopy.ts").checkSharedTagCopyRecord
+  // A valid independent second source uses its own stable diary identity and retains its original evidence.
+  const first=await h.copyReview();assert.equal((await h.preparer.prepare(first.reviewId,true)).prepared,true)
+  const existing=(await meta(h,ARCHIVE))[0],other=JSON.parse(JSON.stringify(existing).replaceAll(ID,OTHER_ENTRY))
+  other.id="019a0300-1234-7000-8000-000000001020";other.copies[0].tag.id="019a0300-1234-7000-8000-000000001021"
+  assert.equal(check(other).scheduleId,OTHER_ENTRY)
+  await h.db.meta.put({key:ARCHIVE,value:[other]});const before=all(h),r=await h.copyReview()
+  assert.equal(r.ready,true);assert.equal((await h.preparer.prepare(r.reviewId,true)).prepared,false);assert.equal(all(h),before)
+  assert.equal(packet.scheduleId,ID)
+})
+test("duplicate reserved copy identities across archive plans fail closed even when a plan is discarded",async()=>{
+  const h=await preparedCopy(),plan=(await meta(h,ARCHIVE))[0],other=structuredClone(plan)
+  other.id="019a0300-1234-7000-8000-000000001020";other.state="discarded"
+  await h.db.meta.put({key:ARCHIVE,value:[plan,other]});await assert.rejects(h.load("db/scheduleStateRepo.ts").protectedConversions())
+})
+test("prepared holds reject P2 cloud overwrites of original and reserved tags while allowing unrelated pulls",async()=>{
+  const h=await preparedCopy(),plan=(await meta(h,ARCHIVE))[0]
+  h.mocks["@/api/mappers"]={fromWireEntry:r=>r,fromWireTag:r=>r,mediaPatchFromWire:r=>r,toWireEntry:r=>r,toWireTag:r=>r,toWireMediaMetaPush:r=>r}
+  h.mocks["@/api/endpoints"]={uploadMedia:async()=>{throw Error("upload")},pushBatch:async()=>{throw Error("push")},pullChanges:async()=>({serverTime:SERVER,syncUntil:SERVER,cursorId:"",hasMore:false,entries:[],tags:[{id:TAG,name:"do not overwrite",color:"red",createdAt:AT,dirty:0},{...plan.copies[0].tag,dirty:0},{id:SECOND,name:"普通云端标签",color:null,createdAt:AT,dirty:0}],mediaMeta:[]})}
+  await h.load("api/sync.ts").runSync();assert.equal((await h.db.tags.get(TAG)).name,"共同标签");assert.equal(await h.db.tags.get(plan.copies[0].tag.id),undefined);assert.equal((await h.db.tags.get(SECOND)).name,"普通云端标签")
+})
+for(const boundary of ["final-get","write-wait"])for(const change of ["tag","bytes","catalog"])test(`independent preparation ${change} at ${boundary} cannot commit stale evidence`,async()=>{
+  const mutate=async h=>{if(change==="tag")await h.db.tags.update(TAG,{name:"concurrent"});if(change==="bytes")await h.db.media.update(OTHER_ID,{blob:blob(png(8))});if(change==="catalog")await h.db.tags.put({id:SECOND,name:"concurrent catalog",color:null,createdAt:AT,dirty:0})}
+  const h=await copyFixture(CHOICE,{onGet:async(h,n)=>{if(boundary==="final-get"&&n===2)await mutate(h)},onWait:async h=>{if(boundary==="write-wait")await mutate(h)}}),r=await h.copyReview(),before=all(h)
+  assert.equal(r.ready,true);assert.equal((await h.preparer.prepare(r.reviewId,true)).prepared,false);assert.equal(await meta(h,ARCHIVE),undefined)
+  if(boundary==="write-wait")assert.equal(all(h),before)
+})
+for(const mode of ["cancel","account","epoch"])test(`late ${mode} while discarding names retains complete archive`,async()=>{
+  const h=await preparedCopy(),plan=(await meta(h,ARCHIVE))[0],before=all(h),put=h.db.meta.put
+  h.db.meta.put=async row=>{await put(row);if(row.key===ARCHIVE){if(mode==="cancel")h.preparer.cancel();if(mode==="account")h.user("account-b");if(mode==="epoch")await put({key:"ownerGeneration",value:"restored"})}}
+  assert.equal((await h.preparer.discard(plan.id,true)).discarded,false);assert.equal(all(h),before)
+})
+test("valid foreign-owner preparation is not exposed or applied to the current owner's resources",async()=>{
+  const h=await preparedCopy(),plans=await meta(h,ARCHIVE),copy=plans[0].copies[0].tag.id
+  plans[0].ownerUserId="account-b";await h.db.meta.put({key:ARCHIVE,value:plans})
+  assert.equal((await h.preparer.listPrepared()).length,0);assert.equal((await h.load("db/scheduleStateRepo.ts").protectedConversions()).tagIds.has(copy),false)
+  assert.equal((await h.preparer.discard(plans[0].id,true)).discarded,false)
+})

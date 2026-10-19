@@ -2,6 +2,8 @@ import { newId } from "@/shared/ids"
 import { isBackupConversion } from "@/shared/scheduleBackup"
 import { conversionCanonical, conversionCopy } from "@/shared/scheduleConversionSync"
 import { SCHEDULE_META_KEYS } from "@/shared/schedules"
+import { SCHEDULE_CONFLICT_ARCHIVE } from "@/shared/scheduleConflict"
+import { sharedTagCopyArchivePlans } from "@/shared/scheduleSharedTagCopy"
 import { collectMediaIds } from "@/shared/text"
 import type { Entry, ScheduleConversion } from "@/shared/types"
 
@@ -111,6 +113,20 @@ export async function protectedConversions(): Promise<{ entryIds: Set<string>; m
       }
       holdTags((value.firstIntent as { entry?: unknown }).entry)
     }
+  }
+  // Unpublished independent names are not tags yet. Their reservation must never let P2
+  // publish new definitions, overwrite originals, remap duplicate names or purge the target.
+  const archive = await db.meta.get(SCHEDULE_CONFLICT_ARCHIVE)
+  if (archive && !Array.isArray(archive.value)) throw new Error("独立标签保护留档损坏")
+  const owner = (await localOwnerSnapshot()).ownerUserId
+  for (const plan of sharedTagCopyArchivePlans(archive?.value ?? [])) {
+    if (plan.ownerUserId !== owner || plan.state !== "prepared") continue
+    // A restore epoch invalidates old writes, not the original definitions' safety hold.
+    entryIds.add(plan.scheduleId)
+    for (const id of plan.originalTagIds) tagIds.add(id)
+    for (const copy of plan.copies) tagIds.add(copy.tag.id)
+    for (const id of plan.evidence.local.mediaIds) mediaIds.add(id)
+    for (const item of plan.evidence.cloudMedia) mediaIds.add(item.id)
   }
   return { entryIds, mediaIds, tagIds }
 }

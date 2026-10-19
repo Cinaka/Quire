@@ -4,8 +4,8 @@ import { conversionCanonical, conversionCopy, conversionUtc } from "./scheduleCo
 import { terminalVersionKey } from "./scheduleTerminalConflict"
 import { scheduleEntryId } from "./schedules"
 
-/** Structural eligibility, never authorization by the file alone. IO/live checks remain mandatory. */
-export function assertDualCloudAdoption(evidence: ScheduleDualResourceEvidence) {
+/** Structural evidence eligibility only, never an authorization to replace shared definitions. */
+export function assertDualResourceAdoptionBase(evidence: ScheduleDualResourceEvidence) {
   const value = checkDualResourceEvidence(evidence), local = value.local, state = local.state
   const cloud = assertDualResourceTarget(local, value.cloud)
   if ((!cloud.media.length && !local.media.length && !cloud.tags.length && !local.tags.length) || state.linkedEntries.length !== 1 || !state.entry ||
@@ -16,6 +16,12 @@ export function assertDualCloudAdoption(evidence: ScheduleDualResourceEvidence) 
   for (const media of local.media) {
     if (media.entryId !== value.scheduleId || media.orphanedAt !== null) throw new Error("孤儿或其他归属媒体不能替换")
   }
+  return cloud
+}
+
+/** Existing membership/adoption path still rejects shared definition differences. */
+export function assertDualCloudAdoption(evidence: ScheduleDualResourceEvidence) {
+  const cloud = assertDualResourceAdoptionBase(evidence), local = evidence.local
   for (const proof of cloud.tags) {
     const tag = local.tags.find(item => item.id === proof.id)
     if (tag && (tag.name !== proof.name || tag.color !== proof.color)) throw new Error("共享标签不同，不能覆盖")
