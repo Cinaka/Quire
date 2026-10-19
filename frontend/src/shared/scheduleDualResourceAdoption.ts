@@ -8,12 +8,11 @@ import { scheduleEntryId } from "./schedules"
 export function assertDualCloudAdoption(evidence: ScheduleDualResourceEvidence) {
   const value = checkDualResourceEvidence(evidence), local = value.local, state = local.state
   const cloud = assertDualResourceTarget(local, value.cloud)
-  if (!cloud.media.length || state.linkedEntries.length !== 1 || !state.entry ||
+  if ((!cloud.media.length && !local.media.length) || state.linkedEntries.length !== 1 || !state.entry ||
       conversionCanonical(state.entry) !== conversionCanonical(state.linkedEntries[0]) ||
       state.intentions.length > 1 || !state.candidates.length || state.p2Conflicts.length ||
-      conversionCanonical([...local.mediaIds].sort()) !== conversionCanonical(cloud.mediaIds) ||
       conversionCanonical([...local.tagIds].sort()) !== conversionCanonical(cloud.tagIds)) {
-    throw new Error("图片集合、稳定关联或其他保护尚不能采用云端版本")
+    throw new Error("稳定关联、标签集合或其他保护尚不能取舍资源")
   }
   for (const media of local.media) {
     if (media.entryId !== value.scheduleId || media.orphanedAt !== null) throw new Error("孤儿或其他归属媒体不能替换")
@@ -23,6 +22,14 @@ export function assertDualCloudAdoption(evidence: ScheduleDualResourceEvidence) 
     if (!tag || tag.name !== proof.name || tag.color !== proof.color) throw new Error("共享标签不同，不能覆盖")
   }
   return cloud
+}
+
+/** Complete evidence sets include local history; these are not per-image merge instructions. */
+export function dualResourceImageSets(evidence: ScheduleDualResourceEvidence) {
+  const cloud = assertDualCloudAdoption(evidence), local = evidence.local.mediaIds
+  return { localOnly: local.filter(id => !cloud.mediaIds.includes(id)),
+    cloudOnly: cloud.mediaIds.filter(id => !local.includes(id)),
+    common: local.filter(id => cloud.mediaIds.includes(id)) }
 }
 
 /** Preserve first-occurrence document order, and never rewrite literal text or unrelated attributes. */
@@ -54,7 +61,7 @@ export function planDualLocalKeep(evidence: ScheduleDualResourceEvidence, mappin
   const ids = localKeepImageIds(evidence), cloud = assertDualCloudAdoption(evidence)
   if (mapping.size !== ids.length || ids.some(id => !mapping.has(id)) ||
       new Set(mapping.values()).size !== mapping.size || [...mapping.values()].some(id =>
-        typeof id !== "string" || scheduleEntryId(id) !== id || evidence.local.mediaIds.includes(id))) {
+        typeof id !== "string" || scheduleEntryId(id) !== id || (evidence.local.mediaIds.includes(id) || cloud.mediaIds.includes(id)))) {
     throw new Error("本机图片必须完整映射到互不重复的新身份")
   }
   const entry = conversionCopy(evidence.local.state.entry!), remote = cloud.review.entry!

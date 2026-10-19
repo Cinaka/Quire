@@ -65,7 +65,7 @@ test("cloud metadata changes are adopted only with the exclusive bytes and saved
   assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,true)
   assert.equal((await h.db.media.get(OTHER_ID)).width,9);assert.equal((await meta(h,ARCHIVE))[0].evidence.local.media[0].width,2)
 })
-for(const mode of ["tag-difference","different-ids","shared-active","shared-deleted","other-intent","other-candidate","p2-history","deep-reference"])test(`unsupported or shared ${mode} stays protected`,async()=>{
+for(const mode of ["tag-difference","shared-active","shared-deleted","other-intent","other-candidate","p2-history","deep-reference"])test(`unsupported or shared ${mode} stays protected`,async()=>{
   const h=await fixture({tagDifference:mode==="tag-difference",differentIds:mode==="different-ids"})
   if(mode.startsWith("shared-"))await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:image(OTHER_ID),isDeleted:mode==="shared-deleted"?1:0,deletedAt:mode==="shared-deleted"?AT:null}))
   if(mode==="other-intent")await h.db.meta.put({key:"scheduleConversions",value:[...await meta(h,"scheduleConversions"),intent({scheduleId:OTHER_ENTRY,source:{...intent().source,id:OTHER_ENTRY},entry:entry({id:OTHER_ENTRY,fromScheduleId:OTHER_ENTRY,content:image(OTHER_ID)}),ownerUserId:"account-a"})]})
@@ -268,7 +268,7 @@ for(const target of ["media","entries","schedules","tags","old-id","invalid","ot
   assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,false);assert.equal(all(h),before)
   assert.deepEqual(Buffer.from(await (await h.db.media.get(OTHER_ID)).blob.arrayBuffer()),localBytes)
 })
-for(const mode of ["shared-diary","other-intent","other-candidate","tag-difference","different-ids"])test(`local keep cannot bypass ${mode}`,async()=>{
+for(const mode of ["shared-diary","other-intent","other-candidate","tag-difference"])test(`local keep cannot bypass ${mode}`,async()=>{
   const h=await keepFixture({tagDifference:mode==="tag-difference",differentIds:mode==="different-ids"})
   if(mode==="shared-diary")await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:image(OTHER_ID)}))
   if(mode==="other-intent")await h.db.meta.put({key:"scheduleConversions",value:[...await meta(h,"scheduleConversions"),intent({scheduleId:OTHER_ENTRY,source:{...intent().source,id:OTHER_ENTRY},entry:entry({id:OTHER_ENTRY,fromScheduleId:OTHER_ENTRY,content:image(OTHER_ID)}),ownerUserId:"account-a"})]})
@@ -368,4 +368,143 @@ test("cancel after clone insertion still rolls back clone, old-cache deletion, d
   h.db.media.add=async row=>{await add(row);h.adopter.cancel()}
   assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,false);assert.equal(all(h),before)
   assert.deepEqual(Buffer.from(await (await h.db.media.get(OTHER_ID)).blob.arrayBuffer()),localBytes)
+})
+
+async function refreshSetEvidence(h) {
+  let text=""; const handle={async getFile(){return {size:new Blob([text]).size,text:async()=>text}},async createWritable(){return {async write(value){text=value},async close(){},async abort(){}}}}
+  const phase=h.phase;h.phase="capture"
+  const exporter=h.load("db/scheduleDualResourceEvidenceRepo.ts").createInternalDualResourceEvidenceExporter(h.transport)
+  const ready=await exporter.prepare(ID,true);assert.equal(ready.ready,true)
+  assert.equal((await exporter.save(ready.reviewId,true,handle)).saved,true)
+  h.fileText=text;h.phase=phase;h.calls=[]
+}
+const images = ids => ({schemaVersion:1,doc:{type:"doc",content:ids.map(id=>({type:"image",attrs:{src:`local://media/${id}`}}))}})
+async function setFixture(kind,choice=CHOICE,options={}) {
+  const h=await (choice===KEEP?keepFixture:fixture)({...options,differentIds:kind==="disjoint"})
+  if(kind==="cloud-superset") {
+    h.reply.media_ids.push(SECOND);h.reply.media.push({...structuredClone(h.reply.media[0]),id:SECOND,sort_order:1})
+    h.reply.review.entry.content=images([OTHER_ID,SECOND])
+  }
+  if(kind==="local-superset") {
+    await h.db.media.put({...await h.db.media.get(OTHER_ID),id:SECOND,sortOrder:1})
+    await h.db.entries.update(ID,{content:images([SECOND,OTHER_ID,SECOND])})
+  }
+  if(kind==="partial-overlap") {
+    const third="019a0300-1234-7000-8000-000000000006"
+    await h.db.media.put({...await h.db.media.get(OTHER_ID),id:SECOND,sortOrder:1})
+    await h.db.entries.update(ID,{content:images([SECOND,OTHER_ID,SECOND])})
+    h.reply.media_ids=[SECOND,third];h.reply.media=[{...structuredClone(h.reply.media[0]),id:SECOND},{...structuredClone(h.reply.media[0]),id:third,sort_order:1}]
+    h.reply.review.entry.content=images([third,SECOND,third])
+  }
+  if(kind==="empty-cloud") {
+    h.reply.media_ids=[];h.reply.media=[];h.reply.review.entry.content=null
+  }
+  if(kind==="empty-local") {
+    await h.db.entries.update(ID,{content:null})
+    await h.db.media.delete(OTHER_ID)
+    await h.db.meta.put({key:"scheduleConflicts",value:[{scheduleId:ID,kind:"conversion-entry",serverEntry:null},{scheduleId:OTHER_ENTRY,kind:"unrelated"}]})
+  }
+  if(kind!=="disjoint")await refreshSetEvidence(h)
+  return h
+}
+for(const kind of ["disjoint","cloud-superset","local-superset","partial-overlap","empty-cloud","empty-local"])for(const choice of [CHOICE,KEEP])test(`different image sets ${kind} support explicit ${choice} without another diary`,async()=>{
+  const h=await setFixture(kind,choice),packet=JSON.parse(h.fileText),file=h.fileText,before=all(h),tag=await h.db.tags.get(TAG),r=await h.review()
+  assert.equal(r.ready,true);assert.equal(all(h),before)
+  const local=packet.local.mediaIds,cloud=packet.cloud.media_ids,expected={localOnly:local.filter(id=>!cloud.includes(id)),cloudOnly:cloud.filter(id=>!local.includes(id)),common:local.filter(id=>cloud.includes(id))}
+  assert.deepEqual(JSON.parse(JSON.stringify(r.imageSets)),expected);assert.deepEqual([...r.choices],[choice])
+  const done=await h.adopter.resolve(r.reviewId,choice,true);assert.equal(done.applied,true)
+  const saved=await h.db.entries.get(ID),archive=(await meta(h,ARCHIVE))[0],rows=await h.db.media.toArray()
+  assert.equal(h.stores.entries.rows.size,1);assert.equal(saved.id,ID);assert.equal(saved.fromScheduleId,ID)
+  assert.deepEqual(archive.result,saved);assert.deepEqual(archive.imageSets,expected)
+  assert.deepEqual(archive.evidence,packet);assert.equal(h.fileText,file);assert.deepEqual(await h.db.tags.get(TAG),tag)
+  assert.equal((await meta(h,"scheduleConversions")).length,0);assert.equal((await meta(h,"scheduleConflicts")).length,1)
+  assert.equal(await meta(h,"pendingPurges"),undefined);assert.equal((await h.db.schedules.get(ID)).dirty,0)
+  if(choice===CHOICE) {
+    assert.deepEqual(rows.map(row=>row.id).sort(),cloud)
+    assert.deepEqual(saved.content,packet.cloud.review.entry.content);assert.equal(saved.title,"云端版本");assert.equal(saved.dirty,0)
+    for(const row of rows){assert.equal(row.dirty,0);assert.equal(row.orphanedAt,null);assert.deepEqual(Buffer.from(await row.blob.arrayBuffer()),cloudBytes)}
+    assert.equal(h.stores.media.rows.has(SECOND),cloud.includes(SECOND))
+  } else {
+    const currentIds=kind==="empty-local"?[]:(kind==="local-superset"||kind==="partial-overlap")?[SECOND,OTHER_ID]:[OTHER_ID]
+    assert.deepEqual(archive.resourceIdMap.map(row=>row.from),currentIds);assert.equal(rows.length,currentIds.length)
+    for(const row of rows){assert.ok(!local.includes(row.id)&&!cloud.includes(row.id));assert.equal(row.dirty,1);assert.equal(row.orphanedAt,null);assert.deepEqual(Buffer.from(await row.blob.arrayBuffer()),localBytes)}
+    assert.equal(saved.title,"本机版本");assert.equal(saved.dirty,1);assert.equal(saved.serverUpdatedAt,SERVER)
+    if(kind==="empty-local")assert.equal(saved.content,null)
+  }
+})
+for(const choice of [CHOICE,KEEP])for(const target of ["media","entries","schedules","tags","shared-active","shared-deleted","other-intent","other-candidate","p2-history"])test(`remote-only ID ${target} stays protected for ${choice}`,async()=>{
+  const h=await setFixture("disjoint",choice)
+  if(target==="media")await h.db.media.put({id:SECOND,entryId:OTHER_ENTRY,blob:blob(png(9)),thumbBlob:null,dirty:0})
+  if(target==="entries")await h.db.entries.put(entry({id:SECOND,fromScheduleId:null,content:null}))
+  if(target==="schedules")await h.db.schedules.put({...terminal(),id:SECOND,convertedEntryId:SECOND})
+  if(target==="tags")await h.db.tags.put({id:SECOND,name:"occupied",color:null,createdAt:AT,dirty:0})
+  if(target.startsWith("shared-"))await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:image(SECOND),isDeleted:target==="shared-deleted"?1:0,deletedAt:target==="shared-deleted"?AT:null}))
+  if(target==="other-intent")await h.db.meta.put({key:"scheduleConversions",value:[...await meta(h,"scheduleConversions"),intent({scheduleId:OTHER_ENTRY,source:{...intent().source,id:OTHER_ENTRY},entry:entry({id:OTHER_ENTRY,fromScheduleId:OTHER_ENTRY,content:image(SECOND)}),ownerUserId:"account-a"})]})
+  if(target==="other-candidate")await h.db.meta.put({key:"scheduleConflicts",value:[...await meta(h,"scheduleConflicts"),{scheduleId:OTHER_ENTRY,kind:"conversion-entry",serverEntry:entry({id:OTHER_ENTRY,fromScheduleId:OTHER_ENTRY,content:image(SECOND)})}]})
+  if(target==="p2-history")await h.db.meta.put({key:"conflicts",value:[{entryId:OTHER_ENTRY,local:entry({id:OTHER_ENTRY,fromScheduleId:null,content:image(SECOND)})}]})
+  const before=all(h);assert.equal((await h.review()).ready,false);assert.equal(all(h),before);assert.equal(await meta(h,ARCHIVE),undefined)
+})
+for(const choice of [CHOICE,KEEP])for(const when of ["after-review","final-get","write-wait"])test(`late remote-only occupancy ${when} cannot commit ${choice}`,async()=>{
+  const insert=async h=>{await h.db.media.put({id:SECOND,entryId:OTHER_ENTRY,blob:blob(png(9)),thumbBlob:null,dirty:0})}
+  const h=await setFixture("disjoint",choice,{onGet:async(h,n)=>{if(when==="final-get"&&n===2)await insert(h)},onWait:async h=>{if(when==="write-wait")await insert(h)}}),r=await h.review()
+  assert.equal(r.ready,true);if(when==="after-review")await insert(h)
+  const before=all(h);assert.equal((await h.adopter.resolve(r.reviewId,choice,true)).applied,false)
+  if(when!=="final-get")assert.equal(all(h),before)
+  else assert.equal((await h.db.media.get(SECOND)).entryId,OTHER_ENTRY)
+  assert.equal((await h.db.entries.get(ID)).title,"本机版本");assert.equal(await meta(h,ARCHIVE),undefined)
+  assert.deepEqual(Buffer.from(await (await h.db.media.get(OTHER_ID)).blob.arrayBuffer()),localBytes)
+})
+for(const operation of ["delete","insert","entry","source","archive"])test(`different-set cloud adoption ${operation} failure rolls the full replacement back`,async()=>{
+  const h=await setFixture("disjoint"),r=await h.review(),before=all(h)
+  if(operation==="delete")h.failNext("media","delete")
+  if(operation==="insert")h.failNext("media","put")
+  if(operation==="entry")h.failNext("entries")
+  if(operation==="source")h.failNext("schedules")
+  if(operation==="archive")h.failNext("meta")
+  assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,false);assert.equal(all(h),before)
+  assert.equal(await h.db.media.get(SECOND),undefined)
+})
+for(const change of ["cancel","account","epoch"])test(`different-set cloud adoption ${change} after local-only eviction rolls back`,async()=>{
+  const h=await setFixture("disjoint"),r=await h.review(),before=all(h),remove=h.db.media.delete
+  h.db.media.delete=async id=>{await remove(id);if(change==="cancel")h.adopter.cancel();if(change==="account")h.user("account-b");if(change==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"restored"})}
+  assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,false);assert.equal(all(h),before)
+})
+test("local fresh ID cannot reuse a cloud-only identity even when it is absent from every local table",async()=>{
+  const h=await setFixture("disjoint",KEEP,{newId:()=>SECOND}),r=await h.review(),before=all(h)
+  assert.equal(r.ready,true);assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,false);assert.equal(all(h),before)
+})
+for(const choice of [CHOICE,KEEP])test(`different image sets still block tag-definition differences for ${choice}`,async()=>{
+  const h=await setFixture("disjoint",choice,{tagDifference:true}),before=all(h)
+  assert.equal((await h.review()).ready,false);assert.equal(all(h),before)
+})
+for(const choice of [CHOICE,KEEP])test(`different-set ${choice} invokes no network writes and hands only selected bytes to normal P2`,async()=>{
+  const h=await setFixture("disjoint",choice),r=await h.review(),sent=[],uploads=[]
+  h.transport.image=()=>{throw Error("resolver must read saved bytes, not request new image bytes")}
+  assert.equal((await h.adopter.resolve(r.reviewId,choice,true)).applied,true)
+  h.mocks["@/api/mappers"]={fromWireEntry:r=>r,fromWireTag:r=>r,mediaPatchFromWire:r=>r,toWireEntry:r=>r,toWireTag:r=>r,toWireMediaMetaPush:r=>r}
+  h.mocks["@/api/endpoints"]={uploadMedia:async(id,bytes)=>{uploads.push({id,bytes})},pushBatch:async body=>{sent.push(body);return {serverTime:SERVER,entries:body.entries.map(r=>({id:r.id,status:"applied"})),tags:body.tags.map(r=>({id:r.id,status:"applied"})),mediaMeta:body.mediaMeta.map(r=>({id:r.id,status:"applied"}))}},pullChanges:async()=>({serverTime:SERVER,syncUntil:SERVER,cursorId:"",hasMore:false,entries:[],tags:[],mediaMeta:[]})}
+  await h.load("api/sync.ts").runSync()
+  assert.ok(sent.every(body=>body.mediaMeta.every(row=>row.id!==OTHER_ID&&row.id!==SECOND)))
+  if(choice===CHOICE){assert.equal(uploads.length,0);assert.ok(sent.every(body=>body.entries.length===0))}
+  else {assert.equal(uploads.length,1);assert.ok(![OTHER_ID,SECOND].includes(uploads[0].id));assert.deepEqual(Buffer.from(await uploads[0].bytes.arrayBuffer()),localBytes);assert.equal(sent[0].entries[0].id,ID)}
+  assert.equal(h.stores.entries.rows.size,1)
+})
+for(const choice of [CHOICE,KEEP])for(const boundary of ["final-get","write-wait"])test(`remote-only reference introduced at ${boundary} blocks ${choice} even without a media row`,async()=>{
+  const share=async h=>{await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:image(SECOND)}))}
+  const h=await setFixture("disjoint",choice,{onGet:async(h,n)=>{if(boundary==="final-get"&&n===2)await share(h)},onWait:async h=>{if(boundary==="write-wait")await share(h)}}),r=await h.review(),before=all(h)
+  assert.equal(r.ready,true);assert.equal((await h.adopter.resolve(r.reviewId,choice,true)).applied,false)
+  if(boundary==="write-wait")assert.equal(all(h),before)
+  assert.equal(await h.db.media.get(SECOND),undefined);assert.equal(await meta(h,ARCHIVE),undefined)
+  assert.equal((await h.db.entries.get(ID)).title,"本机版本")
+})
+for(const choice of [CHOICE,KEEP])test(`different image sets do not implicitly accept different tag membership for ${choice}`,async()=>{
+  const h=await setFixture("disjoint",choice)
+  h.reply.tag_ids=[OTHER_ENTRY];h.reply.tags=[{...h.reply.tags[0],id:OTHER_ENTRY}];h.reply.review.entry.tag_ids=[OTHER_ENTRY]
+  await refreshSetEvidence(h);const before=all(h)
+  assert.equal((await h.review()).ready,false);assert.equal(all(h),before)
+})
+test("cloud-only rows use nonoverwriting add and an in-transaction duplicate rolls every write back",async()=>{
+  const h=await setFixture("disjoint"),r=await h.review(),before=all(h),put=h.db.meta.put
+  h.db.meta.put=async row=>{await put(row);if(row.key===ARCHIVE)await h.db.media.put({id:SECOND,entryId:OTHER_ENTRY,dirty:0})}
+  assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,false);assert.equal(all(h),before)
 })

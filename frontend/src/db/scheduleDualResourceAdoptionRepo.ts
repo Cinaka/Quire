@@ -7,7 +7,7 @@ import { conversionCanonical, conversionCopy, conversionUtc } from "@/shared/sch
 import type { ConversionLease } from "@/shared/scheduleConversionSync"
 import { SCHEDULE_CONFLICT_ARCHIVE } from "@/shared/scheduleConflict"
 import { newId } from "@/shared/ids"
-import { assertDualCloudAdoption, localKeepImageIds, planDualLocalKeep } from "@/shared/scheduleDualResourceAdoption"
+import { assertDualCloudAdoption, dualResourceImageSets, localKeepImageIds, planDualLocalKeep } from "@/shared/scheduleDualResourceAdoption"
 import { assertDualResourceTarget } from "@/shared/scheduleDualResourceEvidence"
 import type { ScheduleDualResourceEvidence } from "@/shared/scheduleDualResourceEvidence"
 import type { ScheduleResourceEvidence } from "@/shared/scheduleResourceEvidence"
@@ -73,8 +73,19 @@ async function verify(active: Ticket, insideWrite = false) {
     throw new Error("本机资源、首次意图或保护已变化")
   }
 }
+/** Remote-only identities must not overwrite any unpreserved cache or occupy another resource. */
+async function checkResourceIdentities(active: Ticket) {
+  const cloud = assertDualCloudAdoption(active.evidence), sets = dualResourceImageSets(active.evidence)
+  await assertExclusiveMedia(active.id, [...new Set([...active.evidence.local.mediaIds, ...cloud.mediaIds])])
+  for (const id of sets.cloudOnly) {
+    if (await db.media.get(id) || await db.entries.get(id) || await db.schedules.get(id) || await db.tags.get(id)) {
+      throw new Error("云端新增图片身份已在本机占用，未覆盖或弃去")
+    }
+  }
+}
 async function checkWatermarks(active: Ticket) {
   const cloud = assertDualCloudAdoption(active.evidence)
+  await checkResourceIdentities(active)
   const source = active.evidence.local.state.source!, entry = active.evidence.local.state.entry!
   const base = await readScheduleServerState(active.lease, active.id)
   const remote = cloud.review.schedule!, diary = cloud.review.entry!
@@ -112,7 +123,7 @@ function createDualResourceResolver(transport: ScheduleCloudResourceTransport, a
         await verify(active); guard(run)
         ticket = active
         return { ready: true, reason: keepLocal ? "explicit_fresh_id_local_keep" : "explicit_exclusive_cloud_adoption", reviewId,
-          choices: [acceptedChoice], mediaCount: cloud.media.length,
+          choices: [acceptedChoice], mediaCount: cloud.media.length, imageSets: dualResourceImageSets(evidence),
           warning: keepLocal ? "fork_local_image_ids_and_evict_old_cache_not_cloud_delete" : "replace_exclusive_local_images_after_preserving_both_versions" }
       } catch { return { ready: false, reason: run !== operation ? "cancelled_recheck" : "cloud_adoption_protected", reviewId: 0, choices: [] as string[] } }
       finally { busy = false }
@@ -142,7 +153,7 @@ function createDualResourceResolver(transport: ScheduleCloudResourceTransport, a
           if (keepLocal) {
             for (const from of localKeepImageIds(active.evidence)) {
               const to = newId()
-              if (scheduleEntryId(to) !== to || active.evidence.local.mediaIds.includes(to) || [...mapping.values()].includes(to) ||
+              if (scheduleEntryId(to) !== to || (active.evidence.local.mediaIds.includes(to) || cloud.mediaIds.includes(to)) || [...mapping.values()].includes(to) ||
                   await db.media.get(to) || await db.entries.get(to) || await db.schedules.get(to) || await db.tags.get(to)) {
                 throw new Error("新媒体身份无效或已占用，未覆盖")
               }
@@ -158,6 +169,7 @@ function createDualResourceResolver(transport: ScheduleCloudResourceTransport, a
             ownerUserId: active.lease.ownerUserId, generation: active.lease.generation, scheduleId: active.id,
             kind: keepLocal ? "terminal-dual-resource-local-keep" : "terminal-dual-resource-cloud-adoption", choice, at,
             ...(localPlan ? { resourceIdMap: conversionCopy(localPlan.resourceIdMap) } : {}),
+            imageSets: dualResourceImageSets(active.evidence),
             evidence: conversionCopy(active.evidence), result: conversionCopy(chosen),
           }] }); await check()
           if (localPlan) {
@@ -172,11 +184,15 @@ function createDualResourceResolver(transport: ScheduleCloudResourceTransport, a
               await check()
             }
           } else {
+            // Local-only images are archived before cache eviction. No orphan marker or cloud delete.
+            for (const id of dualResourceImageSets(active.evidence).localOnly) { await db.media.delete(id); await check() }
             for (const media of active.evidence.cloudMedia) {
-              await db.media.put({ id: media.id, entryId: active.id, mime: media.mime, width: media.width, height: media.height,
-                size: media.size, sortOrder: media.sortOrder, createdAt: media.createdAt, dirty: 0, orphanedAt: null,
+              const row = { id: media.id, entryId: active.id, mime: media.mime, width: media.width, height: media.height,
+                size: media.size, sortOrder: media.sortOrder, createdAt: media.createdAt, dirty: 0 as const, orphanedAt: null,
                 remoteUrl: "", thumbRemoteUrl: "", blob: resourceRepairBlob(media.blobBase64, media.mime),
-                thumbBlob: media.thumbBase64 === null ? null : resourceRepairBlob(media.thumbBase64, media.thumbMime!) })
+                thumbBlob: media.thumbBase64 === null ? null : resourceRepairBlob(media.thumbBase64, media.thumbMime!) }
+              if (active.evidence.local.mediaIds.includes(media.id)) await db.media.put(row)
+              else await db.media.add(row)
               await check()
             }
           }
