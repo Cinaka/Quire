@@ -157,6 +157,11 @@ async function attachServerConflict(server: Entry): Promise<void> {
   await db.meta.put({ key: "conflicts", value: list })
 }
 
+// 共享标签未取舍前，依赖它的普通日记也不先上传；无关记录保持P2原流程。
+function heldEntry(entry: Entry, held: Awaited<ReturnType<typeof protectedConversions>>): boolean {
+  return held.entryIds.has(entry.id) || entry.tagIds.some(id => held.tagIds.has(id))
+}
+
 async function pushAll(context: SyncContext): Promise<{ serverTime: string; complete: boolean; hadWork: boolean }> {
   let serverTime = ""
   let hadWork = false
@@ -169,8 +174,8 @@ async function pushAll(context: SyncContext): Promise<{ serverTime: string; comp
       db.tags.where("dirty").equals(1).toArray(),
       db.media.where("dirty").equals(1).toArray(),
     ])
-    const entries = allEntries.filter((item) => !blocked.entry.has(item.id) && !protectedRows.entryIds.has(item.id)).slice(0, BATCH)
-    const tags = allTags.filter((item) => !blocked.tag.has(item.id)).slice(0, BATCH)
+    const entries = allEntries.filter((item) => !blocked.entry.has(item.id) && !heldEntry(item, protectedRows)).slice(0, BATCH)
+    const tags = allTags.filter((item) => !blocked.tag.has(item.id) && !protectedRows.tagIds.has(item.id)).slice(0, BATCH)
     const mediaMeta = allMedia.filter((item) => !blocked.media.has(item.id) && !protectedRows.entryIds.has(item.entryId) && !protectedRows.mediaIds.has(item.id)).slice(0, BATCH)
     if (!entries.length && !tags.length && !mediaMeta.length) {
       return { serverTime, complete: true, hadWork }
@@ -196,15 +201,26 @@ async function pushAll(context: SyncContext): Promise<{ serverTime: string; comp
     }
 
     await assertSyncContext(context)
+    // 图片上传跨越await边界；重新计算，避免期间新增转换保护漏入正文/标签批次。
+    const beforeSend = await protectedConversions()
+    await assertSyncContext(context)
+    const outboundEntries = entries.filter(item => !heldEntry(item, beforeSend))
+    const outboundTags = tags.filter(item => !beforeSend.tagIds.has(item.id))
+    const outboundMedia = mediaMeta.filter(item => !uploadFailed.has(item.id)
+      && !beforeSend.entryIds.has(item.entryId) && !beforeSend.mediaIds.has(item.id))
+    if (!outboundEntries.length && !outboundTags.length && !outboundMedia.length) {
+      if (uploadFailed.size) return { serverTime, complete: false, hadWork }
+      continue
+    }
     const result = await pushBatch({
-      entries: entries.map(toWireEntry),
-      tags: tags.map(toWireTag),
-      mediaMeta: mediaMeta.filter((item) => !uploadFailed.has(item.id)).map(toWireMediaMetaPush),
+      entries: outboundEntries.map(toWireEntry),
+      tags: outboundTags.map(toWireTag),
+      mediaMeta: outboundMedia.map(toWireMediaMetaPush),
     }, context.ownerUserId)
     serverTime = result.serverTime
-    const sentEntries = new Map(entries.map((item) => [item.id, item]))
-    const sentTags = new Map(tags.map((item) => [item.id, item]))
-    const sentMedia = new Map(mediaMeta.map((item) => [item.id, item]))
+    const sentEntries = new Map(outboundEntries.map((item) => [item.id, item]))
+    const sentTags = new Map(outboundTags.map((item) => [item.id, item]))
+    const sentMedia = new Map(outboundMedia.map((item) => [item.id, item]))
     let reconciledDuplicate = false
     let superseded = false
 
@@ -213,8 +229,10 @@ async function pushAll(context: SyncContext): Promise<{ serverTime: string; comp
       const protectedNow = await protectedConversions()
       const currentPurges = await pendingPurgeIds()
       for (const item of result.entries) {
-        if (protectedNow.entryIds.has(item.id)) continue
+        const sent = sentEntries.get(item.id)
+        if (!sent || heldEntry(sent, protectedNow)) continue
         const local = await db.entries.get(item.id)
+        if (local && heldEntry(local, protectedNow)) continue
         if (!sameEntryRevision(local, sentEntries.get(item.id))) {
           superseded = true
           continue
@@ -235,6 +253,7 @@ async function pushAll(context: SyncContext): Promise<{ serverTime: string; comp
         }
       }
       for (const item of result.tags) {
+        if (!sentTags.has(item.id) || protectedNow.tagIds.has(item.id)) continue
         const local = await db.tags.get(item.id)
         if (!sameTagRevision(local, sentTags.get(item.id))) {
           superseded = true
@@ -243,11 +262,15 @@ async function pushAll(context: SyncContext): Promise<{ serverTime: string; comp
         if (item.status === "applied") {
           await db.tags.update(item.id, { dirty: 0 })
           await clearError("tag", item.id)
-        } else if (await reconcileDuplicateTag(item)) {
-          reconciledDuplicate = true
-          await clearError("tag", item.id)
-        } else if (item.status === "error") {
-          await noteError("tag", item.id, item.message)
+        } else {
+          const duplicate = await reconcileDuplicateTag(item)
+          if (duplicate === "deferred") continue // 等待资源取舍不是失败，不累计至永久暂停。
+          if (duplicate) {
+            reconciledDuplicate = true
+            await clearError("tag", item.id)
+          } else if (item.status === "error") {
+            await noteError("tag", item.id, item.message)
+          }
         }
       }
       for (const item of result.mediaMeta) {
@@ -275,11 +298,14 @@ async function pushAll(context: SyncContext): Promise<{ serverTime: string; comp
   }
 }
 
-async function reconcileDuplicateTag(item: PushItemResult): Promise<boolean> {
+async function reconcileDuplicateTag(item: PushItemResult): Promise<boolean | "deferred"> {
   if (item.status !== "error" || !item.message?.startsWith(DUPLICATE_TAG_PREFIX)) return false
   const canonicalId = item.message.slice(DUPLICATE_TAG_PREFIX.length)
   if (!canonicalId || canonicalId === item.id) return false
+  const held = await protectedConversions()
+  if (held.tagIds.has(item.id) || held.tagIds.has(canonicalId)) return "deferred"
   const affected = await db.entries.where("tagIds").equals(item.id).toArray()
+  if (affected.some(entry => heldEntry(entry, held))) return "deferred"
   for (const entry of affected) {
     const now = utcNow()
     await db.entries.update(entry.id, {
@@ -339,7 +365,9 @@ async function pullAll(since: string, context: SyncContext): Promise<void> {
           await db.entries.put({ ...incoming, dirty: 0 })
         }
       }
-      await mergeTags(result.tags)
+      // 本页的受保护云端日记可能刚增加新的候选标签引用。
+      const afterCandidates = await protectedConversions()
+      await mergeTags(result.tags.filter(row => !afterCandidates.tagIds.has(row.id)))
       await mergeMediaMeta(result.mediaMeta.filter(row => (!row.entry_id || !protectedNow.entryIds.has(row.entry_id)) && !protectedNow.mediaIds.has(row.id)))
     })
     cursor = result.serverTime

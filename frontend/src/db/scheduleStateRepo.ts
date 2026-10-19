@@ -59,14 +59,28 @@ export async function retainConversionMedia(entryId: string, ids: string[]): Pro
     value: queued.map(current => current === item ? { ...item, protectedMediaIds: [...held] } : current),
   })
 }
-export async function protectedConversions(): Promise<{ entryIds: Set<string>; mediaIds: Set<string> }> {
+export async function protectedConversions(): Promise<{ entryIds: Set<string>; mediaIds: Set<string>; tagIds: Set<string> }> {
   const entryIds = new Set<string>()
   const mediaIds = new Set<string>()
+  const tagIds = new Set<string>()
+  const holdTags = (value: unknown): void => {
+    if (value == null) return
+    if (typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("转简标签候选损坏，已停止同步或清理")
+    }
+    const ids = (value as { tagIds?: unknown }).tagIds
+    if (ids === undefined) return // 旧候选可能不含标签字段；不推断标签定义。
+    if (!Array.isArray(ids) || ids.some(id => typeof id !== "string" || !id.trim())) {
+      throw new Error("转简标签保护索引损坏，已停止同步或清理")
+    }
+    for (const id of ids) tagIds.add(id)
+  }
   const queued = await readScheduleConversions()
   for (const item of queued) {
     if (typeof item?.scheduleId === "string") entryIds.add(item.scheduleId)
     if (typeof item?.entry?.id === "string") entryIds.add(item.entry.id)
     for (const id of collectMediaIds(item?.entry?.content?.doc)) mediaIds.add(id)
+    holdTags(item?.entry)
     const held = item?.protectedMediaIds
     if (held !== undefined && (!Array.isArray(held) || held.some(id => typeof id !== "string" || !id))) {
       throw new Error("转简图片保护索引损坏，已停止同步或清理")
@@ -81,8 +95,24 @@ export async function protectedConversions(): Promise<{ entryIds: Set<string>; m
   for (const id of entryIds) {
     const entry = await db.entries.get(id)
     for (const mediaId of collectMediaIds(entry?.content?.doc)) mediaIds.add(mediaId)
+    holdTags(entry)
   }
-  return { entryIds, mediaIds }
+  const candidates = await db.meta.get(SCHEDULE_META_KEYS.conflicts)
+  if (candidates && !Array.isArray(candidates.value)) {
+    throw new Error("转换候选记录损坏，已停止同步或清理")
+  }
+  for (const value of (candidates?.value ?? []) as Array<Record<string, unknown>>) {
+    if (!value || typeof value.scheduleId !== "string" || !entryIds.has(value.scheduleId)) continue
+    holdTags(value.localEntry)
+    holdTags(value.serverEntry)
+    if (value.firstIntent != null) {
+      if (typeof value.firstIntent !== "object" || Array.isArray(value.firstIntent)) {
+        throw new Error("转简首次候选损坏，已停止同步或清理")
+      }
+      holdTags((value.firstIntent as { entry?: unknown }).entry)
+    }
+  }
+  return { entryIds, mediaIds, tagIds }
 }
 export async function holdConversionServerEntry(entry: Entry): Promise<void> {
   const key = SCHEDULE_META_KEYS.conflicts
