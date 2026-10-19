@@ -7,13 +7,14 @@ import { conversionCanonical, conversionCopy, conversionUtc } from "@/shared/sch
 import type { ConversionLease } from "@/shared/scheduleConversionSync"
 import { SCHEDULE_CONFLICT_ARCHIVE } from "@/shared/scheduleConflict"
 import { newId } from "@/shared/ids"
-import { assertDualCloudAdoption, dualResourceImageSets, localKeepImageIds, planDualLocalKeep } from "@/shared/scheduleDualResourceAdoption"
+import { assertDualCloudAdoption, dualResourceImageSets, dualResourceTagSets, localKeepImageIds, planDualLocalKeep } from "@/shared/scheduleDualResourceAdoption"
 import { assertDualResourceTarget } from "@/shared/scheduleDualResourceEvidence"
 import type { ScheduleDualResourceEvidence } from "@/shared/scheduleDualResourceEvidence"
 import type { ScheduleResourceEvidence } from "@/shared/scheduleResourceEvidence"
 import { terminalVersionKey } from "@/shared/scheduleTerminalConflict"
 import { scheduleEntryId, SCHEDULE_META_KEYS } from "@/shared/schedules"
 import { toPlainText } from "@/shared/text"
+import type { Tag } from "@/shared/types"
 
 import { captureScheduleResourceSnapshot, encodeScheduleResourceSnapshot, scheduleResourceSnapshotEvidence } from "./scheduleResourceEvidenceRepo"
 import { assertScheduleLease, readCheckedConversionQueue, readScheduleServerState, rememberScheduleServerState } from "./scheduleSyncStateRepo"
@@ -21,7 +22,7 @@ import { db, scheduleResourceTransactionAborter, waitForScheduleResourceBytes } 
 
 interface Ticket {
   id: string; lease: ConversionLease; fingerprint: string; evidence: ScheduleDualResourceEvidence
-  file: ConflictEvidenceReadableFile
+  file: ConflictEvidenceReadableFile; keepLocal: boolean; tagFingerprint: string
 }
 const localVersion = (value: ScheduleResourceEvidence) => {
   const { exportedAt: _time, ...rest } = value
@@ -33,16 +34,16 @@ async function records(key: string): Promise<unknown[]> {
   return (row?.value ?? []) as unknown[]
 }
 /** Includes deleted diaries and other queued/historical candidates, not just current visible bodies. */
-async function assertExclusiveMedia(id: string, ids: string[]) {
+async function assertExclusiveMedia(id: string, ids: string[], kind = "图片") {
   const target = new Set(ids)
   const scan = (root: unknown) => {
     const stack = [{ value: root, depth: 0 }]; let work = 0
     while (stack.length) {
       const { value, depth } = stack.pop()!
-      if (++work > 200000 || depth > 72) throw new Error("其他引用过深或过大，不能证明图片独占")
+      if (++work > 200000 || depth > 72) throw new Error(`其他引用过深或过大，不能证明${kind}独占`)
       if (typeof value === "string" && (target.has(value) ||
           value.startsWith("local://media/") && target.has(value.slice("local://media/".length)))) {
-        throw new Error("图片被其他日记、首次意图或历史候选共享，不能替换")
+        throw new Error(`${kind}被其他日记、首次意图或历史候选共享，不能替换`)
       }
       if (value && typeof value === "object") for (const child of Object.values(value)) stack.push({ value: child, depth: depth + 1 })
     }
@@ -83,9 +84,43 @@ async function checkResourceIdentities(active: Ticket) {
     }
   }
 }
+// Conservative name ambiguity guard, not an implementation of every MySQL collation rule.
+const tagNameKey = (name: string) => name.normalize("NFKD").replace(/\p{M}/gu, "").trim().toLowerCase()
+async function captureTagMembership(id: string, evidence: ScheduleDualResourceEvidence, keepLocal: boolean) {
+  const cloud = assertDualCloudAdoption(evidence), sets = dualResourceTagSets(evidence)
+  // An absent tag in the current cloud diary is not proof of its global definition.
+  // Releasing dirty local-only tags would silently authorize writes to other cloud diaries.
+  if (evidence.local.tags.some(tag => sets.localOnly.includes(tag.id) && tag.dirty !== 0)) {
+    throw new Error("本机独有标签仍有未确认定义修改，请保留保护")
+  }
+  const catalog = await db.tags.toArray(), seen: Array<{ id: string; row: Tag | null }> = [], additions: Tag[] = []
+  for (const proof of cloud.tags) {
+    const row = catalog.find(tag => tag.id === proof.id) ?? null
+    if (row && (row.name !== proof.name || row.color !== proof.color)) throw new Error("已有共享标签定义不同，未覆盖")
+    if (catalog.some(tag => tag.id !== proof.id && tagNameKey(tag.name) === tagNameKey(proof.name)) ||
+        cloud.tags.some(tag => tag.id !== proof.id && tagNameKey(tag.name) === tagNameKey(proof.name))) {
+      throw new Error("同名或近似同名标签身份不同，不能自动合并")
+    }
+    seen.push({ id: proof.id, row })
+    if (!row) {
+      if (await db.entries.get(proof.id) || await db.schedules.get(proof.id) || await db.media.get(proof.id)) {
+        throw new Error("云端标签身份已在本机其他资源占用")
+      }
+      await assertExclusiveMedia(id, [proof.id], "缺失标签身份")
+      if (!keepLocal) additions.push({ ...conversionCopy(proof), dirty: 0 })
+    }
+  }
+  return { sets, seen, additions }
+}
+async function checkTagMembership(active: Ticket) {
+  const plan = await captureTagMembership(active.id, active.evidence, active.keepLocal)
+  if (conversionCanonical(plan) !== active.tagFingerprint) throw new Error("标签身份、定义或待安装状态已变化")
+  return plan
+}
 async function checkWatermarks(active: Ticket) {
   const cloud = assertDualCloudAdoption(active.evidence)
   await checkResourceIdentities(active)
+  await checkTagMembership(active)
   const source = active.evidence.local.state.source!, entry = active.evidence.local.state.entry!
   const base = await readScheduleServerState(active.lease, active.id)
   const remote = cloud.review.schedule!, diary = cloud.review.entry!
@@ -116,14 +151,16 @@ function createDualResourceResolver(transport: ScheduleCloudResourceTransport, a
         if (keepLocal) { await verifyDualLocalKeepImages(evidence); guard(run); await assertScheduleLease(lease); guard(run) }
         const latest = await current(id, lease); guard(run)
         if (localVersion(latest.local) !== localVersion(evidence.local)) throw new Error("文件不是当前本机快照")
-        const active: Ticket = { id, lease, fingerprint: latest.fingerprint, evidence, file }
+        const tagPlan = await captureTagMembership(id, evidence, keepLocal); guard(run); await assertScheduleLease(lease); guard(run)
+        const active: Ticket = { id, lease, fingerprint: latest.fingerprint, evidence, file, keepLocal, tagFingerprint: conversionCanonical(tagPlan) }
         await checkWatermarks(active); guard(run)
         const wire = await transport.review(id, conversionCopy(lease)); guard(run); await assertScheduleLease(lease); guard(run)
         if (conversionCanonical(assertDualResourceTarget(evidence.local, wire)) !== conversionCanonical(cloud)) throw new Error("文件不是当前云端版本")
         await verify(active); guard(run)
+        await checkTagMembership(active); guard(run); await assertScheduleLease(lease); guard(run)
         ticket = active
         return { ready: true, reason: keepLocal ? "explicit_fresh_id_local_keep" : "explicit_exclusive_cloud_adoption", reviewId,
-          choices: [acceptedChoice], mediaCount: cloud.media.length, imageSets: dualResourceImageSets(evidence),
+          choices: [acceptedChoice], mediaCount: cloud.media.length, imageSets: dualResourceImageSets(evidence), tagSets: dualResourceTagSets(evidence),
           warning: keepLocal ? "fork_local_image_ids_and_evict_old_cache_not_cloud_delete" : "replace_exclusive_local_images_after_preserving_both_versions" }
       } catch { return { ready: false, reason: run !== operation ? "cancelled_recheck" : "cloud_adoption_protected", reviewId: 0, choices: [] as string[] } }
       finally { busy = false }
@@ -149,11 +186,12 @@ function createDualResourceResolver(transport: ScheduleCloudResourceTransport, a
           abortWrite = scheduleResourceTransactionAborter(); await check()
           await verify(active, true); await check()
           await checkWatermarks(active); await check()
+          const tagPlan = await checkTagMembership(active); await check()
           const at = conversionUtc(new Date().toISOString()), mapping = new Map<string, string>()
           if (keepLocal) {
             for (const from of localKeepImageIds(active.evidence)) {
               const to = newId()
-              if (scheduleEntryId(to) !== to || (active.evidence.local.mediaIds.includes(to) || cloud.mediaIds.includes(to)) || [...mapping.values()].includes(to) ||
+              if (scheduleEntryId(to) !== to || (active.evidence.local.mediaIds.includes(to) || cloud.mediaIds.includes(to) || active.evidence.local.tagIds.includes(to) || cloud.tagIds.includes(to)) || [...mapping.values()].includes(to) ||
                   await db.media.get(to) || await db.entries.get(to) || await db.schedules.get(to) || await db.tags.get(to)) {
                 throw new Error("新媒体身份无效或已占用，未覆盖")
               }
@@ -169,9 +207,10 @@ function createDualResourceResolver(transport: ScheduleCloudResourceTransport, a
             ownerUserId: active.lease.ownerUserId, generation: active.lease.generation, scheduleId: active.id,
             kind: keepLocal ? "terminal-dual-resource-local-keep" : "terminal-dual-resource-cloud-adoption", choice, at,
             ...(localPlan ? { resourceIdMap: conversionCopy(localPlan.resourceIdMap) } : {}),
-            imageSets: dualResourceImageSets(active.evidence),
+            imageSets: dualResourceImageSets(active.evidence), tagPlan: conversionCopy(tagPlan),
             evidence: conversionCopy(active.evidence), result: conversionCopy(chosen),
           }] }); await check()
+          for (const tag of tagPlan.additions) { await db.tags.add(tag); await check() }
           if (localPlan) {
             // Cache eviction only: no old-ID dirty row, orphan tombstone or server deletion request.
             // Both old physical versions remain in the verified external file and transaction archive.

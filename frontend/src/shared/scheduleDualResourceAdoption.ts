@@ -8,10 +8,9 @@ import { scheduleEntryId } from "./schedules"
 export function assertDualCloudAdoption(evidence: ScheduleDualResourceEvidence) {
   const value = checkDualResourceEvidence(evidence), local = value.local, state = local.state
   const cloud = assertDualResourceTarget(local, value.cloud)
-  if ((!cloud.media.length && !local.media.length) || state.linkedEntries.length !== 1 || !state.entry ||
+  if ((!cloud.media.length && !local.media.length && !cloud.tags.length && !local.tags.length) || state.linkedEntries.length !== 1 || !state.entry ||
       conversionCanonical(state.entry) !== conversionCanonical(state.linkedEntries[0]) ||
-      state.intentions.length > 1 || !state.candidates.length || state.p2Conflicts.length ||
-      conversionCanonical([...local.tagIds].sort()) !== conversionCanonical(cloud.tagIds)) {
+      state.intentions.length > 1 || !state.candidates.length || state.p2Conflicts.length) {
     throw new Error("稳定关联、标签集合或其他保护尚不能取舍资源")
   }
   for (const media of local.media) {
@@ -19,7 +18,7 @@ export function assertDualCloudAdoption(evidence: ScheduleDualResourceEvidence) 
   }
   for (const proof of cloud.tags) {
     const tag = local.tags.find(item => item.id === proof.id)
-    if (!tag || tag.name !== proof.name || tag.color !== proof.color) throw new Error("共享标签不同，不能覆盖")
+    if (tag && (tag.name !== proof.name || tag.color !== proof.color)) throw new Error("共享标签不同，不能覆盖")
   }
   return cloud
 }
@@ -30,6 +29,14 @@ export function dualResourceImageSets(evidence: ScheduleDualResourceEvidence) {
   return { localOnly: local.filter(id => !cloud.mediaIds.includes(id)),
     cloudOnly: cloud.mediaIds.filter(id => !local.includes(id)),
     common: local.filter(id => cloud.mediaIds.includes(id)) }
+}
+
+/** Membership only: a shared definition difference is still an unresolved global operation. */
+export function dualResourceTagSets(evidence: ScheduleDualResourceEvidence) {
+  const cloud = assertDualCloudAdoption(evidence), local = evidence.local.tagIds
+  return { localOnly: local.filter(id => !cloud.tagIds.includes(id)),
+    cloudOnly: cloud.tagIds.filter(id => !local.includes(id)),
+    common: local.filter(id => cloud.tagIds.includes(id)) }
 }
 
 /** Preserve first-occurrence document order, and never rewrite literal text or unrelated attributes. */
@@ -61,7 +68,7 @@ export function planDualLocalKeep(evidence: ScheduleDualResourceEvidence, mappin
   const ids = localKeepImageIds(evidence), cloud = assertDualCloudAdoption(evidence)
   if (mapping.size !== ids.length || ids.some(id => !mapping.has(id)) ||
       new Set(mapping.values()).size !== mapping.size || [...mapping.values()].some(id =>
-        typeof id !== "string" || scheduleEntryId(id) !== id || (evidence.local.mediaIds.includes(id) || cloud.mediaIds.includes(id)))) {
+        typeof id !== "string" || scheduleEntryId(id) !== id || (evidence.local.mediaIds.includes(id) || cloud.mediaIds.includes(id) || evidence.local.tagIds.includes(id) || cloud.tagIds.includes(id)))) {
     throw new Error("本机图片必须完整映射到互不重复的新身份")
   }
   const entry = conversionCopy(evidence.local.state.entry!), remote = cloud.review.entry!

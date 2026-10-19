@@ -497,7 +497,7 @@ for(const choice of [CHOICE,KEEP])for(const boundary of ["final-get","write-wait
   assert.equal(await h.db.media.get(SECOND),undefined);assert.equal(await meta(h,ARCHIVE),undefined)
   assert.equal((await h.db.entries.get(ID)).title,"本机版本")
 })
-for(const choice of [CHOICE,KEEP])test(`different image sets do not implicitly accept different tag membership for ${choice}`,async()=>{
+for(const choice of [CHOICE,KEEP])test(`different image sets cannot release unconfirmed local-only tag definitions for ${choice}`,async()=>{
   const h=await setFixture("disjoint",choice)
   h.reply.tag_ids=[OTHER_ENTRY];h.reply.tags=[{...h.reply.tags[0],id:OTHER_ENTRY}];h.reply.review.entry.tag_ids=[OTHER_ENTRY]
   await refreshSetEvidence(h);const before=all(h)
@@ -506,5 +506,151 @@ for(const choice of [CHOICE,KEEP])test(`different image sets do not implicitly a
 test("cloud-only rows use nonoverwriting add and an in-transaction duplicate rolls every write back",async()=>{
   const h=await setFixture("disjoint"),r=await h.review(),before=all(h),put=h.db.meta.put
   h.db.meta.put=async row=>{await put(row);if(row.key===ARCHIVE)await h.db.media.put({id:SECOND,entryId:OTHER_ENTRY,dirty:0})}
+  assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,false);assert.equal(all(h),before)
+})
+
+const CLOUD_TAG="019a0300-1234-7000-8000-000000000007", LOCAL_TAG="019a0300-1234-7000-8000-000000000008"
+async function tagSetFixture(kind,choice=CHOICE,options={}) {
+  const h=await (choice===KEEP?keepFixture:fixture)(options)
+  await h.db.tags.update(TAG,{dirty:0})
+  if(kind==="disjoint"||kind==="cloud-superset"||kind==="partial-overlap") {
+    const ids=kind==="disjoint"?[CLOUD_TAG]:[TAG,CLOUD_TAG]
+    h.reply.tag_ids=ids;h.reply.review.entry.tag_ids=ids
+    h.reply.tags=ids.map(id=>id===TAG?h.reply.tags[0]:{id,name:"云端另一个标签",color:"blue",created_at:SERVER})
+  }
+  if(kind==="local-superset"||kind==="partial-overlap") {
+    await h.db.tags.put({id:LOCAL_TAG,name:"本机额外标签",color:null,createdAt:AT,dirty:0})
+    await h.db.entries.update(ID,{tagIds:[TAG,LOCAL_TAG]})
+  }
+  if(kind==="empty-cloud") {
+    h.reply.tag_ids=[];h.reply.tags=[];h.reply.review.entry.tag_ids=[]
+  }
+  if(kind==="empty-local") {
+    await h.db.entries.update(ID,{tagIds:[]})
+    const candidates=await meta(h,"scheduleConflicts");candidates[0].localEntry.tagIds=[];candidates[0].serverEntry.tagIds=[]
+    await h.db.meta.put({key:"scheduleConflicts",value:candidates});await h.db.tags.delete(TAG)
+  }
+  if(options.noImages) {
+    await h.db.entries.update(ID,{content:null});h.reply.review.entry.content=null;h.reply.media_ids=[];h.reply.media=[]
+    const candidates=await meta(h,"scheduleConflicts");candidates[0].localEntry.content=null;candidates[0].serverEntry.content=null
+    await h.db.meta.put({key:"scheduleConflicts",value:candidates});await h.db.media.delete(OTHER_ID)
+  }
+  await refreshSetEvidence(h);return h
+}
+for(const kind of ["disjoint","cloud-superset","local-superset","partial-overlap","empty-cloud","empty-local"])for(const choice of [CHOICE,KEEP])test(`tag membership ${kind} supports ${choice} without modifying shared definitions`,async()=>{
+  const h=await tagSetFixture(kind,choice),packet=JSON.parse(h.fileText),tags=await h.db.tags.toArray(),before=all(h),r=await h.review()
+  assert.equal(r.ready,true);assert.equal(all(h),before)
+  const local=packet.local.tagIds,remote=packet.cloud.tag_ids,expected={localOnly:local.filter(id=>!remote.includes(id)),cloudOnly:remote.filter(id=>!local.includes(id)),common:local.filter(id=>remote.includes(id))}
+  assert.deepEqual(JSON.parse(JSON.stringify(r.tagSets)),expected)
+  assert.equal((await h.adopter.resolve(r.reviewId,choice,true)).applied,true)
+  const saved=await h.db.entries.get(ID),archive=(await meta(h,ARCHIVE))[0]
+  assert.deepEqual(saved.tagIds,choice===CHOICE?packet.cloud.review.entry.tag_ids:packet.local.state.entry.tagIds)
+  assert.deepEqual(archive.tagPlan.sets,expected);assert.deepEqual(archive.result,saved)
+  assert.deepEqual(archive.evidence,packet);assert.equal(h.stores.entries.rows.size,1)
+  for(const tag of tags)assert.deepEqual(await h.db.tags.get(tag.id),tag)
+  for(const proof of packet.cloud.tags) {
+    const original=tags.find(tag=>tag.id===proof.id),row=await h.db.tags.get(proof.id)
+    if(original)assert.deepEqual(row,original)
+    else if(choice===CHOICE)assert.deepEqual(row,{id:proof.id,name:proof.name,color:proof.color,createdAt:proof.created_at,dirty:0})
+    else assert.equal(row,undefined)
+  }
+  assert.equal((await meta(h,"scheduleConversions")).length,0);assert.equal((await meta(h,"scheduleConflicts")).length,1)
+})
+for(const choice of [CHOICE,KEEP])test(`tag-only diary membership works without images for ${choice}`,async()=>{
+  const h=await tagSetFixture("disjoint",choice,{noImages:true}),r=await h.review()
+  assert.equal(r.ready,true);assert.equal((await h.adopter.resolve(r.reviewId,choice,true)).applied,true)
+  assert.equal((await h.db.entries.get(ID)).content,null);assert.equal(h.stores.media.rows.size,0)
+  assert.deepEqual((await h.db.entries.get(ID)).tagIds,[choice===CHOICE?CLOUD_TAG:TAG])
+})
+for(const choice of [CHOICE,KEEP])test(`local-only dirty tag definitions cannot be silently released for ${choice}`,async()=>{
+  const h=await tagSetFixture("disjoint",choice);await h.db.tags.update(TAG,{dirty:1});await refreshSetEvidence(h);const before=all(h)
+  assert.equal((await h.review()).ready,false);assert.equal(all(h),before)
+})
+for(const choice of [CHOICE,KEEP])test(`common shared tag name or color difference remains unresolved for ${choice}`,async()=>{
+  const h=await tagSetFixture("cloud-superset",choice);h.reply.tags[0].color="red";await refreshSetEvidence(h);const before=all(h)
+  assert.equal((await h.review()).ready,false);assert.equal(all(h),before)
+})
+for(const choice of [CHOICE,KEEP])test(`existing cloud-only tag with identical definition can stay shared for ${choice}`,async()=>{
+  const h=await tagSetFixture("disjoint",choice),row={id:CLOUD_TAG,name:"云端另一个标签",color:"blue",createdAt:AT,dirty:0}
+  await h.db.tags.put(row);await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:null,tagIds:[CLOUD_TAG],dirty:0}))
+  const other=await h.db.entries.get(OTHER_ENTRY),r=await h.review();assert.equal(r.ready,true)
+  assert.equal((await h.adopter.resolve(r.reviewId,choice,true)).applied,true)
+  assert.deepEqual(await h.db.tags.get(CLOUD_TAG),row);assert.deepEqual(await h.db.entries.get(OTHER_ENTRY),other)
+})
+for(const choice of [CHOICE,KEEP])for(const mode of ["different-name","different-color","same-name-other-id","case-accent-name","cross-media","cross-entry","cross-source","missing-shared","missing-intent","missing-candidate","missing-p2"])test(`cloud-only tag ${mode} blocks unsafe ${choice}`,async()=>{
+  const h=await tagSetFixture("disjoint",choice)
+  if(mode==="different-name"||mode==="different-color")await h.db.tags.put({id:CLOUD_TAG,name:mode==="different-name"?"其他定义":"云端另一个标签",color:mode==="different-color"?"red":"blue",createdAt:AT,dirty:0})
+  if(mode==="same-name-other-id")await h.db.tags.put({id:LOCAL_TAG,name:"云端另一个标签",color:"blue",createdAt:AT,dirty:0})
+  if(mode==="case-accent-name"){h.reply.tags[0].name="Résumé";await refreshSetEvidence(h);await h.db.tags.put({id:LOCAL_TAG,name:" resume ",color:null,createdAt:AT,dirty:0})}
+  if(mode==="cross-media")await h.db.media.put({id:CLOUD_TAG,entryId:OTHER_ENTRY,blob:blob(png(9)),dirty:0})
+  if(mode==="cross-entry")await h.db.entries.put(entry({id:CLOUD_TAG,fromScheduleId:null,content:null}))
+  if(mode==="cross-source")await h.db.schedules.put({...terminal(),id:CLOUD_TAG,convertedEntryId:CLOUD_TAG})
+  if(mode==="missing-shared")await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:null,tagIds:[CLOUD_TAG]}))
+  if(mode==="missing-intent")await h.db.meta.put({key:"scheduleConversions",value:[...await meta(h,"scheduleConversions"),intent({scheduleId:OTHER_ENTRY,source:{...intent().source,id:OTHER_ENTRY},entry:entry({id:OTHER_ENTRY,fromScheduleId:OTHER_ENTRY,content:null,tagIds:[CLOUD_TAG]}),ownerUserId:"account-a"})]})
+  if(mode==="missing-candidate")await h.db.meta.put({key:"scheduleConflicts",value:[...await meta(h,"scheduleConflicts"),{scheduleId:OTHER_ENTRY,kind:"conversion-entry",serverEntry:entry({id:OTHER_ENTRY,fromScheduleId:OTHER_ENTRY,content:null,tagIds:[CLOUD_TAG]})}]})
+  if(mode==="missing-p2")await h.db.meta.put({key:"conflicts",value:[{entryId:OTHER_ENTRY,local:entry({id:OTHER_ENTRY,fromScheduleId:null,content:null,tagIds:[CLOUD_TAG]})}]})
+  const before=all(h);assert.equal((await h.review()).ready,false);assert.equal(all(h),before);assert.equal(await meta(h,ARCHIVE),undefined)
+})
+for(const choice of [CHOICE,KEEP])test(`clean local-only tag shared by other diaries is not edited or removed for ${choice}`,async()=>{
+  const h=await tagSetFixture("disjoint",choice),tag=await h.db.tags.get(TAG)
+  await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:null,tagIds:[TAG],dirty:0}))
+  const other=await h.db.entries.get(OTHER_ENTRY),r=await h.review();assert.equal(r.ready,true)
+  assert.equal((await h.adopter.resolve(r.reviewId,choice,true)).applied,true)
+  assert.deepEqual(await h.db.tags.get(TAG),tag);assert.deepEqual(await h.db.entries.get(OTHER_ENTRY),other)
+})
+for(const boundary of ["after-review","final-get","write-wait"])for(const mode of ["definition","same-name","occupied","missing-reference"])test(`late tag ${mode} at ${boundary} cannot install a stale membership plan`,async()=>{
+  const change=async h=>{
+    if(mode==="definition")await h.db.tags.put({id:CLOUD_TAG,name:"new definition",color:null,createdAt:AT,dirty:1})
+    if(mode==="same-name")await h.db.tags.put({id:LOCAL_TAG,name:"云端另一个标签",color:null,createdAt:AT,dirty:0})
+    if(mode==="occupied")await h.db.media.put({id:CLOUD_TAG,entryId:OTHER_ENTRY,blob:blob(png(9)),dirty:0})
+    if(mode==="missing-reference")await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:null,tagIds:[CLOUD_TAG]}))
+  }
+  const h=await tagSetFixture("disjoint",CHOICE,{onGet:async(h,n)=>{if(boundary==="final-get"&&n===2)await change(h)},onWait:async h=>{if(boundary==="write-wait")await change(h)}}),r=await h.review()
+  assert.equal(r.ready,true);if(boundary==="after-review")await change(h)
+  const before=all(h);assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,false)
+  if(boundary!=="final-get")assert.equal(all(h),before)
+  assert.equal((await h.db.entries.get(ID)).title,"本机版本");assert.equal(await meta(h,ARCHIVE),undefined)
+})
+for(const table of ["tags","media","entries","schedules","meta"])test(`tag adoption ${table} failure rolls tags, bytes, diary and protection back together`,async()=>{
+  const h=await tagSetFixture("disjoint"),r=await h.review(),before=all(h);assert.equal(r.ready,true);h.failNext(table)
+  assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,false);assert.equal(all(h),before);assert.equal(await h.db.tags.get(CLOUD_TAG),undefined)
+})
+for(const mode of ["cancel","account","epoch"])test(`late ${mode} after adding cloud tag rolls the tag and archive back`,async()=>{
+  const h=await tagSetFixture("disjoint"),r=await h.review(),before=all(h),add=h.db.tags.add
+  h.db.tags.add=async row=>{await add(row);if(mode==="cancel")h.adopter.cancel();if(mode==="account")h.user("account-b");if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"restored"})}
+  assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,false);assert.equal(all(h),before)
+})
+test("retained image ID cannot collide with a cloud-only tag that is not yet installed",async()=>{
+  const h=await tagSetFixture("disjoint",KEEP,{newId:()=>CLOUD_TAG}),r=await h.review(),before=all(h)
+  assert.equal(r.ready,true);assert.equal((await h.adopter.resolve(r.reviewId,KEEP,true)).applied,false);assert.equal(all(h),before)
+})
+for(const choice of [CHOICE,KEEP])test(`ordinary P2 after tag membership ${choice} does not upload or redefine shared tags`,async()=>{
+  const h=await tagSetFixture("disjoint",choice),r=await h.review(),sent=[]
+  assert.equal((await h.adopter.resolve(r.reviewId,choice,true)).applied,true)
+  h.mocks["@/api/mappers"]={fromWireEntry:r=>r,fromWireTag:r=>r,mediaPatchFromWire:r=>r,toWireEntry:r=>r,toWireTag:r=>r,toWireMediaMetaPush:r=>r}
+  h.mocks["@/api/endpoints"]={uploadMedia:async()=>{},pushBatch:async body=>{sent.push(body);return {serverTime:SERVER,entries:body.entries.map(r=>({id:r.id,status:"applied"})),tags:body.tags.map(r=>({id:r.id,status:"applied"})),mediaMeta:body.mediaMeta.map(r=>({id:r.id,status:"applied"}))}},pullChanges:async()=>({serverTime:SERVER,syncUntil:SERVER,cursorId:"",hasMore:false,entries:[],tags:[],mediaMeta:[]})}
+  await h.load("api/sync.ts").runSync();assert.ok(sent.every(body=>body.tags.length===0))
+  if(choice===KEEP)assert.deepEqual(sent[0].entries[0].tagIds,[TAG]);else assert.ok(sent.every(body=>body.entries.length===0))
+})
+for(const choice of [CHOICE,KEEP])test(`identical cloud-only tag appearing after preview still requires a fresh review for ${choice}`,async()=>{
+  const h=await tagSetFixture("disjoint",choice),r=await h.review()
+  assert.equal(r.ready,true);await h.db.tags.put({id:CLOUD_TAG,name:"云端另一个标签",color:"blue",createdAt:AT,dirty:0});const before=all(h)
+  assert.equal((await h.adopter.resolve(r.reviewId,choice,true)).applied,false);assert.equal(all(h),before)
+})
+test("second missing cloud tag failure rolls back the first inserted tag and every other table",async()=>{
+  const h=await tagSetFixture("disjoint")
+  h.reply.tag_ids=[...h.reply.tag_ids,LOCAL_TAG];h.reply.review.entry.tag_ids=[...h.reply.tag_ids];h.reply.tags.push({id:LOCAL_TAG,name:"第二个云端标签",color:null,created_at:SERVER})
+  await refreshSetEvidence(h);const r=await h.review(),before=all(h),add=h.db.tags.add;let calls=0
+  assert.equal(r.ready,true);h.db.tags.add=async row=>{if(++calls===2)throw Error("second tag insert");return add(row)}
+  assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,false);assert.equal(calls,2);assert.equal(all(h),before)
+})
+test("new unrelated tag during review does not invalidate a safe tag membership plan",async()=>{
+  const h=await tagSetFixture("disjoint"),r=await h.review(),row={id:LOCAL_TAG,name:"完全无关",color:null,createdAt:AT,dirty:0}
+  assert.equal(r.ready,true);await h.db.tags.put(row)
+  assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,true);assert.deepEqual(await h.db.tags.get(LOCAL_TAG),row)
+})
+test("cloud tag install never overwrites a duplicate inserted after archive, even within a transaction",async()=>{
+  const h=await tagSetFixture("disjoint"),r=await h.review(),before=all(h),put=h.db.meta.put
+  h.db.meta.put=async row=>{await put(row);if(row.key===ARCHIVE)await h.db.tags.put({id:CLOUD_TAG,name:"do not replace",color:null,createdAt:AT,dirty:1})}
   assert.equal((await h.adopter.resolve(r.reviewId,CHOICE,true)).applied,false);assert.equal(all(h),before)
 })
