@@ -32,7 +32,8 @@ export async function validateScheduleResourceImage(raw: unknown, id: string, me
   return r.data_base64
 }
 export interface DownloadRetainedImage { id: string; original: string | null; thumbnail: string | null }
-/** Missing slots only; all decoded bytes remain in memory until a separately confirmed transaction. */
+/** Bounded in-memory byte assembly, no DB writes. Repair callers allow missing slots only;
+ * dual-version evidence capture may request an independent full cloud snapshot without replacing local bytes. */
 export async function downloadScheduleResourceImages(id: string, cloud: ScheduleCloudResourceReview,
   steps: ScheduleResourceRepairStep[], retained: DownloadRetainedImage[], transport: ScheduleCloudResourceImageTransport,
   lease: ConversionLease, signal: AbortSignal, check: () => Promise<void>): Promise<ResourceEvidenceMedia[]> {
