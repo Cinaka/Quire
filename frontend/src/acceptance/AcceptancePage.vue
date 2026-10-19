@@ -11,17 +11,25 @@
       <button type="button" :disabled="busy" @click="toggleHost">{{ entered ? '关闭验收宿主（先检查未保存输入）' : '重新进入验收宿主' }}</button>
     </div>
     <p>夹具含今日、逾期、未来三个预简和一份未关联首存原稿。不会重复追加，已有数据时拒绝创建，不提供清库按钮。</p>
-    <ScheduleHost v-if="entered" :key="hostKey" ref="hostRef" :port="localScheduleHostRepo" />
+    <ScheduleReminderPanel v-if="entered" :key="hostKey" :port="reminderPort" :context-key="hostKey" @open="focusWorkspace" />
+    <div ref="workspaceArea" tabindex="-1">
+      <ScheduleHost v-if="entered" :key="hostKey" ref="hostRef" :port="localScheduleHostRepo" />
+    </div>
   </main>
 </template>
 <script setup lang="ts">
-import { ref } from "vue"
+import { ref, shallowRef } from "vue"
 import type { AcceptanceSpec } from "./guard"
 import { initializeAcceptance, seedAcceptance } from "./fixtures"
 import { localScheduleHostRepo } from "@/db/scheduleHostRepo"
 import ScheduleHost from "@/components/schedules/ScheduleHost.vue"
+import ScheduleReminderPanel from "@/components/schedules/ScheduleReminderPanel.vue"
+import { createLocalScheduleReminderPort } from "@/db/scheduleReminderRepo"
 const props = defineProps<{ spec: AcceptanceSpec }>()
 const entered = ref(true)
+const reminderPort = shallowRef(createLocalScheduleReminderPort())
+const workspaceArea = ref<HTMLElement | null>(null)
+function focusWorkspace(): void { workspaceArea.value?.focus(); workspaceArea.value?.scrollIntoView({ block: "start" }) }
 const hostKey = ref(1)
 const hostRef = ref<InstanceType<typeof ScheduleHost> | null>(null)
 const busy = ref(false)
@@ -35,7 +43,7 @@ async function seed(): Promise<void> {
     if (!await canLeave()) { error.value = "请先处理宿主中的未保存编辑或确认"; return }
     await seedAcceptance(props.spec)
     notice.value = "测试数据已原子创建。可检查首存分流、到期/逾期转简及受保护日记编辑。"
-    hostKey.value += 1; entered.value = true
+    reminderPort.value = createLocalScheduleReminderPort(); hostKey.value += 1; entered.value = true
   } catch (failure) { error.value = String(failure) }
   finally { busy.value = false }
 }
@@ -44,7 +52,7 @@ async function toggleHost(): Promise<void> {
   busy.value = true; error.value = ""
   try {
     if (entered.value) { if (!await canLeave()) { error.value = "返回保护已阻止关闭，请明确保存或处理未保存输入"; return }; entered.value = false }
-    else { await initializeAcceptance(props.spec); hostKey.value += 1; entered.value = true }
+    else { await initializeAcceptance(props.spec); reminderPort.value = createLocalScheduleReminderPort(); hostKey.value += 1; entered.value = true }
   } catch (failure) { error.value = String(failure) }
   finally { busy.value = false }
 }
