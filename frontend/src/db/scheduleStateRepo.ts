@@ -117,9 +117,10 @@ export async function protectedConversions(): Promise<{ entryIds: Set<string>; m
   // Unpublished independent names are not tags yet. Their reservation must never let P2
   // publish new definitions, overwrite originals, remap duplicate names or purge the target.
   const archive = await db.meta.get(SCHEDULE_CONFLICT_ARCHIVE)
-  if (archive && !Array.isArray(archive.value)) throw new Error("独立标签保护留档损坏")
+  const archiveRows = archive ? archive.value : []
+  if (!Array.isArray(archiveRows)) throw new Error("独立标签保护留档损坏")
   const owner = (await localOwnerSnapshot()).ownerUserId
-  for (const plan of sharedTagCopyArchivePlans(archive?.value ?? [])) {
+  for (const plan of sharedTagCopyArchivePlans(archiveRows)) {
     if (plan.ownerUserId !== owner || plan.state !== "prepared") continue
     // A restore epoch invalidates old writes, not the original definitions' safety hold.
     entryIds.add(plan.scheduleId)
