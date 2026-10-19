@@ -311,3 +311,34 @@ export async function getPinnedScheduleResourceImage(
     return r.data
   } finally { signal.removeEventListener("abort", abort) }
 }
+
+/** Explicit create-only P4 tag POST; bounded decoding, fixed account, no generic retry loop. */
+export async function postPinnedScheduleIndependentTags(
+  id: string, body: unknown, lease: { ownerUserId: string; tokenGeneration: number }, signal: AbortSignal,
+): Promise<unknown> {
+  const payload = JSON.stringify(body)
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
+      !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0 || signal.aborted ||
+      typeof payload !== "string" || new Blob([payload]).size > 2 * 1024 * 1024) throw new ApiError(-1, "标签发布身份、租约或请求无效")
+  const controller = new AbortController(), abort = () => controller.abort(), limit = 128 * 1024
+  signal.addEventListener("abort", abort, { once: true })
+  try {
+    const options: AxiosRequestConfig & { _syncOwner: string; _tokenGeneration: number } = {
+      _syncOwner: lease.ownerUserId, _tokenGeneration: lease.tokenGeneration, signal: controller.signal,
+      responseType: "text", transformResponse: [(value: unknown) => value], maxContentLength: limit,
+      onDownloadProgress: (progress: { loaded: number }) => { if (progress.loaded > limit) controller.abort() },
+    }
+    const res = await http.post<string>(`/schedules/${id}/independent-tags`, JSON.parse(payload), options)
+    if (signal.aborted || controller.signal.aborted || accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
+      throw new ApiError(-1, "旧标签发布响应已失效，请保留原准备核对")
+    }
+    if (res.status !== 200 || typeof res.data !== "string" || res.data.length > limit || new Blob([res.data]).size > limit) throw new ApiError(-1, "标签发布响应超限或无效")
+    const packet: unknown = JSON.parse(res.data)
+    if (!packet || typeof packet !== "object" || Array.isArray(packet)) throw new ApiError(-1, "标签发布信封无效")
+    const row = packet as Record<string, unknown>
+    if (Object.keys(row).length !== 3 || !["code", "message", "data"].every(key => key in row) || row.code !== 0 || typeof row.message !== "string") {
+      throw new ApiError(-1, "标签发布未确认")
+    }
+    return row.data
+  } finally { signal.removeEventListener("abort", abort) }
+}

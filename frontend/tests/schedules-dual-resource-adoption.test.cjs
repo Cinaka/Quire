@@ -854,3 +854,210 @@ test("valid foreign-owner preparation is not exposed or applied to the current o
   assert.equal((await h.preparer.listPrepared()).length,0);assert.equal((await h.load("db/scheduleStateRepo.ts").protectedConversions()).tagIds.has(copy),false)
   assert.equal((await h.preparer.discard(plans[0].id,true)).discarded,false)
 })
+
+const PUB_KIND="terminal-independent-tag-publication"
+async function publisherFixture(choice=CHOICE,options={}) {
+  const h=await preparedCopy(choice,{
+    onGet:async(h,n)=>{if(h.publicationActive)await options.onGet?.(h,n)},
+    onRead:async(h,n)=>{if(h.publicationActive)await options.onRead?.(h,n)},
+    onWait:async h=>{if(h.publicationActive)await options.onWait?.(h)},
+  })
+  h.publicationActive=true;h.calls=[];h.posts=[];h.serverTags=new Map()
+  h.transport.publish=async(id,body,lease,signal)=>{
+    const records=await meta(h,ARCHIVE);assert.ok(records.some(row=>row.kind===PUB_KIND&&row.planId===body.plan_id))
+    h.posts.push({id,body:structuredClone(body),lease:structuredClone(lease),signal})
+    await options.beforePost?.(h,body,signal)
+    const tags=body.copies.map(copy=>{
+      const previous=h.serverTags.get(copy.id);if(previous&&(previous.name!==copy.name||previous.color!==copy.color))throw Error("server collision")
+      const tag=previous??{id:copy.id,name:copy.name,color:copy.color,created_at:SERVER};h.serverTags.set(copy.id,tag)
+      return {...tag,from_tag_id:copy.from_tag_id,created:!previous}
+    })
+    const receipt={proof_scope:"independent_tag_presence",tags_confirmed:true,resolution_enabled:false,diary_sync_enabled:false,schedule_id:id,plan_id:body.plan_id,tags}
+    await options.afterPost?.(h,receipt,signal)
+    return receipt
+  }
+  h.publisher=h.load("db/scheduleTagPublicationRepo.ts").createInternalScheduleTagPublisher(h.transport)
+  h.publishReview=()=>h.publisher.review(h.done.planId,h.file)
+  h.publications=async()=> (await meta(h,ARCHIVE)).filter(row=>row.kind===PUB_KIND)
+  return h
+}
+for(const choice of [CHOICE,KEEP])test(`durable publication ${choice} confirms only new tag presence without live table changes`,async()=>{
+  const h=await publisherFixture(choice),before=resources(h),queue=await meta(h,"scheduleConversions"),candidates=await meta(h,"scheduleConflicts"),plan=(await meta(h,ARCHIVE))[0]
+  const r=await h.publishReview();assert.equal(r.ready,true);assert.equal((await h.publications()).length,0);assert.equal(h.posts.length,0)
+  const done=await h.publisher.publish(r.reviewId,true);assert.equal(done.tagsConfirmed,true);assert.equal(done.diarySyncEnabled,false);assert.equal(done.resolutionEnabled,false)
+  assert.equal(resources(h),before);assert.deepEqual(await meta(h,"scheduleConversions"),queue);assert.deepEqual(await meta(h,"scheduleConflicts"),candidates);assert.deepEqual((await meta(h,ARCHIVE))[0],plan)
+  const publication=(await h.publications())[0];assert.equal(publication.state,"confirmed");assert.equal(publication.request.expected_resources.review.entry.title,"云端版本")
+  assert.equal(publication.receipt.tags[0].id,plan.copies[0].tag.id);assert.equal(h.posts[0].lease.ownerUserId,"account-a");assert.equal(h.posts[0].lease.generation,"epoch")
+  assert.equal(JSON.stringify(publication).includes("tokenGeneration"),false);assert.equal(await h.db.tags.get(plan.copies[0].tag.id),undefined)
+  const held=await h.load("db/scheduleStateRepo.ts").protectedConversions();assert.ok(held.tagIds.has(TAG));assert.ok(held.tagIds.has(plan.copies[0].tag.id));assert.ok(held.entryIds.has(ID))
+  const listed=await h.publisher.list();assert.equal(listed[0].historicalConfirmation,true);assert.equal(listed[0].requiresRecheck,true)
+})
+for(const mode of ["confirmation","review-id"])test(`publication ${mode} is explicit and starts no POST or archive write`,async()=>{
+  const h=await publisherFixture(),r=await h.publishReview(),before=all(h),calls=h.calls.length,reads=h.reads
+  assert.equal((await h.publisher.publish(mode==="review-id"?r.reviewId+1:r.reviewId,mode!=="confirmation")).tagsConfirmed,false)
+  assert.equal(all(h),before);assert.equal(h.calls.length,calls);assert.equal(h.reads,reads);assert.equal(h.posts.length,0)
+})
+for(const choice of [CHOICE,KEEP])test(`lost publication response retries original IDs and original request after reload for ${choice}`,async()=>{
+  let fail=true;const h=await publisherFixture(choice,{afterPost:async()=>{if(fail){fail=false;throw Error("lost response")}}}),r=await h.publishReview()
+  assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,false);assert.equal((await h.publications())[0].state,"started");assert.equal(h.serverTags.size,1)
+  h.publisher=h.load("db/scheduleTagPublicationRepo.ts").createInternalScheduleTagPublisher(h.transport)
+  const listed=await h.publisher.list();assert.equal(listed[0].historicalConfirmation,false);assert.equal(h.posts.length,1)
+  const next=await h.publishReview(),done=await h.publisher.publish(next.reviewId,true);assert.equal(done.tagsConfirmed,true);assert.equal(done.tags[0].created,false)
+  assert.deepEqual(h.posts[0].body,h.posts[1].body);assert.equal((await h.publications()).length,1);assert.equal(h.serverTags.size,1)
+})
+test("confirmed publication is historical and explicit repeat rechecks presence instead of creating a second tag",async()=>{
+  const h=await publisherFixture(),r=await h.publishReview();assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,true)
+  const next=await h.publishReview();assert.equal(next.historicalConfirmation,true);assert.equal(h.posts.length,1)
+  const done=await h.publisher.publish(next.reviewId,true);assert.equal(done.tagsConfirmed,true);assert.equal(done.tags[0].created,false);assert.equal(h.serverTags.size,1);assert.equal((await h.publications()).length,1)
+})
+for(const state of ["started","confirmed"])test(`publication ${state} cannot be discarded as unpublished local names`,async()=>{
+  const h=await publisherFixture(CHOICE,{afterPost:async()=>{if(state==="started")throw Error("lost")}}),r=await h.publishReview()
+  await h.publisher.publish(r.reviewId,true);const before=all(h)
+  assert.equal((await h.preparer.discard(h.done.planId,true)).discarded,false);assert.equal(all(h),before)
+})
+for(const mode of ["account","relogin","epoch","local-title","local-bytes","catalog","file","cloud","cancel"])test(`publication preflight ${mode} cannot persist an intent or POST`,async()=>{
+  const h=await publisherFixture(),r=await h.publishReview();assert.equal(r.ready,true)
+  if(mode==="account")h.user("account-b")
+  if(mode==="relogin"){h.user("account-b");h.user("account-a")}
+  if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"new"})
+  if(mode==="local-title")await h.db.entries.update(ID,{title:"new"})
+  if(mode==="local-bytes")await h.db.media.update(OTHER_ID,{blob:blob(png(8))})
+  if(mode==="catalog")await h.db.tags.put({id:SECOND,name:"new",color:null,createdAt:AT,dirty:0})
+  if(mode==="file"){const p=JSON.parse(h.fileText);p.exportedAt="2026-10-11T00:00:00.000Z";h.fileText=JSON.stringify(p)}
+  if(mode==="cloud")h.reply.tags[0].color="red"
+  if(mode==="cancel")h.publisher.cancel()
+  const before=all(h);assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,false);assert.equal(all(h),before);assert.equal(h.posts.length,0)
+})
+for(const mode of ["account","epoch","cancel","write-failure"])test(`publication intent ${mode} rolls back before any POST`,async()=>{
+  const h=await publisherFixture(),r=await h.publishReview(),before=all(h),put=h.db.meta.put
+  h.db.meta.put=async row=>{await put(row);if(row.key===ARCHIVE&&row.value.some(x=>x.kind===PUB_KIND)){
+    if(mode==="account")h.user("account-b");if(mode==="epoch")await put({key:"ownerGeneration",value:"restored"});if(mode==="cancel")h.publisher.cancel();if(mode==="write-failure")throw Error("disk")
+  }}
+  assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,false);assert.equal(all(h),before);assert.equal(h.posts.length,0)
+})
+for(const mode of ["account","relogin","epoch","cancel","local-title","local-bytes","catalog","lost"])test(`publication after server commit ${mode} retains uncertain durable intent and never hands off`,async()=>{
+  const h=await publisherFixture(CHOICE,{afterPost:async(h,_r,signal)=>{
+    if(mode==="account")h.user("account-b");if(mode==="relogin"){h.user("account-b");h.user("account-a")}
+    if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"restored"})
+    if(mode==="cancel"){h.publisher.cancel();assert.equal(signal.aborted,true)}
+    if(mode==="local-title")await h.db.entries.update(ID,{title:"new"})
+    if(mode==="local-bytes")await h.db.media.update(OTHER_ID,{blob:blob(png(8))})
+    if(mode==="catalog")await h.db.tags.put({id:SECOND,name:"new",color:null,createdAt:AT,dirty:0})
+    if(mode==="lost")throw Error("network")
+  }}),r=await h.publishReview();assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,false)
+  assert.equal(h.serverTags.size,1);assert.equal((await h.publications())[0].state,"started");assert.equal(await h.db.tags.get(h.done.copies[0].tag.id),undefined)
+  assert.equal((await meta(h,"scheduleConversions")).length,1);assert.deepEqual((await h.db.entries.get(ID)).tagIds,[TAG])
+})
+for(const field of ["scope","flag","diary-flag","resolution-flag","plan","source","id","from","name","color","created","timestamp","missing","extra","tag-extra"])test(`publication malformed receipt ${field} cannot be persisted as confirmation`,async()=>{
+  const h=await publisherFixture(CHOICE,{afterPost:async(_h,r)=>{
+    if(field==="scope")r.proof_scope="conversion_ack"
+    if(field==="flag")r.tags_confirmed=1
+    if(field==="diary-flag")r.diary_sync_enabled=true
+    if(field==="resolution-flag")r.resolution_enabled=true
+    if(field==="plan")r.plan_id=OTHER_ENTRY
+    if(field==="source")r.schedule_id=OTHER_ENTRY
+    if(field==="id")r.tags[0].id=TAG
+    if(field==="from")r.tags[0].from_tag_id=OTHER_ENTRY
+    if(field==="name")r.tags[0].name="not explicit"
+    if(field==="color")r.tags[0].color="red"
+    if(field==="created")r.tags[0].created=1
+    if(field==="timestamp")r.tags[0].created_at="2026-02-30T00:00:00.000Z"
+    if(field==="missing")r.tags=[]
+    if(field==="extra")r.owner="private"
+    if(field==="tag-extra")r.tags[0].owner="private"
+  }}),r=await h.publishReview();assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,false);assert.equal((await h.publications())[0].state,"started")
+})
+for(const mode of ["failure","cancel","account","epoch"])test(`publication final local confirmation ${mode} keeps the started record for safe retry`,async()=>{
+  const h=await publisherFixture(),r=await h.publishReview(),put=h.db.meta.put
+  h.db.meta.put=async row=>{await put(row);if(row.key===ARCHIVE&&row.value.some(x=>x.kind===PUB_KIND&&x.state==="confirmed")){
+    if(mode==="failure")throw Error("disk");if(mode==="cancel")h.publisher.cancel();if(mode==="account")h.user("account-b");if(mode==="epoch")await put({key:"ownerGeneration",value:"restored"})
+  }}
+  assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,false);assert.equal((await h.publications())[0].state,"started");assert.equal(h.serverTags.size,1)
+})
+for(const mode of ["bytes","tag","catalog"])test(`publication final byte wait rejects concurrent ${mode} and rolls back confirmation`,async()=>{
+  let changed=false;const h=await publisherFixture(CHOICE,{onWait:async h=>{if(h.posts.length&&!changed){changed=true;if(mode==="bytes")await h.db.media.update(OTHER_ID,{blob:blob(png(9))});if(mode==="tag")await h.db.tags.update(TAG,{name:"changed"});if(mode==="catalog")await h.db.tags.put({id:SECOND,name:"new",color:null,createdAt:AT,dirty:0})}}}),r=await h.publishReview(),before=resources(h)
+  assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,false);assert.equal(changed,true);assert.equal((await h.publications())[0].state,"started");assert.equal(resources(h),before)
+})
+for(const mode of ["duplicate","orphan","discarded-plan","request","state","receipt","unknown","digest-format"])test(`publication malformed archive ${mode} fails closed for P2 protection`,async()=>{
+  const h=await publisherFixture(),r=await h.publishReview();assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,true)
+  let rows=await meta(h,ARCHIVE);const p=rows.find(x=>x.kind===PUB_KIND)
+  if(mode==="duplicate")rows.push(structuredClone(p))
+  if(mode==="orphan")rows=rows.filter(x=>x.kind!=="terminal-independent-tag-copy")
+  if(mode==="discarded-plan")rows[0].state="discarded"
+  if(mode==="request")p.request.copies[0].name="other"
+  if(mode==="state")p.state="discarded"
+  if(mode==="receipt")p.receipt.tags[0].id=TAG
+  if(mode==="unknown")p.unknown=true
+  if(mode==="digest-format")p.planDigest="invalid"
+  await h.db.meta.put({key:ARCHIVE,value:rows});await assert.rejects(h.load("db/scheduleStateRepo.ts").protectedConversions());await assert.rejects(h.publisher.list())
+})
+test("publication valid-format but wrong plan digest cannot resume or overwrite historical receipt",async()=>{
+  const h=await publisherFixture(),r=await h.publishReview();await h.publisher.publish(r.reviewId,true)
+  const rows=await meta(h,ARCHIVE);rows.find(x=>x.kind===PUB_KIND).planDigest="0".repeat(64);await h.db.meta.put({key:ARCHIVE,value:rows});const before=all(h)
+  assert.equal((await h.publishReview()).ready,false);assert.equal(all(h),before);assert.equal(h.posts.length,1)
+})
+test("server-created timestamp changes never replace the previous confirmed publication identity",async()=>{
+  const h=await publisherFixture(),r=await h.publishReview();await h.publisher.publish(r.reviewId,true)
+  const before=(await h.publications())[0],tag=h.serverTags.get(h.done.copies[0].tag.id);tag.created_at="2026-10-09T00:00:00.000Z"
+  const next=await h.publishReview();assert.equal(next.ready,true);assert.equal((await h.publisher.publish(next.reviewId,true)).tagsConfirmed,false)
+  assert.deepEqual((await h.publications())[0],before)
+})
+for(const status of [404,409,422,500])test(`publication HTTP ${status} retains intent without automatic retry or compensation`,async()=>{
+  const h=await publisherFixture(CHOICE,{beforePost:async()=>{throw Object.assign(Error("failure"),{status})}}),r=await h.publishReview()
+  assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,false);assert.equal(h.posts.length,1);assert.equal((await h.publications())[0].state,"started");assert.equal(h.serverTags.size,0)
+})
+test("a cancelled in-flight publication stays busy until it settles and does not allow a parallel restart",async()=>{
+  let release;const wait=new Promise(resolve=>release=resolve),h=await publisherFixture(CHOICE,{beforePost:async()=>wait}),r=await h.publishReview()
+  const pending=h.publisher.publish(r.reviewId,true);while(!h.posts.length)await new Promise(resolve=>setTimeout(resolve,1))
+  h.publisher.cancel();assert.equal((await h.publishReview()).reason,"busy");release();assert.equal((await pending).tagsConfirmed,false);assert.equal((await h.publications())[0].state,"started")
+})
+test("publication original wire dates are retained unchanged rather than posting normalized evidence",async()=>{
+  const h=await publisherFixture();h.reply.tags[0].created_at=SERVER.replace(/Z$/,"")
+  // Equal instants are allowed by evidence parsing, but the POST must echo the fresh raw server spelling.
+  const r=await h.publishReview();assert.equal(r.ready,true);assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,true)
+  assert.equal(h.posts[0].body.expected_resources.tags[0].created_at,SERVER.replace(/Z$/,""))
+})
+
+for(const at of [1,2])test(`publication cancellation during proof GET ${at} never reaches POST`,async()=>{
+  const h=await publisherFixture(CHOICE,{onGet:async(h,n)=>{if(n===at)h.publisher.cancel()}}),r=await h.publishReview()
+  if(at===1)assert.equal(r.ready,false);else{assert.equal(r.ready,true);assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,false)}
+  assert.equal(h.posts.length,0);assert.equal((await h.publications()).length,0)
+})
+test("two independent publication callers converge to one intent and the same remote tag identities",async()=>{
+  let release;const gate=new Promise(resolve=>release=resolve),h=await publisherFixture(CHOICE,{beforePost:async h=>{if(h.posts.length===1)await gate}})
+  const first=h.publisher,second=h.load("db/scheduleTagPublicationRepo.ts").createInternalScheduleTagPublisher(h.transport)
+  const a=await first.review(h.done.planId,h.file),b=await second.review(h.done.planId,h.file)
+  assert.equal(a.ready,true);assert.equal(b.ready,true);const pending=first.publish(a.reviewId,true)
+  while(!h.posts.length)await new Promise(resolve=>setTimeout(resolve,1))
+  assert.equal((await second.publish(b.reviewId,true)).tagsConfirmed,true);release();assert.equal((await pending).tagsConfirmed,true)
+  assert.equal((await h.publications()).length,1);assert.equal(h.serverTags.size,1);assert.deepEqual(h.posts[0].body,h.posts[1].body)
+})
+test("a fresh review after same-owner relogin safely recovers an uncertain publication",async()=>{
+  let once=true;const h=await publisherFixture(CHOICE,{afterPost:async h=>{if(once){once=false;h.user("account-b");h.user("account-a")}}}),r=await h.publishReview()
+  assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,false)
+  const next=await h.publishReview();assert.equal(next.ready,true);assert.equal((await h.publisher.publish(next.reviewId,true)).tagsConfirmed,true)
+  assert.equal(h.posts[1].lease.tokenGeneration,2);assert.equal(h.serverTags.size,1)
+})
+test("raw wire spelling changes after an uncertain POST cannot silently replace the persisted request",async()=>{
+  let once=true;const h=await publisherFixture(CHOICE,{afterPost:async()=>{if(once){once=false;throw Error("lost")}}}),r=await h.publishReview()
+  await h.publisher.publish(r.reviewId,true);h.reply.tags[0].created_at=SERVER.replace(/Z$/,"");const before=all(h)
+  assert.equal((await h.publishReview()).ready,false);assert.equal(all(h),before);assert.equal(h.posts.length,1)
+})
+test("physical evidence file changed after POST leaves the started record without local acknowledgement",async()=>{
+  const h=await publisherFixture(CHOICE,{onRead:async h=>{if(h.posts.length){const p=JSON.parse(h.fileText);p.exportedAt="2026-10-12T00:00:00.000Z";h.fileText=JSON.stringify(p)}}}),r=await h.publishReview()
+  assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,false);assert.equal((await h.publications())[0].state,"started");assert.equal(h.serverTags.size,1)
+})
+for(const state of ["started","confirmed"])test(`ordinary P2 with publication ${state} keeps prepared identities protected and still syncs unrelated data`,async()=>{
+  const h=await publisherFixture(CHOICE,{afterPost:async()=>{if(state==="started")throw Error("lost")}}),r=await h.publishReview();await h.publisher.publish(r.reviewId,true)
+  const sent=[];await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:null,tagIds:[],dirty:1}))
+  h.mocks["@/api/mappers"]={fromWireEntry:r=>r,fromWireTag:r=>r,mediaPatchFromWire:r=>r,toWireEntry:r=>r,toWireTag:r=>r,toWireMediaMetaPush:r=>r}
+  h.mocks["@/api/endpoints"]={uploadMedia:async()=>{throw Error("protected upload")},pushBatch:async body=>{sent.push(body);return {serverTime:SERVER,entries:body.entries.map(r=>({id:r.id,status:"applied"})),tags:[],mediaMeta:[]}},pullChanges:async()=>({serverTime:SERVER,syncUntil:SERVER,cursorId:"",hasMore:false,entries:[],tags:h.done.copies.map(c=>({...c.tag,dirty:0})),mediaMeta:[]})}
+  await h.load("api/sync.ts").runSync();assert.deepEqual(sent.flatMap(b=>b.entries.map(r=>r.id)),[OTHER_ENTRY]);assert.equal(await h.db.tags.get(h.done.copies[0].tag.id),undefined)
+  assert.equal(h.posts.length,1);assert.equal((await meta(h,"scheduleConversions")).length,1);assert.equal((await h.db.tags.get(TAG)).dirty,1)
+})
+test("same-owner restore invalidates publication writes but retains historical confirmation and original safety holds",async()=>{
+  const h=await publisherFixture(),r=await h.publishReview();await h.publisher.publish(r.reviewId,true)
+  await h.db.meta.put({key:"ownerGeneration",value:"restored"});const before=all(h)
+  assert.equal((await h.publisher.list())[0].currentEpoch,false);assert.equal((await h.publishReview()).ready,false);assert.equal(all(h),before)
+  const held=await h.load("db/scheduleStateRepo.ts").protectedConversions();assert.ok(held.entryIds.has(ID));assert.ok(held.tagIds.has(h.done.copies[0].tag.id))
+})

@@ -3,7 +3,7 @@ import { isBackupConversion } from "@/shared/scheduleBackup"
 import { conversionCanonical, conversionCopy } from "@/shared/scheduleConversionSync"
 import { SCHEDULE_META_KEYS } from "@/shared/schedules"
 import { SCHEDULE_CONFLICT_ARCHIVE } from "@/shared/scheduleConflict"
-import { sharedTagCopyArchivePlans } from "@/shared/scheduleSharedTagCopy"
+import { readTagSafetyArchive } from "@/shared/scheduleTagPublication"
 import { collectMediaIds } from "@/shared/text"
 import type { Entry, ScheduleConversion } from "@/shared/types"
 
@@ -120,7 +120,7 @@ export async function protectedConversions(): Promise<{ entryIds: Set<string>; m
   const archiveRows = archive ? archive.value : []
   if (!Array.isArray(archiveRows)) throw new Error("独立标签保护留档损坏")
   const owner = (await localOwnerSnapshot()).ownerUserId
-  for (const plan of sharedTagCopyArchivePlans(archiveRows)) {
+  for (const plan of readTagSafetyArchive(archiveRows).plans) {
     if (plan.ownerUserId !== owner || plan.state !== "prepared") continue
     // A restore epoch invalidates old writes, not the original definitions' safety hold.
     entryIds.add(plan.scheduleId)

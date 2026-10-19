@@ -9,8 +9,9 @@ import { assertDualResourceAdoptionBase } from "@/shared/scheduleDualResourceAdo
 import { assertDualResourceTarget } from "@/shared/scheduleDualResourceEvidence"
 import type { ScheduleDualResourceEvidence } from "@/shared/scheduleDualResourceEvidence"
 import { newId } from "@/shared/ids"
-import { checkSharedTagCopyRecord, sharedTagCatalog, sharedTagCopySelection, sharedTagCopyArchivePlans, sharedTagNameKey, SHARED_TAG_COPY_KIND } from "@/shared/scheduleSharedTagCopy"
+import { checkSharedTagCopyRecord, sharedTagCatalog, sharedTagCopySelection, sharedTagNameKey, SHARED_TAG_COPY_KIND } from "@/shared/scheduleSharedTagCopy"
 import type { SharedTagCopyChoice, SharedTagCopyName, SharedTagCopyRecord } from "@/shared/scheduleSharedTagCopy"
+import { readTagSafetyArchive } from "@/shared/scheduleTagPublication"
 import { scheduleEntryId, SCHEDULE_META_KEYS } from "@/shared/schedules"
 
 import { captureScheduleResourceSnapshot, encodeScheduleResourceSnapshot, scheduleResourceSnapshotEvidence } from "./scheduleResourceEvidenceRepo"
@@ -21,14 +22,14 @@ const localVersion = (evidence: ScheduleDualResourceEvidence["local"]) => {
   const { exportedAt: _time, ...rest } = evidence
   return conversionCanonical(rest)
 }
-async function archive() {
+export async function readSharedTagCopyArchive() {
   const row = await db.meta.get(SCHEDULE_CONFLICT_ARCHIVE)
-  if (row && !Array.isArray(row.value)) throw new Error("留档损坏，未准备标签")
-  const rows = (row?.value ?? []) as unknown[]
-  const plans = sharedTagCopyArchivePlans(rows)
-  return { rows, plans }
+  const rows = row ? row.value : []
+  if (!Array.isArray(rows)) throw new Error("留档损坏，未准备标签")
+  const { plans, publications } = readTagSafetyArchive(rows)
+  return { rows, plans, publications }
 }
-async function snapshot(id: string, lease: ConversionLease, write = false) {
+export async function captureSharedTagCopySnapshot(id: string, lease: ConversionLease, write = false) {
   const raw = await captureScheduleResourceSnapshot(id, lease), pending = encodeScheduleResourceSnapshot(raw, id, lease)
   const encoded = write ? await waitForScheduleResourceBytes(pending) : await pending
   await assertScheduleLease(lease)
@@ -78,7 +79,7 @@ export function createInternalSharedTagCopyPreparer(transport: ScheduleCloudReso
   const guard = (run: number) => { if (run !== operation) throw new Error("独立标签准备已取消") }
   const check = async (run: number, lease: ConversionLease) => { guard(run); await assertScheduleLease(lease); guard(run) }
   const verify = async (ticket: Ticket, run: number, write = false) => {
-    const latest = await snapshot(ticket.id, ticket.lease, write); await check(run, ticket.lease)
+    const latest = await captureSharedTagCopySnapshot(ticket.id, ticket.lease, write); await check(run, ticket.lease)
     if (latest.fingerprint !== ticket.fingerprint || localVersion(latest.local) !== localVersion(ticket.evidence.local)) throw new Error("本机正文、标签目录或转换保护已变化")
     return latest
   }
@@ -93,13 +94,13 @@ export function createInternalSharedTagCopyPreparer(transport: ScheduleCloudReso
         const evidence = await readDualResourceEvidenceFile(file); await check(run, lease)
         if (evidence.scheduleId !== id) throw new Error("双方文件属于其他来源")
         const cloud = assertDualResourceAdoptionBase(evidence); originallyHeld(evidence)
-        const current = await snapshot(id, lease); await check(run, lease)
+        const current = await captureSharedTagCopySnapshot(id, lease); await check(run, lease)
         if (localVersion(current.local) !== localVersion(evidence.local)) throw new Error("双方文件不是当前本机状态")
         const selection = sharedTagCopySelection(evidence, choice, names, current.catalog)
         const ticket = { id, lease, evidence, file, choice, names: selection.names, fingerprint: current.fingerprint }
         const latest = await transport.review(id, conversionCopy(lease)); await check(run, lease)
         if (conversionCanonical(assertDualResourceTarget(evidence.local, latest)) !== conversionCanonical(cloud)) throw new Error("云端证明已变化")
-        await verify(ticket, run); await archive(); await check(run, lease)
+        await verify(ticket, run); await readSharedTagCopyArchive(); await check(run, lease)
         active = ticket
         return { ready: true, reason: "explicit_names_ready_for_local_preparation", reviewId, resolutionEnabled: false,
           choice, names: conversionCopy(selection.names), originalTagIds: selection.originalTagIds,
@@ -121,7 +122,7 @@ export function createInternalSharedTagCopyPreparer(transport: ScheduleCloudReso
         let result: SharedTagCopyRecord | null = null
         await db.transaction("rw", db.entries, db.schedules, db.tags, db.media, db.meta, async () => {
           abortWrite = scheduleResourceTransactionAborter(); await check(run, ticket.lease)
-          const current = await verify(ticket, run, true), saved = await archive(); await check(run, ticket.lease)
+          const current = await verify(ticket, run, true), saved = await readSharedTagCopyArchive(); await check(run, ticket.lease)
           const pending = saved.plans.filter(plan => plan.ownerUserId === ticket.lease.ownerUserId && plan.scheduleId === ticket.id && plan.state === "prepared")
           if (pending.length > 1) throw new Error("已有多个准备记录，未重建")
           if (pending.length) {
@@ -161,7 +162,7 @@ export function createInternalSharedTagCopyPreparer(transport: ScheduleCloudReso
       finally { busy = false; abortWrite = null }
     },
     async listPrepared() {
-      const lease = await captureSyncContext(), saved = await archive(); await assertScheduleLease(lease)
+      const lease = await captureSyncContext(), saved = await readSharedTagCopyArchive(); await assertScheduleLease(lease)
       return saved.plans.filter(plan => plan.ownerUserId === lease.ownerUserId && plan.state === "prepared").map(plan => ({
         planId: plan.id, scheduleId: plan.scheduleId, choice: plan.choice, names: conversionCopy(plan.names),
         copies: conversionCopy(plan.copies), currentEpoch: plan.generation === lease.generation,
@@ -176,10 +177,11 @@ export function createInternalSharedTagCopyPreparer(transport: ScheduleCloudReso
         const lease = await captureSyncContext(); await check(run, lease)
         await db.transaction("rw", db.entries, db.schedules, db.tags, db.media, db.meta, async () => {
           abortWrite = scheduleResourceTransactionAborter(); await check(run, lease)
-          const saved = await archive(), plan = saved.plans.find(plan => plan.id === planId)
+          const saved = await readSharedTagCopyArchive(), plan = saved.plans.find(plan => plan.id === planId)
           if (!plan || plan.ownerUserId !== lease.ownerUserId || plan.generation !== lease.generation || plan.state !== "prepared") throw new Error("旧准备不可弃去")
+          if (saved.publications.some(item => item.planId === planId)) throw new Error("发布已发起或结果未知，不能按未发布命名弃去")
           originallyHeld(plan.evidence)
-          const current = await snapshot(plan.scheduleId, lease, true); await check(run, lease)
+          const current = await captureSharedTagCopySnapshot(plan.scheduleId, lease, true); await check(run, lease)
           if (localVersion(current.local) !== localVersion(plan.evidence.local) || conversionCanonical(current.catalog) !== conversionCanonical(plan.catalog)) throw new Error("原保护或目录已变化，未弃去")
           await db.meta.put({ key: SCHEDULE_CONFLICT_ARCHIVE, value: saved.rows.map(row => row && typeof row === "object" && "id" in row && row.id === planId && "kind" in row && row.kind === SHARED_TAG_COPY_KIND
             ? { ...plan, state: "discarded" } : row) }); await check(run, lease)

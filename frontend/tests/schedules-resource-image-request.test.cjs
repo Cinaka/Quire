@@ -47,3 +47,46 @@ test("factory construction does not issue requests and delegates pinned image/re
  assert.equal(calls.length,0);assert.equal(await factory.review(ID,lease),"proof");assert.equal(await factory.image(ID,MEDIA,"original",proof,lease,signal),"bytes")
  assert.equal(calls[1][0],ID);assert.equal(calls[1][1],MEDIA);assert.equal(calls[1][5],signal)
 })
+
+function tagPublicationHTTP(options={}) {
+ let owner="account-a",generation=0,requestHook;const calls=[]
+ const tokens={accessTokenSubject:()=>owner,tokenGeneration:()=>generation,getAccessToken:()=>"fixed-token"}
+ const input={plan_id:MEDIA,confirmed:true,marker:"original"}
+ const http={interceptors:{request:{use:fn=>requestHook=fn},response:{use:()=>{}}},async post(url,body,config){
+   config.headers={};requestHook(config);calls.push({url,body,config});await options.during?.({switchOwner:()=>{owner="account-b";generation++},relogin:()=>generation++,input},config,body)
+   return {status:options.status??200,data:options.raw??JSON.stringify({code:0,message:"ok",data:{presence:"only"}})}
+ }}
+ const axios={create:()=>http},api=loadTS("api/request.ts",{axios:{default:axios,...axios},"./tokenStore":tokens},{AbortController})
+ return {api,calls,input,run:(changes={})=>api.postPinnedScheduleIndependentTags(changes.id??ID,changes.body??input,changes.lease??lease,changes.signal??new AbortController().signal)}
+}
+test("tag publication HTTP is fixed-account, bounded, detached JSON and create-only path",async()=>{
+ const h=tagPublicationHTTP({during:async h=>{h.input.marker="changed"}});assert.equal((await h.run()).presence,"only");assert.equal(h.calls.length,1)
+ const c=h.calls[0];assert.equal(c.url,`/schedules/${ID}/independent-tags`);assert.equal(c.body.marker,"original");assert.equal(c.config._syncOwner,"account-a");assert.equal(c.config._tokenGeneration,0)
+ assert.equal(c.config.headers.Authorization,"Bearer fixed-token");assert.equal(c.config.maxContentLength,128*1024);assert.equal(c.config.responseType,"text")
+})
+for(const mode of ["id","owner","generation","aborted","large-body"])test(`tag publication HTTP invalid ${mode} starts no network`,async()=>{
+ const h=tagPublicationHTTP(),changes={}
+ if(mode==="id")changes.id="https://other/private"
+ if(mode==="owner")changes.lease={...lease,ownerUserId:""}
+ if(mode==="generation")changes.lease={...lease,tokenGeneration:-1}
+ if(mode==="aborted"){const c=new AbortController();c.abort();changes.signal=c.signal}
+ if(mode==="large-body")changes.body={huge:"x".repeat(2*1024*1024)}
+ await assert.rejects(h.run(changes));assert.equal(h.calls.length,0)
+})
+for(const raw of ["{","null","[]",JSON.stringify({code:409,message:"not confirmed",data:{}}),JSON.stringify({code:0,message:"ok",data:{},extra:true}),"x".repeat(128*1024+1),JSON.stringify({code:0,message:"ok",data:"汉".repeat(50000)})])test(`tag publication HTTP rejects bad/oversize envelope (${raw.length})`,async()=>{
+ await assert.rejects(tagPublicationHTTP({raw}).run())
+})
+for(const mode of ["owner","relogin","cancel","progress"])test(`tag publication HTTP late ${mode} cannot return a confirmation`,async()=>{
+ const controller=new AbortController(),h=tagPublicationHTTP({during:async(h,config)=>{
+   if(mode==="owner")h.switchOwner();if(mode==="relogin")h.relogin();if(mode==="cancel")controller.abort();if(mode==="progress")config.onDownloadProgress({loaded:128*1024+1})
+ }})
+ await assert.rejects(h.run({signal:controller.signal}));assert.equal(h.calls.length,1)
+ if(mode==="cancel"||mode==="progress")assert.equal(h.calls[0].config.signal.aborted,true)
+})
+test("tag publication HTTP never treats a non-200 response as presence confirmation",async()=>{await assert.rejects(tagPublicationHTTP({status:409}).run())})
+test("tag publication transport factory is inert and preserves fixed lease, original body and signal",async()=>{
+ const calls=[],body={confirmed:true},signal=new AbortController().signal,mocks={"./request":{getPinnedScheduleResourceReview:async(...args)=>{calls.push(["get",...args]);return "wire"},postPinnedScheduleIndependentTags:async(...args)=>{calls.push(["post",...args]);return "presence"}}}
+ const transport=loadTS("api/scheduleTagPublicationTransport.ts",mocks).createScheduleTagPublicationTransport();assert.equal(calls.length,0)
+ assert.equal(await transport.review(ID,lease),"wire");assert.equal(await transport.publish(ID,body,lease,signal),"presence")
+ assert.equal(calls[1][1],ID);assert.equal(calls[1][2],body);assert.equal(calls[1][3],lease);assert.equal(calls[1][4],signal)
+})
