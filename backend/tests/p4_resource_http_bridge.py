@@ -100,7 +100,8 @@ def resource_http_bridge(client, source_id, media_id, before_image=None):
         def refuse_method(self):
             self.deny(405)
 
-        do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = do_HEAD = refuse_method
+        # BaseHTTPRequestHandler dispatches using these exact standard-library names.
+        do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = do_HEAD = refuse_method  # noqa: N815
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(
