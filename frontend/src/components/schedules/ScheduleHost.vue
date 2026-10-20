@@ -1,11 +1,11 @@
 <template>
-  <section aria-label="预简隔离宿主">
+  <section aria-label="预简本机宿主">
     <p v-if="state.error" role="alert">{{ state.error }}</p>
     <p v-if="bridgeError" role="alert">{{ bridgeError }}</p>
     <p v-if="state.notice" role="status">{{ state.notice }}</p>
     <template v-if="workspacePort">
       <fieldset v-show="!diarySession" :disabled="state.busy" class="work-area">
-        <section v-if="state.ready && !state.expired" class="first-save" aria-label="未关联日记草稿首次保存">
+        <section v-if="firstSaveEnabled && state.ready && !state.expired" class="first-save" aria-label="未关联日记草稿首次保存">
           <p>内部首存桥，仅处理明确读取的未关联日记安全草稿；不自动修改既有日记或预简。</p>
           <p v-if="state.firstSaveError" role="alert">{{ state.firstSaveError }}</p>
           <button type="button" :disabled="state.busy" @click="host.refreshDraft()">明确读取原日记安全草稿</button>
@@ -35,9 +35,10 @@ import type { ScheduleWorkspacePort } from "@/shared/scheduleWorkspace"
 import ScheduleWorkspace from "./ScheduleWorkspace.vue"
 import ScheduleDiaryPanel from "./ScheduleDiaryPanel.vue"
 
-// 显式注入的隐藏宿主，未进入App/router/DEV；固定会话key不随保存修订变化。
-const props = defineProps<{ port: ScheduleHostPort }>()
-const host = createScheduleHost(props.port)
+// 显式注入并固定账号/恢复上下文；正式页面关闭首存桥，隔离页保留既有默认行为。
+const props = defineProps<{ port: ScheduleHostPort; firstSaveEnabled?: boolean }>()
+const firstSaveEnabled = props.firstSaveEnabled !== false
+const host = createScheduleHost(props.port, undefined, { firstSaveEnabled })
 const state = ref(host.inspect())
 const selectedDate = ref("")
 const bridgeError = ref("")

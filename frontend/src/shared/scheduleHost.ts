@@ -7,7 +7,11 @@ import { todayLocal } from "./time"
 
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 /** 无DOM宿主状态机；上下文捕获一次，重新进入必须创建新实例，不在旧操作后采样新账号。 */
-export function createScheduleHost(port: ScheduleHostPort, clock: () => LocalDate = todayLocal) {
+export function createScheduleHost(
+  port: ScheduleHostPort, clock: () => LocalDate = todayLocal,
+  options: { firstSaveEnabled?: boolean } = {},
+) {
+  const firstSaveEnabled = options.firstSaveEnabled !== false
   let context: ScheduleHostContext | null = null
   let workspace: ScheduleWorkspacePort | null = null
   let targetEditor: ScheduleDiaryEditorSession | null = null
@@ -34,7 +38,7 @@ export function createScheduleHost(port: ScheduleHostPort, clock: () => LocalDat
     else { state.error = String(error); notify() }
   }
   async function frame(): Promise<boolean> {
-    if (!active || !context || state.busy) return false
+    if (!firstSaveEnabled || !active || !context || state.busy) return false
     const token = ++request; const captured = copy(context)
     state.frame = null; state.plan = null; state.firstSaveError = ""; notify()
     try {
@@ -76,18 +80,18 @@ export function createScheduleHost(port: ScheduleHostPort, clock: () => LocalDat
         context = copy(pin); workspace = port.workspace(copy(pin)); state.ready = true
         stopWatch = port.watch(copy(pin), invalidate)
         if (!active) { stopWatch(); stopWatch = null; return false }
-        state.busy = false; notify(); await frame(); return active
+        state.busy = false; notify(); if (firstSaveEnabled) await frame(); return active
       } catch (error) { if (active) { state.busy = false; state.ready = false; workspace = null; stopWatch?.(); stopWatch = null; failed(error) }; return false }
     },
     refreshDraft: frame,
     preview(date: LocalDate): boolean {
-      if (!active || state.busy || !state.frame) return false
+      if (!firstSaveEnabled || !active || state.busy || !state.frame) return false
       state.plan = null; state.error = ""
       try { state.plan = planFirstSave(state.frame, date, clock()); notify(); return true }
       catch (error) { failed(error); return false }
     },
     async confirmFirstSave(): Promise<boolean> {
-      if (!state.plan) return false
+      if (!firstSaveEnabled || !state.plan) return false
       if (targetEditor && !targetEditor.inspect().closed) { state.error = "请先保存或明确处理当前日记编辑会话"; notify(); return false }
       const plan = copy(state.plan)
       return run(captured => port.firstSave(captured, plan), result => {

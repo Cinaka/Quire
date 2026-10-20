@@ -308,10 +308,10 @@ test("natural-day timer only calls tick; real conversion is a confirmed version-
   const facade = source("db/scheduleWorkspaceRepo.ts"); assert.match(facade, /db.schedules, db.entries, db.meta/)
   assert.match(facade, /current.draft\?\.scheduleId === id/)
 })
-test("hidden workspace is not reachable from public repo, router, app or placeholder", () => {
+test("raw workspace stays private while the formal local route uses the guarded host", () => {
   assert.doesNotMatch(source("repo/index.ts"), /scheduleWorkspaceRepo|scheduleRepo|scheduleDraftRepo|scheduleEditorRepo/)
   for (const p of ["App.vue", "router/index.ts", "views/ScheduleView.vue"]) assert.doesNotMatch(source(p), /ScheduleWorkspace|scheduleWorkspaceRepo/)
-  assert.match(source("App.vue"), /aria-disabled="true".*预简/)
+  assert.match(source("App.vue"), /RouterLink to="\/schedules"/)
 })
 test("UI text schema matches diary heading/horizontal-rule boundary without changing stored backup rules", () => {
   const helpers = loadTS("shared/scheduleEditorContent.ts")
@@ -375,7 +375,7 @@ test("incompatible recovered draft can return read-only without writes or being 
 test("editor panel initial compatibility failure locks fields but permits guarded read-only return", () => {
   const panel = source("components/schedules/ScheduleEditorPanel.vue")
   assert.match(panel, /assertScheduleEditorContent\(initialContent\)/)
-  assert.match(panel, /actionLocked\.value \|\| readOnlyContent/)
+  assert.match(panel, /state\.value\.busy \|\| state\.value\.closed \|\| state\.value\.expired \|\| readOnlyContent/)
   assert.match(panel, /readOnlyContent \|\| !editorError\.value/)
   assert.match(panel, /:disabled="actionLocked" @click="leave"/)
 })

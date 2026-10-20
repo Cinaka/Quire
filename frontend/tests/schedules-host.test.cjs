@@ -288,12 +288,16 @@ test("isolation preflight accepts only a distinct loopback origin and performs n
     ["https://quire.example", "http://127.0.0.1:5179/page"], ["https://quire.example", "http://127.0.0.1:5179?data=x"]]) assert.throws(() => prepare(daily, isolated))
   assert.doesNotMatch(fs.readFileSync(path.join(__dirname, "../scripts/prepare-p4-acceptance.cjs"), "utf8"), /indexedDB\.deleteDatabase|exec\(|spawn\(|fetch\(/)
 })
-test("new host remains injected and unmounted, never jumps to legacy diary editor or starts background sync", () => {
+test("host remains injected; formal local route exposes only the guarded facade and never starts background sync", () => {
   const component = source("components/schedules/ScheduleHost.vue")
   assert.match(component, /port: ScheduleHostPort/); assert.match(component, /workspaceRef.value\.canCompose/)
   assert.match(component, /host\.openTargetEditor\(id\)/); assert.match(component, /defineExpose\(\{ prepareLeave, saveTarget \}\)/)
   assert.doesNotMatch(component, /useRouter|router\.|\bDiaryEditor\b|insertImages|localScheduleHostRepo|@\/repo/)
-  for (const p of ["App.vue", "router/index.ts", "views/ScheduleView.vue", "repo/index.ts"]) assert.doesNotMatch(source(p), /ScheduleHost|scheduleHostRepo|scheduleFirstSaveRepo|scheduleDiaryTargetRepo/)
+  for (const p of ["App.vue", "router/index.ts"]) assert.doesNotMatch(source(p), /ScheduleHost|scheduleHostRepo|scheduleFirstSaveRepo|scheduleDiaryTargetRepo/)
+  assert.match(source("views/ScheduleView.vue"), /from "@\/repo"/)
+  assert.match(source("views/ScheduleView.vue"), /:first-save-enabled="false"/)
+  assert.match(source("repo/index.ts"), /export const scheduleHostRepo = localScheduleHostRepo/)
+  assert.doesNotMatch(source("views/ScheduleView.vue"), /@\/db\/|scheduleFirstSaveRepo|scheduleDiaryTargetRepo/)
 })
 test("target opening refuses malformed metadata while retaining original record bytes", async () => {
   const h = harness(); const ctx = await converted(h)

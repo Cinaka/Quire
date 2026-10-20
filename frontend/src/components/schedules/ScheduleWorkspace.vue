@@ -1,6 +1,6 @@
 <template>
   <section class="workspace" aria-label="预简工作区" :aria-busy="state.loading || state.busy">
-    <header><h2>预简 / 待刻</h2><p>内部准备组件；仅本机操作，云端日程尚未开放。</p></header>
+    <header><h2>预简 / 待刻</h2><p>仅本机操作；云端日程同步尚未开放。</p></header>
     <p v-if="state.error" role="alert">{{ state.error }}</p>
     <p v-if="state.notice" role="status">{{ state.notice }}</p>
     <ScheduleEditorPanel v-if="session" :key="state.editorKey" ref="editorRef" :session="session" :expired="state.expired" @saved="workspace.refresh()" @leave="finishEditor" @discarded="finishEditor" />
@@ -57,7 +57,7 @@ import ScheduleDraftNotice from "./ScheduleDraftNotice.vue"
 import ScheduleEditorPanel from "./ScheduleEditorPanel.vue"
 import ScheduleList from "./ScheduleList.vue"
 
-// 只接受内部显式注入；未被路由/底栏/DEV引用。contextKey由未来宿主绑定账号与恢复代际。
+// 由固定宿主显式注入；contextKey绑定账号/恢复代际，路由参数不能切换来源。
 const props = defineProps<{ port: ScheduleWorkspacePort; contextKey: string; expired?: boolean }>()
 const emit = defineEmits<{ "open-entry": [string]; "context-expired": [] }>()
 const workspace = createScheduleWorkspace(props.port)

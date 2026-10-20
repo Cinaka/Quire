@@ -201,9 +201,9 @@ test("list conversion is only an explicit version-pinned request, not an automat
   assert.match(list, /item\.view\.canConvert/); assert.match(list, /expectedClientUpdatedAt: item\.row\.clientUpdatedAt/)
   assert.doesNotMatch(list, /localScheduleRepo|@\/repo|onMounted|setInterval|\.convert\(/)
 })
-test("new components remain unmounted by router, placeholder and app; public repository gate stays closed", () => {
+test("formal route mounts only guarded host; low-level writes and direct editor routing stay private", () => {
   const publicRepo = read("repo/index.ts"); assert.doesNotMatch(publicRepo, /scheduleRepo|scheduleEditorRepo|scheduleDraftRepo/)
-  const app = read("App.vue"); assert.match(app, /aria-disabled="true".*预简/)
+  const app = read("App.vue"); assert.match(app, /RouterLink to="\/schedules"/)
   assert.doesNotMatch(read("views/ScheduleView.vue"), /ScheduleList|ScheduleEditorPanel|ScheduleDraftNotice/)
   assert.doesNotMatch(read("router/index.ts"), /components\/schedules|ScheduleEditorPanel|ScheduleTextEditor/)
 })

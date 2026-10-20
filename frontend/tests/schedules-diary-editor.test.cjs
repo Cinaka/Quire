@@ -168,10 +168,12 @@ test("host expiry propagates to the retained session, preserving unsaved runtime
   const s = h.host.diaryEditor(); s.change({ title: "copy me" }); h.host.invalidate("restore")
   assert.equal(s.inspect().expired, true); assert.equal(s.inspect().body.title, "copy me"); assert.equal(await s.save(), false); assert.equal(await h.host.prepareTargetLeave(), false); h.host.dispose()
 })
-test("private session remains unmounted and does not import unsafe old editors, storage drafts, network or media upload", () => {
+test("diary session stays behind guarded host and does not import unsafe old editors or network", () => {
   const source = fs.readFileSync(path.join(__dirname, "../src/shared/scheduleDiaryEditor.ts"), "utf8")
   assert.doesNotMatch(source, /localStorage|draftRepo|fetch\(|router|upload|mediaRepo/)
-  for (const file of ["App.vue", "router/index.ts", "views/ScheduleView.vue"]) assert.doesNotMatch(fs.readFileSync(path.join(__dirname, "../src", file), "utf8"), /scheduleDiaryEditor|ScheduleHost/)
+  for (const file of ["App.vue", "router/index.ts"]) assert.doesNotMatch(fs.readFileSync(path.join(__dirname, "../src", file), "utf8"), /scheduleDiaryEditor|ScheduleHost/)
+  const view = fs.readFileSync(path.join(__dirname, "../src/views/ScheduleView.vue"), "utf8")
+  assert.match(view, /ScheduleHost/); assert.doesNotMatch(view, /scheduleDiaryEditor|EntryEditView|@\/db\//)
 })
 
 test("a late ordinary save error cannot overwrite an already revoked session's reason", async () => {
