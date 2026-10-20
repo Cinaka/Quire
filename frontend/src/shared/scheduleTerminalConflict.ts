@@ -81,13 +81,13 @@ function candidateEvidence(raw: unknown,id: string,owner: string): unknown {
   if(result.expectedServerRevision!==undefined && result.expectedServerRevision!==null)conversionUtc(result.expectedServerRevision)
   return result
 }
-export function terminalConflictChoices(ticket: TerminalConflictTicket): TerminalConflictChoice[] {
+function terminalChoices(ticket: TerminalConflictTicket, acceptCloudTombstone: boolean): TerminalConflictChoice[] {
   const {id,local,server}=ticket
   if(!server.reviewable || !server.receiptKnown || server.reason!=="terminal_review" || !server.schedule || !server.entry || server.entryState==="purged")throw new Error("终态或回执尚不能取舍")
   assertKnownConflictSchedule(local.source,id);assertKnownConflictSchedule(server.schedule,id)
   assertTerminalTextEntry(local.entry,id);assertTerminalTextEntry(server.entry,id)
   const activeDraft=local.scheduleDraft!==null && parseScheduleDraftState(local.scheduleDraft).draft!==null
-  if(local.source.status!=="converted" || server.schedule.status!=="converted" || local.source.isDeleted!==server.schedule.isDeleted ||
+  if(local.source.status!=="converted" || server.schedule.status!=="converted" || (local.source.isDeleted!==server.schedule.isDeleted && !(acceptCloudTombstone && local.source.isDeleted===0 && server.schedule.isDeleted===1)) ||
       local.linkedEntries.length!==1 || local.linkedEntries[0]?.id!==id || local.intentions.length>1 || !local.candidates.length ||
       local.media.length || local.pendingPurges.includes(id) || local.p2Conflicts.length || activeDraft || local.diaryDraft!==null) throw new Error("来源删除/身份/弃去/媒体/其他冲突或草稿待处理")
   assertTerminalTextEntry(local.linkedEntries[0],id)
@@ -97,6 +97,25 @@ export function terminalConflictChoices(ticket: TerminalConflictTicket): Termina
   if(local.entry.isDeleted===server.entry.isDeleted || local.entry.isDeleted===1)choices.push("cloud-source-keep-diary")
   if(local.entry.isDeleted===server.entry.isDeleted || server.entry.isDeleted===1)choices.push("cloud-source-use-diary")
   return choices
+}
+export function terminalConflictChoices(ticket: TerminalConflictTicket): TerminalConflictChoice[] {
+  return terminalChoices(ticket,false)
+}
+export type TerminalSourceTombstoneEvidence = Omit<TerminalConflictEvidence,"format"|"choice"|"meaning"> & {
+  format: "terminal-source-tombstone-evidence"; choice: "accept-cloud-source-tombstone"
+  meaning: "source_only_not_diary_or_intent_confirmation"
+}
+/** Source-only acceptance never authorizes a diary write, queue ACK or source resurrection. */
+export function terminalSourceTombstoneEvidence(ticket: TerminalConflictTicket): TerminalSourceTombstoneEvidence {
+  if (ticket.local.source?.isDeleted!==0 || ticket.server.schedule?.isDeleted!==1 || ticket.local.intentions.length!==1 || !terminalChoices(ticket,true).length) {
+    throw new Error("仅支持明确接受云端来源墓碑；其他异常继续保留保护")
+  }
+  return {app:"quire",format:"terminal-source-tombstone-evidence",formatVersion:1,exportedAt:conversionUtc(new Date().toISOString()),
+    scheduleId:ticket.id,choice:"accept-cloud-source-tombstone",localSource:conversionCopy(ticket.local.source!),
+    localEntry:conversionCopy(ticket.local.entry!),cloudReview:conversionCopy(ticket.server),
+    intentions:ticket.local.intentions.map(row=>portableIntent(row,ticket.id,ticket.lease.ownerUserId)),
+    candidates:ticket.local.candidates.map(row=>candidateEvidence(row,ticket.id,ticket.lease.ownerUserId)),
+    meaning:"source_only_not_diary_or_intent_confirmation"}
 }
 export function terminalConflictEvidence(ticket: TerminalConflictTicket,choice: TerminalConflictChoice): TerminalConflictEvidence {
   if(!terminalConflictChoices(ticket).includes(choice))throw new Error("选择未开放，不自动恢复日记")

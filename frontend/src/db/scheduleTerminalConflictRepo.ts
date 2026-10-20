@@ -1,3 +1,7 @@
+import { createConflictEvidenceFilePreserver } from "@/io/scheduleConflictEvidenceFile"
+import type { ConflictEvidenceFileHandle } from "@/io/scheduleConflictEvidenceFile"
+import { createScheduleSourceTombstoneResolver } from "@/shared/scheduleSourceTombstone"
+import { terminalSourceTombstoneEvidence } from "@/shared/scheduleTerminalConflict"
 import { captureSyncContext } from "@/api/syncContext"
 import { SCHEDULE_CONFLICT_ARCHIVE } from "@/shared/scheduleConflict"
 import { conversionCanonical, conversionCopy, conversionUtc } from "@/shared/scheduleConversionSync"
@@ -74,4 +78,35 @@ const port: TerminalConflictPort={
 /** Text-only explicit handoff. Reuses read-only review transport; does not call P2 or convert. */
 export function createInternalScheduleTerminalConflictResolver(transport: TerminalConflictTransport){
   return createScheduleTerminalConflictResolver(port,transport)
+}
+
+/** Internal R2 source-only path. No diary writes, conversion ACK, queue/candidate removal or purge. */
+export function createInternalScheduleSourceTombstoneResolver(transport: TerminalConflictTransport) {
+  const controller = createScheduleSourceTombstoneResolver({ capture:port.capture, verify:port.verify,
+    async applySource(ticket,evidence,active) {
+      await db.transaction("rw",db.schedules,db.entries,db.media,db.meta,async () => {
+        active(); await check(ticket); active()
+        const validated = terminalSourceTombstoneEvidence(ticket)
+        validated.exportedAt = evidence.exportedAt
+        if (conversionCanonical(validated)!==conversionCanonical(evidence)) throw new Error("来源墓碑证据不一致")
+        const cloud = ticket.server.schedule!, source = ticket.local.source!, base = await readScheduleServerState(ticket.lease,ticket.id)
+        if ((base && base.serverUpdatedAt>cloud.serverUpdatedAt) ||
+            (source.serverUpdatedAt && conversionUtc(source.serverUpdatedAt)>cloud.serverUpdatedAt)) throw new Error("云端来源水位倒退")
+        if (base && base.serverUpdatedAt===cloud.serverUpdatedAt && conversionCanonical(base)!==conversionCanonical(cloud)) throw new Error("同水位来源证明矛盾")
+        const archive = await records(SCHEDULE_CONFLICT_ARCHIVE)
+        active()
+        await db.meta.put({key:SCHEDULE_CONFLICT_ARCHIVE,value:[...archive,{kind:"terminal-source-tombstone",
+          ownerUserId:ticket.lease.ownerUserId,generation:ticket.lease.generation,scheduleId:ticket.id,
+          evidence:conversionCopy(evidence),result:conversionCopy(cloud)}]})
+        await rememberScheduleServerState(ticket.lease,cloud)
+        await db.schedules.put({...conversionCopy(cloud),contentText:toPlainText(cloud.content),dirty:0})
+        await assertScheduleLease(ticket.lease); active()
+      })
+    },
+  },transport)
+  return { review:controller.review, cancel:controller.cancel,
+    async resolve(reviewId: number, confirmed: boolean, handle?: ConflictEvidenceFileHandle) {
+      return controller.resolve(reviewId,confirmed,handle ? createConflictEvidenceFilePreserver(handle) : undefined)
+    },
+  }
 }

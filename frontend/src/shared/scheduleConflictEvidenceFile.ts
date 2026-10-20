@@ -1,13 +1,13 @@
 import { conflictEvidence } from "./scheduleConflict"
 import type { ScheduleConflictEvidence, ScheduleConflictTicket } from "./scheduleConflict"
 import { conversionCanonical, conversionCopy, conversionUtc } from "./scheduleConversionSync"
-import { terminalConflictEvidence } from "./scheduleTerminalConflict"
-import type { TerminalConflictEvidence, TerminalConflictTicket } from "./scheduleTerminalConflict"
+import { terminalConflictEvidence, terminalSourceTombstoneEvidence } from "./scheduleTerminalConflict"
+import type { TerminalConflictEvidence, TerminalConflictTicket, TerminalSourceTombstoneEvidence } from "./scheduleTerminalConflict"
 import { parseScheduleTerminalReview } from "./scheduleTerminalReview"
 import { scheduleEntryId } from "./schedules"
 import type { Entry, Schedule } from "./types"
 
-export type ConflictEvidence = ScheduleConflictEvidence | TerminalConflictEvidence
+export type ConflictEvidence = ScheduleConflictEvidence | TerminalConflictEvidence | TerminalSourceTombstoneEvidence
 export const CONFLICT_EVIDENCE_MAX_CHARS = 2 * 1024 * 1024
 export const CONFLICT_EVIDENCE_MAX_BYTES = 8 * 1024 * 1024
 const VALIDATION_OWNER = "evidence-validation-only"
@@ -45,7 +45,7 @@ function intent(raw: unknown) {
   // A temporary validation owner is never imported, returned, or used as a runtime lease.
   return { ...row, ownerUserId: VALIDATION_OWNER }
 }
-function terminal(raw: Record<string, unknown>): TerminalConflictEvidence {
+function terminal(raw: Record<string, unknown>): TerminalConflictEvidence | TerminalSourceTombstoneEvidence {
   const review = exact(raw.cloudReview, ["readOnly", "reviewable", "reason", "schedule", "entry",
     "entryState", "receiptKnown", "firstEntryDate", "firstEntryDeleted"])
   if (review.readOnly !== true) throw new Error("证据不是只读核对")
@@ -62,12 +62,14 @@ function terminal(raw: Record<string, unknown>): TerminalConflictEvidence {
     server, local: { source: raw.localSource, entry: raw.localEntry, linkedEntries: [raw.localEntry],
       intentions: array(raw.intentions).map(intent), candidates, media: [], pendingPurges: [],
       p2Conflicts: [], scheduleDraft: null, diaryDraft: null } } as unknown as TerminalConflictTicket
-  return terminalConflictEvidence(ticket, raw.choice as TerminalConflictEvidence["choice"])
+  return raw.format === "terminal-source-tombstone-evidence" ? terminalSourceTombstoneEvidence(ticket)
+    : terminalConflictEvidence(ticket, raw.choice as TerminalConflictEvidence["choice"])
 }
 function check(raw: unknown): ConflictEvidence {
   const r = object(raw)
   const pending = r.format === "schedule-conflict-evidence"
-  const terminalFile = r.format === "terminal-text-conflict-evidence"
+  const tombstone = r.format === "terminal-source-tombstone-evidence"
+  const terminalFile = r.format === "terminal-text-conflict-evidence" || tombstone
   if (!pending && !terminalFile) throw new Error("不是支持的冲突证据；不能当作防蠹备份导入")
   exact(r, pending ? ["app", "format", "formatVersion", "exportedAt", "scheduleId", "choice", "local", "server", "candidates"]
     : ["app", "format", "formatVersion", "exportedAt", "scheduleId", "choice", "localSource", "localEntry",
@@ -76,7 +78,8 @@ function check(raw: unknown): ConflictEvidence {
       scheduleEntryId(r.scheduleId) !== r.scheduleId || typeof r.exportedAt !== "string" ||
       conversionUtc(r.exportedAt) !== r.exportedAt) throw new Error("冲突证据版本、身份或导出时间无效")
   if (pending ? !["keep-local", "use-cloud"].includes(String(r.choice))
-    : !["cloud-source-keep-diary", "cloud-source-use-diary"].includes(String(r.choice))) throw new Error("冲突证据选择无效")
+    : tombstone ? r.choice !== "accept-cloud-source-tombstone"
+      : !["cloud-source-keep-diary", "cloud-source-use-diary"].includes(String(r.choice))) throw new Error("冲突证据选择无效")
   let regenerated: ConflictEvidence
   if (pending) {
     const ticket = { id: r.scheduleId, lease: { ownerUserId: VALIDATION_OWNER, generation: "validation-only", tokenGeneration: 0 },
@@ -84,7 +87,7 @@ function check(raw: unknown): ConflictEvidence {
       records: array(r.candidates), queue: [], linkedEntries: [], draft: null } } as ScheduleConflictTicket
     regenerated = conflictEvidence(ticket, r.choice as ScheduleConflictEvidence["choice"])
   } else {
-    if (r.meaning !== "explicit_choice_not_first_intent_confirmation") throw new Error("证据不能伪称首次意图确认")
+    if (r.meaning !== (tombstone ? "source_only_not_diary_or_intent_confirmation" : "explicit_choice_not_first_intent_confirmation")) throw new Error("证据不能伪称首次意图确认")
     regenerated = terminal(r)
   }
   regenerated.exportedAt = r.exportedAt
