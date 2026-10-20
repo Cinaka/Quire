@@ -1174,3 +1174,69 @@ for(const choice of [CHOICE,KEEP])test(`independent final ordinary P2 ${choice} 
  assert.equal(uploaded.includes(OTHER_ID),false);if(choice===KEEP)assert.equal(uploaded.length,1)
  assert.equal((await h.db.entries.get(ID)).dirty,0);assert.equal((await meta(h,ARCHIVE)).filter(row=>row.kind===HANDOFF_KIND).length,1)
 })
+
+const workspace=h=>h.load("db/scheduleResourceWorkspaceRepo.ts").createInternalResourceWorkspace(ID,h.transport)
+test("unified workspace reads tag differences and explicitly persists names without publishing or resolving",async()=>{
+ const h=await copyFixture(),before=all(h),calls=h.calls.length,port=workspace(h)
+ assert.equal(h.calls.length,calls);const view=await port.inspect(h.file);assert.deepEqual([...view.directChoices],[]);assert.equal(view.independentChoices.length,2);assert.equal(view.plan,null);assert.equal(all(h),before)
+ assert.doesNotMatch(JSON.stringify(view),/blobBase64|ownerUserId|generation|sha256/)
+ assert.equal((await port.prepareCopies(h.file,CHOICE,h.names,false)).ok,false);assert.equal(all(h),before)
+ const done=await port.prepareCopies(h.file,CHOICE,h.names,true);assert.equal(done.ok,true);assert.equal(done.outcome,"names_prepared");assert.equal(done.cloudSynced,false)
+ assert.equal((await port.inspect(h.file)).plan.stage,"prepared");assert.equal((await h.db.entries.get(ID)).title,"本机版本");assert.equal((await meta(h,"scheduleConversions")).length,1)
+})
+for(const choice of [CHOICE,KEEP])test(`unified workspace ${choice} separates publish from handoff and recognizes historical completion`,async()=>{
+ const h=await publisherFixture(choice),port=workspace(h),planId=h.done.planId
+ // Reuse only the read-only test presence transport, never the publication function for review.
+ h.transport.checkTags=async(id,body)=>({proof_scope:"independent_tag_presence",tags_confirmed:true,resolution_enabled:false,diary_sync_enabled:false,schedule_id:id,plan_id:body.plan_id,tags:body.copies.map(copy=>({...h.serverTags.get(copy.id),from_tag_id:copy.from_tag_id,created:false}))})
+ const view=await port.inspect(h.file);assert.equal(view.plan.stage,"prepared");assert.equal(h.posts.length,0)
+ assert.equal((await port.resolveDirect(h.file,choice,true)).ok,false);assert.equal((await port.publishCopies(h.file,planId,false)).ok,false);assert.equal(h.posts.length,0)
+ assert.equal((await port.publishCopies(h.file,planId,true)).outcome,"tags_confirmed");assert.equal(h.posts.length,1);assert.equal((await h.db.entries.get(ID)).title,"本机版本")
+ assert.equal((await port.inspect(h.file)).plan.stage,"confirmed");assert.equal((await meta(h,"scheduleConversions")).length,1)
+ assert.equal((await port.handoffCopies(h.file,planId,choice,true)).outcome,"diary_handed_off")
+ const reads=h.calls.length,history=await port.inspect(h.file);assert.equal(history.plan.stage,"handed-off");assert.deepEqual([...history.blockers],["historical_handoff"]);assert.equal(h.calls.length,reads)
+ assert.equal((await port.publishCopies(h.file,planId,true)).ok,false);assert.equal((await port.handoffCopies(h.file,planId,choice,true)).ok,false);assert.equal(h.posts.length,1)
+})
+test("unified workspace reload recovers an uncertain publication using the original plan and IDs",async()=>{
+ let first=true;const h=await publisherFixture(CHOICE,{afterPost:async()=>{if(first){first=false;throw Error("lost response")}}}),port=workspace(h)
+ assert.equal((await port.publishCopies(h.file,h.done.planId,true)).ok,false)
+ const view=await port.inspect(h.file);assert.equal(view.plan.stage,"started");assert.ok(view.blockers.includes("publication_uncertain"))
+ assert.equal((await port.publishCopies(h.file,h.done.planId,true)).outcome,"tags_confirmed");assert.equal(h.serverTags.size,1);assert.deepEqual(h.posts[0].body.copies,h.posts[1].body.copies)
+})
+for(const mode of ["account","relogin","epoch"])test(`unified workspace ${mode} cannot rebind its first-use context`,async()=>{
+ const h=await publisherFixture(),port=workspace(h);await port.inspect(h.file)
+ if(mode==="account")h.user("account-b");if(mode==="relogin"){h.user("account-b");h.user("account-a")};if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"restored"})
+ const before=all(h),posts=h.posts.length;await assert.rejects(()=>port.inspect(h.file));assert.equal((await port.publishCopies(h.file,h.done.planId,true)).ok,false);assert.equal((await port.prepareEvidence(true)).ready,false);assert.equal(all(h),before);assert.equal(h.posts.length,posts)
+})
+test("unified workspace shared images expose a blocker and cannot publish through the injected port",async()=>{
+ const h=await publisherFixture(),port=workspace(h);await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:image(OTHER_ID)}))
+ const before=all(h),view=await port.inspect(h.file);assert.deepEqual([...view.blockers],["shared_images"]);assert.equal((await port.publishCopies(h.file,h.done.planId,true)).ok,false);assert.equal(h.posts.length,0);assert.equal(all(h),before)
+})
+test("unified workspace wrong plan or source cannot reach publication",async()=>{
+ const h=await publisherFixture(),port=workspace(h),before=all(h)
+ assert.equal((await port.publishCopies(h.file,OTHER_ID,true)).ok,false)
+ const file={size:h.file.size,text:async()=>{const value=JSON.parse(h.fileText);value.scheduleId=OTHER_ENTRY;return JSON.stringify(value)}}
+ assert.equal((await port.publishCopies(file,h.done.planId,true)).ok,false);assert.equal(h.posts.length,0);assert.equal(all(h),before)
+})
+for(const choice of [CHOICE,KEEP])test(`unified workspace supported direct ${choice} uses the existing resolver without tag publication`,async()=>{
+ const h=await fixture(),port=workspace(h),view=await port.inspect(h.file);assert.ok(view.directChoices.includes(choice));assert.equal(view.plan,null)
+ const done=await port.resolveDirect(h.file,choice,true);assert.equal(done.outcome,"diary_handed_off");assert.equal(done.cloudSynced,false);assert.equal((await meta(h,"scheduleConversions")).length,0)
+})
+test("unified workspace explicit physical evidence preparation and save never resolve business data",async()=>{
+ const h=await fixture(),port=workspace(h),before=resources(h);assert.equal((await port.prepareEvidence(false)).ready,false)
+ const ready=await port.prepareEvidence(true);assert.equal(ready.ready,true);let text=""
+ const handle={getFile:async()=>({size:new Blob([text]).size,text:async()=>text}),createWritable:async()=>({write:async value=>{text=value},close:async()=>{},abort:async()=>{}})}
+ assert.equal((await port.saveEvidence(ready.reviewId,handle)).saved,true);assert.equal(JSON.parse(text).format,"terminal-dual-resource-evidence");assert.equal(resources(h),before);assert.equal((await meta(h,"scheduleConversions")).length,1)
+})
+
+test("unified workspace fences a child's fresh relogin lease before any new-account request",async()=>{
+ const h=await fixture(),context=h.load("api/syncContext.ts");let captures=0
+ h.mocks["@/api/syncContext"]={...context,async captureSyncContext(){captures++;if(captures===2){h.user("account-b");h.user("account-a")};return context.captureSyncContext()}}
+ const port=workspace(h),before=all(h)
+ await assert.rejects(()=>port.inspect(h.file));assert.ok(captures>=2);assert.ok(h.calls.every(call=>call.lease.tokenGeneration===0));assert.equal(all(h),before)
+ assert.equal((await port.resolveDirect(h.file,CHOICE,true)).ok,false)
+})
+test("unified workspace cancellation during an awaited cloud probe suppresses late preview and mutation",async()=>{
+ let release,seen;const started=new Promise(done=>seen=done),gate=new Promise(done=>release=done)
+ const h=await fixture({onGet:async h=>{if(h.workspaceWaiting){seen();await gate}}}),port=workspace(h);h.workspaceWaiting=true
+ const before=all(h),pending=port.inspect(h.file);await started;port.cancel();release();await assert.rejects(pending);assert.equal(all(h),before)
+})
