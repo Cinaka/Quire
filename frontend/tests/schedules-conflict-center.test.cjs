@@ -128,7 +128,7 @@ test('formal page switches guarded hosts but never derives operations from route
   assert.doesNotMatch(view, /route\.query|route\.params|syncNow|autoSync/)
 })
 function formal() {
-  const hooks = {}, globals = { ref, createScheduleRouteLeave: loadTS('shared/scheduleRouteLeave.ts').createScheduleRouteLeave,
+  const hooks = {}, globals = { ref, scheduleSyncRuntime: { inspect: () => ({ enabled: false, busy: false }), subscribe: () => () => {}, acquireManualReview: () => () => {}, pause() {} }, createScheduleRouteLeave: loadTS('shared/scheduleRouteLeave.ts').createScheduleRouteLeave,
     onBeforeRouteLeave: fn => { hooks.leave = fn }, onBeforeRouteUpdate: fn => { hooks.update = fn }, onBeforeUnmount: fn => { hooks.unmount = fn } }
   vm.runInNewContext(script('views/ScheduleView.vue') + '\nglobalThis.bindings={hostRef,conflictRef,conflictOpen,conflictContext,openConflicts,closeConflicts,leaveNotice};', globals)
   return { ...globals.bindings, hooks }

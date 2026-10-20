@@ -62,7 +62,7 @@ test('guard inspector is copied and disposal prevents new work', async () => {
   assert.equal(await guard.attempt(), false); assert.equal(calls, 1)
 })
 // Runtime evaluation of the actual route script with Vue/router hooks mocked; not a browser mount.
-function routeScript() {
+function routeScript(runtime) {
   const hooks = {}; const refs = []
   const text = source('views/ScheduleView.vue').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
   const code = require('node:module').stripTypeScriptTypes(text).replace(/^import .*$/gm, '')
@@ -70,9 +70,10 @@ function routeScript() {
     ref(value) { const ref = { value }; refs.push(ref); return ref },
     onBeforeRouteLeave(fn) { hooks.leave = fn }, onBeforeRouteUpdate(fn) { hooks.update = fn },
     onBeforeUnmount(fn) { hooks.unmount = fn }, createScheduleRouteLeave: factory(),
+    scheduleSyncRuntime: runtime ?? { inspect: () => ({ enabled: false, busy: false }), subscribe: () => () => {}, acquireManualReview: () => () => {}, pause() {} },
   }
-  vm.runInNewContext(code, globals)
-  return { hooks, host: refs[0], notice: refs[1] }
+  vm.runInNewContext(code + "\nglobalThis.actions = { openConflicts, closeConflicts, pauseForReview }", globals)
+  return { hooks, host: refs[0], notice: refs[1], actions: globals.actions, refs }
 }
 test('actual route script delegates leave, shows blocked notice and permits retry only after user action', async () => {
   const r = routeScript(); let allow = false; let calls = 0
@@ -179,4 +180,33 @@ test('context expiry during IME warns that copy may omit final input and still r
   const p = schedulePanelScript(); p.compositionStarted(); p.expire()
   assert.equal(p.compositionUnconfirmed.value, true); assert.equal(p.composing.value, false)
   assert.equal(p.needsLeaveConfirmation(), true); assert.equal(p.calls.discard, 0)
+})
+
+// Actual formal route script, mocked Vue hooks; no browser/IndexedDB proof.
+function reviewRuntime() {
+  const state = { enabled: false, busy: false, reviewing: false }; let releases = 0, pauses = 0
+  return { state, get releases() { return releases }, get pauses() { return pauses }, inspect: () => ({ ...state }), subscribe: () => () => {},
+    pause() { pauses++; state.enabled = false }, acquireManualReview() { if (state.enabled || state.busy || state.reviewing) return null; state.reviewing = true; let held = true; return () => { if (held) { held = false; state.reviewing = false; releases++ } } } }
+}
+test('formal review requires explicit pause and still waits for an in-flight cycle; pause never auto opens', async () => {
+  const runtime = reviewRuntime(), r = routeScript(runtime); let leaves = 0
+  r.host.value = { async prepareLeave() { leaves++; return true }, capturedContext: () => ({ ownerUserId: 'A' }), async refresh() {} }
+  runtime.state.enabled = true; await r.actions.openConflicts(); assert.equal(leaves, 0); assert.match(r.notice.value, /暂停/)
+  runtime.state.busy = true; r.actions.pauseForReview(); assert.equal(runtime.pauses, 1); assert.equal(runtime.state.reviewing, false)
+  await r.actions.openConflicts(); assert.equal(leaves, 0); assert.equal(runtime.state.reviewing, false)
+  runtime.state.busy = false; assert.equal(runtime.state.reviewing, false)
+  await r.actions.openConflicts(); assert.equal(leaves, 1); assert.equal(runtime.state.reviewing, true)
+  await r.actions.closeConflicts(); assert.equal(runtime.releases, 1); assert.equal(runtime.state.enabled, false)
+})
+test('sync enabling while original edit leave check awaits cannot enter the review center', async () => {
+  const runtime = reviewRuntime(), r = routeScript(runtime), wait = gate()
+  r.host.value = { async prepareLeave() { await wait.promise; return true }, capturedContext: () => ({ ownerUserId: 'A' }), async refresh() {} }
+  const work = r.actions.openConflicts(); runtime.state.enabled = true; wait.release(); await work
+  assert.equal(runtime.state.reviewing, false); assert.match(r.notice.value, /状态.*变化/)
+})
+test('review ownership is released on route unmount and never resumes sync or releases twice', async () => {
+  const runtime = reviewRuntime(), r = routeScript(runtime)
+  r.host.value = { async prepareLeave() { return true }, capturedContext: () => ({ ownerUserId: 'A' }), async refresh() {} }
+  await r.actions.openConflicts(); assert.equal(runtime.state.reviewing, true)
+  r.hooks.unmount(); r.hooks.unmount(); assert.equal(runtime.releases, 1); assert.equal(runtime.state.enabled, false)
 })

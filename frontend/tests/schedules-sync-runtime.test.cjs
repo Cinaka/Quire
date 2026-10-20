@@ -101,6 +101,7 @@ const source = p => fs.readFileSync(path.join(__dirname, '../src', p), 'utf8')
 test('formal panel scopes completion and startup is opt-in without modifying ordinary P2 scheduler', () => {
   assert.match(source('App.vue'), /onMounted\(\(\) => \{ stopScheduleRuntime = installScheduleSyncRuntime\(\)/)
   assert.match(source('components/schedules/ScheduleSyncPanel.vue'), /明确启用本次会话日程同步/)
+  assert.match(source('components/schedules/ScheduleSyncPanel.vue'), /:disabled="state.busy \|\| state.reviewing"/)
   assert.match(source('views/SyncView.vue'), /本轮P2同步结束；日程请查看下方独立状态/)
   assert.doesNotMatch(source('api/scheduleSyncRuntime.ts'), /runSync\(|emitBackgroundSync|localStorage|\.clear\(|\.delete\(/)
 })
@@ -159,4 +160,28 @@ test('actual sync panel only subscribes to scoped runtime and unsubscribes witho
   let unmount, updated, stopped = 0
   const globals = { ref: value => ({ value }), onBeforeUnmount: fn => { unmount = fn }, scheduleSyncRuntime: { inspect: () => ({ phase: 'paused' }), subscribe(fn) { updated = fn; return () => stopped++ } } }
   vm.runInNewContext(code, globals); updated(); unmount(); assert.equal(stopped, 1)
+})
+
+test('manual review hold is inert, exclusive and blocks both explicit enable and all automatic signals', async () => {
+  const h = fixture(), release = h.runtime.acquireManualReview()
+  assert.equal(typeof release, 'function'); assert.equal(h.runtime.inspect().reviewing, true)
+  assert.equal(h.runtime.acquireManualReview(), null); assert.equal(await h.runtime.enable(), false)
+  h.runtime.request(0); assert.equal(await h.runtime.runNow(), false); assert.equal(h.calls.length, 0); assert.equal(h.timers.size, 0)
+  release(); assert.equal(h.runtime.inspect().reviewing, false); assert.equal(h.runtime.inspect().enabled, false)
+  const later = h.runtime.acquireManualReview(); release(); assert.equal(h.runtime.inspect().reviewing, true)
+  later(); assert.equal(await h.runtime.enable(), true)
+})
+test('enabled and enabling runtime cannot hand off manual review without explicit pause and settled capture', async () => {
+  const h = fixture(); await h.runtime.enable(); assert.equal(h.runtime.acquireManualReview(), null)
+  h.runtime.pause(); const release = h.runtime.acquireManualReview(); assert.equal(typeof release, 'function'); release()
+  let done; const pending = fixture({ capture: () => new Promise(r => { done = r }) }), work = pending.runtime.enable()
+  pending.runtime.pause(); assert.equal(pending.runtime.acquireManualReview(), null)
+  done(pin()); await work; assert.equal(typeof pending.runtime.acquireManualReview(), 'function')
+})
+test('paused in-flight runtime cannot grant review until its late result has settled', async () => {
+  let done; const h = fixture({ run: () => new Promise(r => { done = r }) }); await h.runtime.enable(); await h.flush()
+  h.runtime.pause(); assert.equal(h.runtime.acquireManualReview(), null)
+  done(cycle()); await settle(); const release = h.runtime.acquireManualReview(); assert.equal(typeof release, 'function')
+  h.runtime.pause(); assert.equal(h.runtime.inspect().reviewing, true); assert.equal(await h.runtime.enable(), false)
+  release(); assert.equal(h.runtime.inspect().enabled, false); assert.equal(h.timers.size, 0)
 })

@@ -3,7 +3,7 @@ const path = require("node:path")
 const { spawnSync } = require("node:child_process")
 const root = path.resolve(__dirname, "..")
 const groups = {
-  sync: ["schedules-sync-runtime.test.cjs", "schedules-test-runner.test.cjs", "schedules-sync.test.cjs", "schedules-conversion-sync.test.cjs", "schedules-push.test.cjs", "schedules-pull.test.cjs", "schedules-network.test.cjs", "schedules-request-identity.test.cjs", "schedules-sync-protection.test.cjs", "schedules-owner.test.cjs", "schedules-media-protection.test.cjs", "schedules-tag-protection.test.cjs"],
+  sync: ["schedules-route.test.cjs", "schedules-conflict-center.test.cjs", "schedules-sync-runtime.test.cjs", "schedules-test-runner.test.cjs", "schedules-sync.test.cjs", "schedules-conversion-sync.test.cjs", "schedules-push.test.cjs", "schedules-pull.test.cjs", "schedules-network.test.cjs", "schedules-request-identity.test.cjs", "schedules-sync-protection.test.cjs", "schedules-owner.test.cjs", "schedules-media-protection.test.cjs", "schedules-tag-protection.test.cjs"],
 }
 const args = process.argv.slice(2)
 const group = args.length === 0 ? null : args.length === 2 && args[0] === "--group" ? args[1] : "INVALID"

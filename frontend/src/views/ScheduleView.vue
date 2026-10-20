@@ -2,6 +2,7 @@
 import { onBeforeUnmount, ref } from "vue"
 import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink } from "vue-router"
 import { scheduleHostRepo } from "@/repo"
+import { scheduleSyncRuntime } from "@/api/scheduleSyncRuntime"
 import { createScheduleRouteLeave } from "@/shared/scheduleRouteLeave"
 import type { ScheduleHostContext } from "@/shared/scheduleHostTypes"
 import ScheduleConflictCenter from "@/components/schedules/ScheduleConflictCenter.vue"
@@ -11,15 +12,27 @@ import ScheduleHost from "@/components/schedules/ScheduleHost.vue"
 const hostRef = ref<InstanceType<typeof ScheduleHost> | null>(null)
 const leaveNotice = ref("")
 const conflictOpen = ref(false), conflictContext = ref<ScheduleHostContext | null>(null)
+const syncState = ref(scheduleSyncRuntime.inspect())
+const stopSyncState = scheduleSyncRuntime.subscribe(() => { syncState.value = scheduleSyncRuntime.inspect() })
+let releaseReview: (() => void) | null = null
+function pauseForReview(): void {
+  scheduleSyncRuntime.pause()
+  leaveNotice.value = "已暂停后续日程调度；在途轮次可能仍在结束。请等待后再次点击核对入口，不会自动打开或恢复同步。"
+}
 const conflictRef = ref<InstanceType<typeof ScheduleConflictCenter> | null>(null)
 const leaveGuard = createScheduleRouteLeave(() => conflictOpen.value ? conflictRef.value : hostRef.value)
 async function openConflicts(): Promise<void> {
+  const sync = scheduleSyncRuntime.inspect()
+  if (sync.enabled || sync.busy) { leaveNotice.value = "请先明确暂停日程同步，并等待在途轮次结束后再进入核对区。"; return }
   if (conflictOpen.value || !await leaveGuard.attempt()) { leaveNotice.value = "请先保存或处理当前编辑，再打开核对区。"; return }
   const context = hostRef.value?.capturedContext()
   if (!context) { leaveNotice.value = "当前宿主未就绪或已失效，请处理归属后重新进入。"; return }
+  const release = scheduleSyncRuntime.acquireManualReview()
+  if (!release) { leaveNotice.value = "日程同步状态在离开检查期间已变化，未打开核对区；请暂停并等待后重试。"; return }
+  releaseReview = release
   conflictContext.value = context; conflictOpen.value = true; leaveNotice.value = ""
 }
-async function closeConflicts(): Promise<void> { conflictOpen.value = false; conflictContext.value = null; leaveNotice.value = ""; await hostRef.value?.refresh() }
+async function closeConflicts(): Promise<void> { conflictOpen.value = false; conflictContext.value = null; releaseReview?.(); releaseReview = null; leaveNotice.value = ""; await hostRef.value?.refresh() }
 onBeforeRouteLeave(async () => {
   const allowed = await leaveGuard.attempt()
   leaveNotice.value = allowed ? "" : leaveGuard.inspect().error || "离开检查进行中，请先保留当前输入。"
@@ -27,7 +40,7 @@ onBeforeRouteLeave(async () => {
 })
 // /schedules的query/hash不承载页面状态；同组件更新不重挂载，也不消费任何动作参数。
 onBeforeRouteUpdate(() => true)
-onBeforeUnmount(() => leaveGuard.dispose())
+onBeforeUnmount(() => { leaveGuard.dispose(); stopSyncState(); releaseReview?.(); releaseReview = null })
 </script>
 
 <template>
@@ -39,7 +52,9 @@ onBeforeUnmount(() => leaveGuard.dispose())
       <nav aria-label="页面导航"><RouterLink to="/">返回今简</RouterLink><RouterLink to="/list">简册</RouterLink><RouterLink to="/settings">设置 / 防蠹</RouterLink></nav>
     </header>
     <p v-if="leaveNotice" class="leave-notice" role="alert">{{ leaveNotice }}</p>
-    <button v-if="!conflictOpen" type="button" @click="openConflicts">资源冲突 / 终态核对…</button>
+    <p v-if="!conflictOpen && (syncState.enabled || syncState.busy)">资源/终态核对需要先暂停本页会话同步并等待在途轮次结束；暂停不回滚已发请求或云端提交。</p>
+    <button v-if="!conflictOpen && syncState.enabled" type="button" @click="pauseForReview">明确暂停日程同步，准备核对</button>
+    <button v-if="!conflictOpen" type="button" :disabled="syncState.busy" @click="openConflicts">资源冲突 / 终态核对…</button>
     <ScheduleConflictCenter v-if="conflictOpen && conflictContext" ref="conflictRef" :context="conflictContext" @close="closeConflicts" />
     <ScheduleHost v-show="!conflictOpen" ref="hostRef" :port="scheduleHostRepo" :first-save-enabled="false" />
   </section>

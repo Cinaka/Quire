@@ -10,11 +10,11 @@ export interface ScheduleRuntimePort {
   later(work: () => void, milliseconds: number): number; clear(timer: number): void
 }
 export type ScheduleRuntimePhase = "paused" | "enabling" | "running" | "offline" | "ready" | "pending" | "blocked" | "unsupported" | "error" | "expired"
-export interface ScheduleRuntimeState { enabled: boolean; busy: boolean; phase: ScheduleRuntimePhase; pending: ScheduleSyncPending | null; message: string }
+export interface ScheduleRuntimeState { enabled: boolean; busy: boolean; reviewing: boolean; phase: ScheduleRuntimePhase; pending: ScheduleSyncPending | null; message: string }
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 /** Opt-in, session-only, bounded automatic work. No P2 calls, storage writes or implicit identity recapture. */
 export function createScheduleSyncRuntime(port: ScheduleRuntimePort) {
-  const state: ScheduleRuntimeState = { enabled: false, busy: false, phase: "paused", pending: null, message: "日程同步未启用；本机文字预简仍可使用。" }
+  const state: ScheduleRuntimeState = { enabled: false, busy: false, reviewing: false, phase: "paused", pending: null, message: "日程同步未启用；本机文字预简仍可使用。" }
   const listeners = new Set<() => void>()
   let context: ScheduleHostContext | null = null, timer: number | null = null, stop: (() => void) | null = null
   let generation = 0, changed = false, retries = 0, continuations = 0
@@ -79,7 +79,7 @@ export function createScheduleSyncRuntime(port: ScheduleRuntimePort) {
     inspect: () => copy(state),
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } },
     async enable(): Promise<boolean> {
-      if (state.busy || state.enabled) return false
+      if (state.busy || state.enabled || state.reviewing) return false
       const version = ++generation
       state.busy = true; state.phase = "enabling"; state.message = "正在确认账号与本地归属；不自动认领或清库。"; notify()
       try {
@@ -93,6 +93,12 @@ export function createScheduleSyncRuntime(port: ScheduleRuntimePort) {
         return true
       } catch { if (version === generation) pause(true); return false }
       finally { state.busy = false; notify(); if (active(version)) request(0) }
+    },
+    acquireManualReview(): (() => void) | null {
+      if (state.enabled || state.busy || state.reviewing) return null
+      state.reviewing = true; notify()
+      let held = true
+      return () => { if (!held) return; held = false; state.reviewing = false; notify() }
     },
     pause, request, runNow: () => execute(true),
   }
