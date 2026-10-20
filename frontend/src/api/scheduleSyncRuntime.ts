@@ -5,6 +5,7 @@ import { createInternalScheduleSyncCoordinator } from "@/db/scheduleSyncRepo"
 import { readCheckedConversionQueue } from "@/db/scheduleSyncStateRepo"
 import { conversionCanonical, conversionCopy } from "@/shared/scheduleConversionSync"
 import type { ConversionLease } from "@/shared/scheduleConversionSync"
+import { summarizeScheduleSyncIssues } from "@/shared/scheduleSyncIssues"
 import { createScheduleSyncRuntime } from "@/shared/scheduleSyncRuntime"
 import type { ScheduleRuntimePort } from "@/shared/scheduleSyncRuntime"
 import type { Schedule } from "@/shared/types"
@@ -70,7 +71,7 @@ export const scheduleRuntimePort: ScheduleRuntimePort = {
       (row.kind === "error" && !retryableErrors.has(row.reason))) === true ||
       result.pull.some(page => page.items.some(row => row.kind === "conflict" || (row.kind === "held" && !safePullHolds.has(row.reason))))
     const pending = result.pending
-    return { unsupported, blocked: !unsupported && blocked, failed: result.stopped || result.push?.items.some(row => row.kind === "error") === true, pending,
+    return { issues: summarizeScheduleSyncIssues(result), unsupported, blocked: !unsupported && blocked, failed: result.stopped || result.push?.items.some(row => row.kind === "error") === true, pending,
       more: pending !== null && (pending.dirty > 0 || pending.conversions > 0 || pending.pullContinuation) || result.push?.more === true || result.pull.at(-1)?.hasMore === true }
   },
 }

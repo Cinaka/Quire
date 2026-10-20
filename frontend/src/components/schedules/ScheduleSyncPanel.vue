@@ -18,6 +18,16 @@ onBeforeUnmount(stop)
       <button type="button" :disabled="state.busy" @click="scheduleSyncRuntime.runNow()">立即核对 / 明确重试日程</button>
       <button type="button" @click="scheduleSyncRuntime.pause()">暂停本次会话日程同步</button>
     </template>
+    <section v-if="state.issues.total" aria-label="本轮日程同步原因摘要">
+      <h3>本轮原因摘要</h3>
+      <p>仅含本次会话刚完成轮次的安全说明，不是持久错误历史，也不代表以下记录已解除保护。</p>
+      <ul><li v-for="(item, index) in state.issues.items" :key="index">
+        <strong>{{ item.stage === 'conversion' ? '首次转换' : item.stage === 'push' ? '日程上行' : item.stage === 'pull' ? '日程拉取' : '轮次核对' }} · {{ item.level === 'waiting' ? '正常暂留' : item.level === 'error' ? '请求或确认未完成' : '需要核对' }}</strong>
+        <p>{{ item.message }}</p><p>来源：<code>{{ item.sourceId || '本轮未定位具体来源' }}</code></p>
+      </li></ul>
+      <p v-if="state.issues.omitted">摘要最多展开20条，另有 {{ state.issues.omitted }} 条未展开；未删除或自动处理这些记录。</p>
+      <p>真实冲突请先暂停并等待在途轮次结束，再到预简核对区处理；未定位来源或无法解释时保留原库和防蠹备份，不强制清除。</p>
+    </section>
     <p>暂停不撤销已发出请求或已提交结果。离线、未知回执和资源冲突不会清库、恢复日记或强制确认；请先处理原因再明确重试。</p>
     <RouterLink to="/schedules">进入预简 / 资源与终态核对</RouterLink>
   </section>

@@ -208,3 +208,57 @@ test('stopped upstream with unknown held cause still fails closed rather than tr
   const h = apiFixture(); h.cycleResult.stopped = true; h.cycleResult.push.items = [{ id: ID, kind: 'held', reason: 'unknown_new_reason' }]
   const result = await h.api.scheduleRuntimePort.run(pin(), () => true); assert.equal(result.blocked, true); assert.equal(result.failed, true)
 })
+
+const summarize = result => loadTS('shared/scheduleSyncIssues.ts').summarizeScheduleSyncIssues({ stopped: false, conversions: [], push: null, pull: [], ...result })
+test('reason projection never exports raw private objects, arbitrary reason strings or arbitrary source identities', () => {
+  const value = summarize({ conversions: [{ id: 'private@example.com', kind: 'held', reason: 'Bearer private-token', source: { title: 'private diary' }, lease: { owner: 'private-owner' } }], push: { items: [{ id: ID, kind: 'error', reason: '__proto__', response: 'private backend trace' }] } })
+  assert.equal(value.total, 2); assert.equal(value.items[0].sourceId, null); assert.equal(value.items[0].reason, 'unknown')
+  assert.equal(value.items[1].sourceId, ID); assert.equal(value.items[1].reason, 'unknown')
+  const text = JSON.stringify(value); for (const secret of ['private@example', 'private-token', 'private diary', 'private-owner', 'private backend', '__proto__']) assert.equal(text.includes(secret), false)
+})
+test('successful merged/confirmed rows do not create fake issues and upstream stop without rows remains visible', () => {
+  assert.equal(summarize({ conversions: [{ id: ID, kind: 'confirmed', reason: 'first_intent' }], pull: [{ applied: true, items: [{ id: ID, kind: 'merged', reason: 'server_version' }] }] }).total, 0)
+  const r = summarize({ stopped: true, reason: 'private stack trace' }); assert.equal(r.total, 1); assert.equal(r.items[0].stage, 'cycle'); assert.equal(r.items[0].reason, 'unconfirmed')
+})
+test('failed empty pull page is explained without leaking raw cursor or backend data', () => {
+  const r = summarize({ pull: [{ applied: false, reason: 'cursor_changed', cursor: 'private cursor', items: [] }] })
+  assert.equal(r.total, 1); assert.equal(r.items[0].stage, 'pull'); assert.equal(r.items[0].reason, 'cursor_changed'); assert.equal(r.items[0].sourceId, null)
+  assert.equal(JSON.stringify(r).includes('private cursor'), false)
+})
+test('known waiting explanations are stage-specific; real conflict kind never becomes ordinary waiting', () => {
+  const r = summarize({ conversions: [{ id: ID, kind: 'held', reason: 'conversion_pending' }], push: { items: [{ id: ID, kind: 'held', reason: 'changed_locally' }, { id: ID, kind: 'conflict', reason: 'conversion_pending' }] }, pull: [{ applied: true, items: [{ id: ID, kind: 'held', reason: 'local_pending' }] }] })
+  assert.equal(r.items.filter(row => row.level === 'waiting').length, 2); assert.equal(r.items.filter(row => row.level === 'blocked').length, 2)
+})
+test('bounded summary prioritizes blockers and accurately reports undisplayed reasons without mutating outcomes', () => {
+  const raw = { push: { items: Array.from({ length: 40 }, () => ({ id: ID, kind: 'held', reason: 'conversion_pending' })) }, conversions: [], pull: [{ applied: true, items: [{ id: ID, kind: 'conflict', reason: 'dirty_conflict' }] }] }
+  const before = JSON.stringify(raw), r = summarize(raw)
+  assert.equal(r.total, 41); assert.equal(r.items.length, 20); assert.equal(r.omitted, 21); assert.equal(r.items[0].level, 'blocked'); assert.equal(JSON.stringify(raw), before)
+})
+test('formal API projects current coordinator outcomes without exposing their full snapshots', async () => {
+  const h = apiFixture(); h.cycleResult.push.items = [{ id: ID, kind: 'conflict', reason: 'stale', submitted: { title: 'private source' } }]
+  const before = JSON.stringify(h.cycleResult), result = await h.api.scheduleRuntimePort.run(pin(), () => true)
+  assert.equal(result.blocked, true); assert.equal(result.issues.items[0].sourceId, ID); assert.equal(result.issues.items[0].reason, 'stale')
+  assert.equal(JSON.stringify(result.issues).includes('private source'), false); assert.equal(JSON.stringify(h.cycleResult), before)
+})
+test('runtime copies issue summaries and clears them on pause rather than persisting another account view', async () => {
+  const issues = summarize({ push: { items: [{ id: ID, kind: 'conflict', reason: 'stale' }] } }), h = fixture({ result: cycle({ issues, blocked: true }) })
+  await h.runtime.enable(); await h.flush(); assert.equal(h.runtime.inspect().issues.total, 1)
+  const copy = h.runtime.inspect(); copy.issues.items[0].message = 'changed'; assert.notEqual(h.runtime.inspect().issues.items[0].message, 'changed')
+  h.runtime.pause(); assert.equal(h.runtime.inspect().issues.total, 0); assert.equal(issues.total, 1)
+})
+for (const mode of ['pause', 'expire']) test(`late reason summary cannot repopulate after ${mode}`, async () => {
+  let done; const h = fixture({ run: () => new Promise(r => { done = r }) }); await h.runtime.enable(); await h.flush()
+  if (mode === 'pause') h.runtime.pause(); else h.expired()
+  done(cycle({ issues: summarize({ push: { items: [{ id: ID, kind: 'error', reason: 'network' }] } }) })); await settle()
+  assert.equal(h.runtime.inspect().issues.total, 0); assert.equal(h.runtime.inspect().enabled, false)
+})
+test('a new cycle clears previous reasons even if the new request has not settled', async () => {
+  let finish, count = 0; const h = fixture({ run: () => ++count === 1 ? cycle({ issues: summarize({ stopped: true }) }) : new Promise(r => { finish = r }) })
+  await h.runtime.enable(); await h.flush(); assert.equal(h.runtime.inspect().issues.total, 1)
+  const work = h.runtime.runNow(); await settle(); assert.equal(h.runtime.inspect().issues.total, 0); finish(cycle()); await work
+})
+test('actual panel renders only projected metadata and does not add requests or data-clearing actions', () => {
+  const panel = source('components/schedules/ScheduleSyncPanel.vue')
+  assert.match(panel, /本轮日程同步原因摘要/); assert.match(panel, /state.issues.omitted/); assert.match(panel, /item.sourceId/)
+  assert.doesNotMatch(panel, /v-html|JSON.stringify\(|\.submitted|\.response|\.content|\.clear\(|fetch\(|axios/)
+})

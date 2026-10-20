@@ -1,6 +1,7 @@
+import type { ScheduleSyncIssueSummary } from "./scheduleSyncIssues"
 import type { ScheduleHostContext } from "./scheduleHostTypes"
 import type { ScheduleSyncPending } from "./scheduleSync"
-export interface ScheduleRuntimeCycle { unsupported: boolean; failed: boolean; blocked: boolean; pending: ScheduleSyncPending | null; more: boolean }
+export interface ScheduleRuntimeCycle { issues?: ScheduleSyncIssueSummary; unsupported: boolean; failed: boolean; blocked: boolean; pending: ScheduleSyncPending | null; more: boolean }
 export interface ScheduleRuntimePort {
   capture(): Promise<ScheduleHostContext>
   verify(context: ScheduleHostContext): Promise<void>
@@ -10,11 +11,11 @@ export interface ScheduleRuntimePort {
   later(work: () => void, milliseconds: number): number; clear(timer: number): void
 }
 export type ScheduleRuntimePhase = "paused" | "enabling" | "running" | "offline" | "ready" | "pending" | "blocked" | "unsupported" | "error" | "expired"
-export interface ScheduleRuntimeState { enabled: boolean; busy: boolean; reviewing: boolean; phase: ScheduleRuntimePhase; pending: ScheduleSyncPending | null; message: string }
+export interface ScheduleRuntimeState { issues: ScheduleSyncIssueSummary; enabled: boolean; busy: boolean; reviewing: boolean; phase: ScheduleRuntimePhase; pending: ScheduleSyncPending | null; message: string }
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 /** Opt-in, session-only, bounded automatic work. No P2 calls, storage writes or implicit identity recapture. */
 export function createScheduleSyncRuntime(port: ScheduleRuntimePort) {
-  const state: ScheduleRuntimeState = { enabled: false, busy: false, reviewing: false, phase: "paused", pending: null, message: "日程同步未启用；本机文字预简仍可使用。" }
+  const state: ScheduleRuntimeState = { issues: { total: 0, omitted: 0, items: [] }, enabled: false, busy: false, reviewing: false, phase: "paused", pending: null, message: "日程同步未启用；本机文字预简仍可使用。" }
   const listeners = new Set<() => void>()
   let context: ScheduleHostContext | null = null, timer: number | null = null, stop: (() => void) | null = null
   let generation = 0, changed = false, retries = 0, continuations = 0
@@ -26,7 +27,7 @@ export function createScheduleSyncRuntime(port: ScheduleRuntimePort) {
     generation++; state.enabled = false; context = null; clear(); const unsubscribe = stop; stop = null
     try { unsubscribe?.() } catch { /* cleanup must not revive a cancelled session */ }
     changed = false
-    state.phase = expired ? "expired" : "paused"; state.pending = null
+    state.phase = expired ? "expired" : "paused"; state.pending = null; state.issues = { total: 0, omitted: 0, items: [] }
     state.message = expired ? "无法继续确认原账号、归属、恢复上下文或调度结果；旧会话已停止，请先核对再明确启用。" : "已暂停本次会话日程同步；已发出的请求或已提交结果不承诺撤销。"
     notify()
   }
@@ -45,7 +46,7 @@ export function createScheduleSyncRuntime(port: ScheduleRuntimePort) {
     if (!port.online()) { state.phase = "offline"; state.message = "日程离线；未确认数据和转换意图保留。"; notify(); return false }
     if (!port.foreground()) return false
     const version = generation, pin = copy(context)
-    state.busy = true; changed = false; state.phase = "running"; state.message = "正在核对日程：首次转换意图 → 上行 → 独立游标拉取。"; notify()
+    state.busy = true; state.issues = { total: 0, omitted: 0, items: [] }; changed = false; state.phase = "running"; state.message = "正在核对日程：首次转换意图 → 上行 → 独立游标拉取。"; notify()
     let again = false, retryDelay = 0
     try {
       await port.verify(pin)
@@ -54,6 +55,7 @@ export function createScheduleSyncRuntime(port: ScheduleRuntimePort) {
       await port.verify(pin)
       if (!active(version)) return false
       state.pending = copy(result.pending)
+      state.issues = copy(result.issues ?? { total: 0, omitted: 0, items: [] })
       if (result.unsupported) { state.phase = "unsupported"; state.message = "当前后端日程接口不可用（可能尚未部署）。已停止自动重试；保留本机数据，部署核实后再明确重试。" }
       else if (result.blocked) { state.phase = "blocked"; state.message = "日程仍有未确认转换或冲突，保留原意图/候选及P2保护；请到预简核对区处理后明确重试。" }
       else if (result.failed) {
