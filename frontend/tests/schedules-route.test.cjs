@@ -117,7 +117,7 @@ test('default injected acceptance host retains its existing ordinary-draft readi
 })
 test('formal route exposes local-only workflow through repo facade, with no raw writes, first-save bridge or automatic sync', () => {
   const view = source('views/ScheduleView.vue'); const repo = source('repo/index.ts')
-  assert.match(view, /from "@\/repo"/); assert.match(view, /<ScheduleHost ref="hostRef"/)
+  assert.match(view, /from "@\/repo"/); assert.match(view, /<ScheduleHost v-show="!conflictOpen" ref="hostRef"/)
   assert.match(view, /:first-save-enabled="false"/); assert.match(view, /onBeforeRouteLeave/)
   assert.match(view, /日程云端同步尚未开放/)
   assert.doesNotMatch(view, /@\/db\/|useRoute\(|:key=|router\.push|syncNow|autoSync|setInterval|fetch\(|localStorage/)
@@ -125,7 +125,7 @@ test('formal route exposes local-only workflow through repo facade, with no raw 
   assert.doesNotMatch(repo, /scheduleSyncRepo|schedulePushRepo|scheduleConversionRepo|scheduleFirstSaveRepo/)
   assert.match(source('App.vue'), /RouterLink to="\/schedules"/)
 })
-test('formal view neither mounts isolated fixtures nor exposes resource/terminal actions before their formal integration', () => {
+test('formal view never mounts isolated fixtures or raw internal resource/terminal resolvers', () => {
   const view = source('views/ScheduleView.vue')
   assert.doesNotMatch(view, /acceptance|seed|fixture|5179|5181|5182|clearDatabase|ResourceWorkspacePanel|TerminalBlockedObserver/)
   assert.match(source('router/index.ts'), /path: "\/schedules", name: "schedules"/)

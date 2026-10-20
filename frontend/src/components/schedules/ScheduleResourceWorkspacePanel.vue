@@ -56,7 +56,7 @@ import type { WorkspaceAction } from "@/shared/scheduleResourceWorkspacePanel"
 import { RESOURCE_WORKSPACE_BLOCK_TEXT } from "@/shared/scheduleResourceWorkspaceTypes"
 import type { ResourceWorkspacePort, ResourceWorkspaceSaveTarget } from "@/shared/scheduleResourceWorkspaceTypes"
 import type { SharedTagCopyChoice } from "@/shared/scheduleSharedTagCopy"
-const props = defineProps<{ port: ResourceWorkspacePort; sourceId: string; contextKey: string; pickFile: () => Promise<ResourceWorkspaceSaveTarget>; fileSavingSupported: boolean }>()
+const props = defineProps<{ port: ResourceWorkspacePort; sourceId: string; contextKey: string; pickFile: () => Promise<ResourceWorkspaceSaveTarget>; fileSavingSupported: boolean; expired?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const panel = createScheduleResourceWorkspacePanel(props.port, props.sourceId, props.pickFile)
 const state = ref(panel.inspect()), locked = computed(() => state.value.closed || state.value.expired), discardRequested = ref(false)
@@ -78,6 +78,8 @@ async function readFile(event: Event) { const input = event.target as HTMLInputE
 function discardNames() { panel.discardNames(true); discardRequested.value = false }
 function closeConfirmed() { if (panel.confirmClose(true)) emit("close") }
 watch(() => [props.port, props.sourceId, props.contextKey, props.pickFile, props.fileSavingSupported], () => { discardRequested.value = false; panel.expire() }, { flush: "sync" })
+watch(() => props.expired, value => { if (value) panel.expire() }, { immediate: true, flush: "sync" })
+defineExpose({ expire: panel.expire })
 onBeforeUnmount(() => { unsubscribe(); panel.dispose() })
 </script>
 <style scoped>

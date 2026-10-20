@@ -90,7 +90,7 @@ function beforeUnload(event: BeforeUnloadEvent): void {
     event.preventDefault(); event.returnValue = ""
   }
 }
-defineExpose({ prepareLeave, saveTarget })
+defineExpose({ prepareLeave, saveTarget, capturedContext: host.capturedContext, refresh: refreshWorkspace })
 onMounted(async () => {
   window.addEventListener("beforeunload", beforeUnload)
   if (await host.initialize() && props.initialFirstSaveDate && host.inspect().frame) host.preview(props.initialFirstSaveDate)

@@ -70,6 +70,7 @@ export function createScheduleHost(
     inspect() { return copy(state) },
     workspacePort(): ScheduleWorkspacePort | null { return workspace },
     diaryEditor(): ScheduleDiaryEditorSession | null { return targetEditor },
+    capturedContext(): ScheduleHostContext | null { return context && active && state.ready && !state.expired ? copy(context) : null },
     contextKey(): string { return context ? JSON.stringify(context) : "" },
     subscribe(listener: () => void): () => void { if (active) listeners.add(listener); return () => { listeners.delete(listener) } },
     async initialize(): Promise<boolean> {

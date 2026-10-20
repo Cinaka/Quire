@@ -31,3 +31,6 @@ export const scheduleHostRepo = localScheduleHostRepo
 export const createScheduleReminderPort = createLocalScheduleReminderPort
 
 export const entryNewDestination = { read: readEntryNewDestination }
+
+// 显式核对入口：构造惰性会话，不启动自动同步。
+export { listScheduleConflictSources, createScheduleConflictSession } from "@/db/scheduleConflictCenterRepo"

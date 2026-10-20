@@ -291,7 +291,7 @@ test("isolation preflight accepts only a distinct loopback origin and performs n
 test("host remains injected; formal local route exposes only the guarded facade and never starts background sync", () => {
   const component = source("components/schedules/ScheduleHost.vue")
   assert.match(component, /port: ScheduleHostPort/); assert.match(component, /workspaceRef.value\.canCompose/)
-  assert.match(component, /host\.openTargetEditor\(id\)/); assert.match(component, /defineExpose\(\{ prepareLeave, saveTarget \}\)/)
+  assert.match(component, /host\.openTargetEditor\(id\)/); assert.match(component, /defineExpose\(\{ prepareLeave, saveTarget, capturedContext: host.capturedContext, refresh: refreshWorkspace \}\)/)
   assert.doesNotMatch(component, /useRouter|router\.|\bDiaryEditor\b|insertImages|localScheduleHostRepo|@\/repo/)
   for (const p of ["App.vue", "router/index.ts"]) assert.doesNotMatch(source(p), /ScheduleHost|scheduleHostRepo|scheduleFirstSaveRepo|scheduleDiaryTargetRepo/)
   assert.match(source("views/ScheduleView.vue"), /from "@\/repo"/)
