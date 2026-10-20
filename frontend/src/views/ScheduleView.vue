@@ -54,7 +54,7 @@ onBeforeUnmount(() => { leaveGuard.dispose(); stopSyncState(); releaseReview?.()
     <p v-if="leaveNotice" class="leave-notice" role="alert">{{ leaveNotice }}</p>
     <p v-if="!conflictOpen && (syncState.enabled || syncState.busy)">资源/终态核对需要先暂停本页会话同步并等待在途轮次结束；暂停不回滚已发请求或云端提交。</p>
     <button v-if="!conflictOpen && syncState.enabled" type="button" @click="pauseForReview">明确暂停日程同步，准备核对</button>
-    <button v-if="!conflictOpen" type="button" :disabled="syncState.busy" @click="openConflicts">资源冲突 / 终态核对…</button>
+    <button v-if="!conflictOpen" type="button" :disabled="syncState.busy" @click="openConflicts">待刻冲突 / 资源与终态核对…</button>
     <ScheduleConflictCenter v-if="conflictOpen && conflictContext" ref="conflictRef" :context="conflictContext" @close="closeConflicts" />
     <ScheduleHost v-show="!conflictOpen" ref="hostRef" :port="scheduleHostRepo" :first-save-enabled="false" />
   </section>

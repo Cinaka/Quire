@@ -16,8 +16,8 @@ test('default command keeps the entire P4 file set; build is not substituted for
 })
 test('sync group is explicit, smaller and includes runtime, protocol, owner and P2 resource protections', () => {
   const r = run(['--group', 'sync']), files = r.invocation[1].map(f => path.basename(f))
-  assert.equal(r.status, 0); assert.equal(files.length - 1, 14)
-  for (const file of ['schedules-route.test.cjs', 'schedules-conflict-center.test.cjs', 'schedules-sync-runtime.test.cjs', 'schedules-request-identity.test.cjs', 'schedules-sync-protection.test.cjs', 'schedules-owner.test.cjs', 'schedules-tag-protection.test.cjs']) assert.ok(files.includes(file))
+  assert.equal(r.status, 0); assert.equal(files.length - 1, 16)
+  for (const file of ['schedules-conflict.test.cjs', 'schedules-evidence-file.test.cjs', 'schedules-route.test.cjs', 'schedules-conflict-center.test.cjs', 'schedules-sync-runtime.test.cjs', 'schedules-request-identity.test.cjs', 'schedules-sync-protection.test.cjs', 'schedules-owner.test.cjs', 'schedules-tag-protection.test.cjs']) assert.ok(files.includes(file))
   assert.match(r.log[0], /不代表P4完整回归通过/)
 })
 for (const args of [['--group', 'unknown'], ['sync'], ['--group'], ['--group', 'sync', 'extra']]) test(`bad group ${args.join(' ')} fails without spawning`, () => { const r = run(args); assert.equal(r.status, 1); assert.equal(r.invocation, undefined) })

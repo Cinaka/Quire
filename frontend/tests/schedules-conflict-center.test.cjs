@@ -18,6 +18,7 @@ function fixture(extra = {}) {
   const raw = { async review(id, candidate) { calls.push('http.review'); if (gates.review) await gates.review; return { id, candidate } },
     async image() { calls.push('http.image'); return {} }, async publish() { calls.push('http.publish'); return {} }, async checkTags() { calls.push('http.tags'); return {} } }
   const h = setup({
+    '@/api/scheduleConflictTransport': { createScheduleConflictTransport: () => ({ async detail() { throw Error('unused pending transport') } }) },
     '@/api/scheduleResourceWorkspaceTransport': { createScheduleResourceWorkspaceTransport: () => raw },
     '@/api/scheduleTerminalReviewTransport': { createScheduleTerminalReviewTransport: () => raw },
     './scheduleResourceWorkspaceRepo': { createInternalResourceWorkspace: (id, transport) => { transports.push(transport); return {
@@ -88,14 +89,14 @@ const ref = value => ({ value })
 function center() {
   const hooks = {}, events = [], calls = [], props = { context: context() }
   let expiredCallback, pickerResolve
-  const session = { resources: {}, cancel() { calls.push('cancel') }, async review() { calls.push('review'); return { blocks: [], choices: ['finish-cloud-purged'], sourceDeletionEnabled: true, completeLocalResources: true } }, async apply() { calls.push('apply'); return true } }
+  const session = { resources: {}, async reviewPending() { calls.push('pending.review'); return { local: schedule(), server: schedule(), choices: ['keep-local', 'use-cloud'] } }, async resolvePending() { calls.push('pending.resolve'); return true }, cancel() { calls.push('cancel') }, async review() { calls.push('review'); return { blocks: [], choices: ['finish-cloud-purged'], sourceDeletionEnabled: true, completeLocalResources: true } }, async apply() { calls.push('apply'); return true } }
   const globals = { ref, shallowRef: ref, defineProps: () => props, defineEmits: () => name => events.push(name), defineExpose() {},
     resourceEvidenceSaveAvailable: () => true, pickResourceWorkspaceEvidence: () => new Promise(r => { pickerResolve = r }),
     async listScheduleConflictSources() { calls.push('list'); return [{ id: ID, title: 'test', deleted: false }] }, createScheduleConflictSession: () => session,
     scheduleHostRepo: { watch(_context, callback) { expiredCallback = callback; return () => calls.push('unwatch') } },
     onMounted: fn => { hooks.mount = fn }, onBeforeUnmount: fn => { hooks.unmount = fn },
     window: { addEventListener() {}, removeEventListener() {} } }
-  vm.runInNewContext(script('components/schedules/ScheduleConflictCenter.vue') + '\nglobalThis.bindings={select,review,openResources,closeResources,prepareLeave,close,apply,resourceOpen,resourceRef,preview,confirmedAction,expired,busy,session,selected};', globals)
+  vm.runInNewContext(script('components/schedules/ScheduleConflictCenter.vue') + '\nglobalThis.bindings={select,review,openResources,closeResources,prepareLeave,close,apply,resourceOpen,resourceRef,preview,confirmedAction,expired,busy,session,selected,reviewPending,resolvePending,pendingPreview,pendingChoice};', globals)
   return { ...globals.bindings, hooks, calls, events, expire: () => expiredCallback(), pick: value => pickerResolve(value) }
 }
 test('actual center mount only lists local sources; selected source requires explicit cloud review', async () => {
@@ -152,4 +153,73 @@ test('host captured context getter returns independent snapshots and refuses dis
   const host = loadTS('shared/scheduleHost.ts').createScheduleHost(port, undefined, { firstSaveEnabled: false })
   assert.equal(host.capturedContext(), null); await host.initialize(); const exposed = host.capturedContext(); exposed.authSubject = 'foreign'
   assert.equal(host.capturedContext().authSubject, 'account-a'); host.dispose(); assert.equal(host.capturedContext(), null)
+})
+
+function pendingWire(row) { return { id: row.id, remind_date: row.remindDate, title: row.title, content: row.content, content_text: row.contentText, status: row.status, converted_entry_id: row.convertedEntryId, converted_at: row.convertedAt, client_updated_at: row.clientUpdatedAt, deleted_at: row.deletedAt, created_at: row.createdAt, updated_at: row.serverUpdatedAt } }
+async function pendingFixture() {
+  let remote, duringRead; const requests = []
+  const h = fixture({ '@/api/scheduleConflictTransport': { createScheduleConflictTransport: () => ({ async detail(id, candidate) { requests.push({ id, candidate }); if (duringRead) await duringRead(requests.length); return pendingWire(remote) } }) } })
+  await owned(h)
+  const local = schedule({ title: '本机待刻' }); remote = schedule({ title: '云端待刻', clientUpdatedAt: '2026-10-08T10:00:01.000Z', serverUpdatedAt: '2026-10-08T10:00:02.000Z', updatedAt: '2026-10-08T10:00:02.000Z', dirty: 0 })
+  await h.db.schedules.put(local); await h.db.schedules.put(schedule({ id: OTHER_ID }))
+  await h.db.meta.put({ key: 'scheduleConflicts', value: [{ scheduleId: ID, kind: 'schedule-push', reason: 'stale', submitted: local, expectedServerRevision: null, serverSchedule: remote }] })
+  const session = h.repo.createScheduleConflictSession(context(), ID)
+  return { ...h, session, requests, local, get remote() { return remote }, changeRemote() { remote = { ...remote, title: '更新后的云端' } }, duringRead(fn) { duringRead = fn } }
+}
+function blankEvidence(onClose) {
+  let saved = ''; return { get saved() { return saved }, handle: { async getFile() { return { size: new Blob([saved]).size, async text() { return saved } } }, async createWritable() { let pending; return { async write(value) { pending = value }, async close() { saved = pending; await onClose?.() }, async abort() {} } } } }
+}
+test('local listing now includes only pending sources with retained conflicts, plus original terminal sources', async () => {
+  const h = await pendingFixture(), rows = await h.repo.listScheduleConflictSources(context())
+  assert.equal(rows.length, 1); assert.equal(rows[0].id, ID); assert.equal(rows[0].kind, 'pending'); assert.equal(h.requests.length, 0)
+  assert.equal(await h.session.resolvePending('use-cloud', true, blankEvidence().handle), false)
+})
+for (const choice of ['keep-local', 'use-cloud']) test(`formal pending ${choice} saves and verifies actual evidence before applying only its source`, async () => {
+  const h = await pendingFixture(), beforeOther = JSON.stringify(await h.db.schedules.get(OTHER_ID)), preview = await h.session.reviewPending()
+  assert.equal(preview.local.title, '本机待刻'); assert.equal(preview.server.title, '云端待刻'); assert.equal(preview.choices.length, 2)
+  const file = blankEvidence(async () => { assert.equal((await h.db.schedules.get(ID)).title, '本机待刻'); assert.equal((await h.db.meta.get('scheduleConflicts')).value.length, 1) })
+  assert.equal(await h.session.resolvePending(choice, true, file.handle), true)
+  assert.equal((await h.db.schedules.get(ID)).title, choice === 'keep-local' ? '本机待刻' : '云端待刻')
+  assert.equal((await h.db.schedules.get(ID)).dirty, choice === 'keep-local' ? 1 : 0)
+  assert.equal(JSON.stringify(await h.db.schedules.get(OTHER_ID)), beforeOther); assert.equal((await h.db.meta.get('scheduleConflicts')).value.length, 0)
+  const evidence = JSON.parse(file.saved); assert.equal(evidence.choice, choice); assert.equal(evidence.local.title, '本机待刻'); assert.equal(evidence.server.title, '云端待刻')
+  assert.equal(h.requests.length, 3); assert.equal(await h.session.resolvePending(choice, true, blankEvidence().handle), false)
+})
+for (const mode of ['cancel', 'remote-change', 'epoch', 'bad-file']) test(`formal pending ${mode} at file preservation keeps original source/candidates`, async () => {
+  const h = await pendingFixture(); await h.session.reviewPending()
+  const file = blankEvidence(async () => { if (mode === 'cancel') h.session.cancel(); if (mode === 'remote-change') h.changeRemote(); if (mode === 'epoch') await h.db.meta.put({ key: 'ownerGeneration', value: 'restored' }) })
+  if (mode === 'bad-file') file.handle.getFile = async () => ({ size: 0, async text() { return '' } })
+  let result = false; try { result = await h.session.resolvePending('use-cloud', true, file.handle) } catch { /* expired formal session rejects instead of returning success */ }
+  assert.equal(result, false); assert.equal((await h.db.schedules.get(ID)).title, '本机待刻'); assert.equal((await h.db.meta.get('scheduleConflicts')).value.length, 1); assert.equal(await h.db.meta.get('scheduleConflictArchive'), undefined)
+})
+test('session cancelled after an inner transaction writes still rolls back before outer commit', async () => {
+  const h = await pendingFixture(); await h.session.reviewPending(); const put = h.db.meta.put
+  h.db.meta.put = async row => { const value = await put(row); if (row.key === 'scheduleConflictArchive') h.session.cancel(); return value }
+  try { await h.session.resolvePending('use-cloud', true, blankEvidence().handle) } catch {}
+  assert.equal((await h.db.schedules.get(ID)).title, '本机待刻'); assert.equal((await h.db.meta.get('scheduleConflicts')).value.length, 1); assert.equal(await h.db.meta.get('scheduleConflictArchive'), undefined)
+})
+test('formal pending session cannot recapture an alternate lease before outbound read', async () => {
+  const h = await pendingFixture(); h.user('account-b'); await assert.rejects(h.session.reviewPending()); assert.equal(h.requests.length, 0)
+})
+test('pending center UI has no default choice and refuses resolution until explicit review and choice', async () => {
+  const h = center(); h.select({ id: ID, title: '待刻', deleted: false, kind: 'pending' })
+  await h.resolvePending(); assert.equal(h.calls.includes('pending.resolve'), false)
+  await h.reviewPending(); assert.equal(h.pendingChoice.value, null); assert.equal(h.pendingPreview.value.choices.length, 2)
+  await h.resolvePending(); assert.equal(h.calls.includes('pending.resolve'), false)
+  h.pendingChoice.value = 'use-cloud'; const work = h.resolvePending(); assert.equal(await h.prepareLeave(), false)
+  h.pick({ handle: {}, cancel() {} }); await work; assert.equal(h.calls.includes('pending.resolve'), true); assert.equal(h.pendingPreview.value, null)
+})
+test('expired pending UI does not call resolver after a delayed file picker', async () => {
+  const h = center(); h.hooks.mount(); for (let i = 0; i < 12; i++) await Promise.resolve(); h.select({ id: ID, title: '待刻', deleted: false, kind: 'pending' }); await h.reviewPending(); h.pendingChoice.value = 'keep-local'
+  const work = h.resolvePending(); h.expire(); h.pick({ handle: {}, cancel() {} }); await work
+  assert.equal(h.calls.includes('pending.resolve'), false); assert.equal(h.pendingPreview.value, null)
+})
+
+for (const kind of ['text', 'resources']) test(`actual exclusive evidence picker uses the ${kind} label without writing on selection`, async () => {
+  let options, writes = 0
+  const raw = { name: 'test.json', async getFile() { return { size: 0, async text() { return '' } } }, async createWritable() { writes++; throw Error('must not write at selection') } }
+  const picker = loadTS('io/scheduleResourceWorkspacePicker.ts', { './scheduleResourceSavePicker': { resourceEvidenceSaveAvailable: () => true } })
+  const target = await picker.pickResourceWorkspaceEvidence({ async showSaveFilePicker(value) { options = value; return raw } }, kind)
+  assert.equal(options.suggestedName, kind === 'text' ? 'quire-schedule-conflict-evidence.json' : 'quire-dual-resource-evidence.json')
+  assert.equal(writes, 0); target.cancel(); await assert.rejects(target.handle.getFile())
 })

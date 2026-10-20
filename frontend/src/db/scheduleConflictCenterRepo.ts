@@ -1,3 +1,6 @@
+import { createScheduleConflictTransport } from "@/api/scheduleConflictTransport"
+import { createConflictEvidenceFilePreserver } from "@/io/scheduleConflictEvidenceFile"
+import { createInternalScheduleConflictResolver } from "./scheduleConflictRepo"
 import { createScheduleResourceWorkspaceTransport } from "@/api/scheduleResourceWorkspaceTransport"
 import { createScheduleTerminalReviewTransport } from "@/api/scheduleTerminalReviewTransport"
 import { conversionCanonical, conversionCopy } from "@/shared/scheduleConversionSync"
@@ -6,7 +9,7 @@ import type { ConversionLease } from "@/shared/scheduleConversionSync"
 import type { ScheduleHostContext } from "@/shared/scheduleHostTypes"
 import type { ConflictSource, ScheduleConflictSession, TerminalCenterPreview } from "@/shared/scheduleConflictCenterTypes"
 import { isBackupSchedule } from "@/shared/scheduleBackup"
-import { scheduleEntryId } from "@/shared/schedules"
+import { scheduleEntryId, SCHEDULE_META_KEYS } from "@/shared/schedules"
 import { assertHostContext } from "./scheduleHostContext"
 import { createInternalResourceWorkspace } from "./scheduleResourceWorkspaceRepo"
 import { createInternalTerminalBlockedObserver } from "./scheduleTerminalBlockedRepo"
@@ -19,9 +22,16 @@ export async function listScheduleConflictSources(context: ScheduleHostContext):
     await assertHostContext(pin)
     const rows: Schedule[] = await db.schedules.toArray()
     if (rows.some(row => !isBackupSchedule(row))) throw new Error("来源数据无法安全核对，未跳过异常记录")
+    const candidates = await db.meta.get(SCHEDULE_META_KEYS.conflicts)
+    if (candidates && !Array.isArray(candidates.value)) throw new Error("冲突候选格式异常，未跳过")
+    const pendingIds = new Set<string>()
+    for (const raw of (candidates?.value ?? []) as unknown[]) {
+      if (!raw || typeof raw !== "object" || !("scheduleId" in raw) || typeof raw.scheduleId !== "string" || scheduleEntryId(raw.scheduleId) !== raw.scheduleId) throw new Error("冲突候选身份异常，未跳过")
+      pendingIds.add(raw.scheduleId)
+    }
     await assertHostContext(pin)
-    return rows.filter(row => row.status === "converted").sort((a, b) => a.id.localeCompare(b.id))
-      .map(row => ({ id: row.id, title: row.title, deleted: Boolean(row.isDeleted) }))
+    return rows.filter(row => row.status === "converted" || pendingIds.has(row.id)).sort((a, b) => a.id.localeCompare(b.id))
+      .map(row => ({ id: row.id, title: row.title, deleted: Boolean(row.isDeleted), ...(row.status === "pending" ? { kind: "pending" as const } : {}) }))
   })
 }
 /** Constructing is inert. Every request and final operation is fenced by the original formal host. */
@@ -45,6 +55,11 @@ export function createScheduleConflictSession(context: ScheduleHostContext, id: 
   })
   const transport = { async review(target: string, candidate: ConversionLease) { await request(target, candidate); const r = await reviewRaw.review(target, candidate); await request(target, candidate); return r } }
   const observer = createInternalTerminalBlockedObserver(transport), source = createInternalScheduleSourceTombstoneResolver(transport), discard = createInternalScheduleTerminalDiscardResolver(transport)
+  const pendingRaw = createScheduleConflictTransport()
+  const pending = createInternalScheduleConflictResolver({ async detail(target, candidate) {
+    await request(target, candidate); const value = await pendingRaw.detail(target, candidate); await request(target, candidate); return value
+  } }, { lease, active: () => active })
+  let pendingTicket: { id: number; choices: import("@/shared/scheduleConflict").ScheduleConflictChoice[] } | null = null
   let tickets: { observation: number; source: number; discard: number; preview: TerminalCenterPreview } | null = null
   const reset = () => { tickets = null; observer.cancel(); source.cancel(); discard.cancel() }
   async function run<T>(work: () => Promise<T>): Promise<T> {
@@ -54,6 +69,22 @@ export function createScheduleConflictSession(context: ScheduleHostContext, id: 
     finally { busy = false }
   }
   return {
+    reviewPending: () => run(async () => {
+      pendingTicket = null
+      const result = await pending.review(id)
+      if (!result.ready || !("server" in result) || !result.server) return null
+      pendingTicket = { id: result.reviewId, choices: [...result.choices] }
+      return conversionCopy({ local: result.local ?? null, server: result.server, choices: result.choices })
+    }),
+    resolvePending: (choice, confirmed, handle) => run(async () => {
+      const ticket = pendingTicket; pendingTicket = null
+      if (!ticket || confirmed !== true || !ticket.choices.includes(choice)) return false
+      const preserve = createConflictEvidenceFilePreserver(handle)
+      const result = await pending.resolve(ticket.id, choice, true, async evidence => {
+        await guard(); await preserve(evidence); await guard()
+      })
+      return result.applied === true
+    }),
     resources: {
       prepareEvidence: confirmed => run(() => resources.prepareEvidence(confirmed)),
       saveEvidence: (reviewId, handle) => run(() => resources.saveEvidence(reviewId, handle)),
@@ -82,6 +113,6 @@ export function createScheduleConflictSession(context: ScheduleHostContext, id: 
         return false
       } finally { reset() }
     }),
-    cancel() { active = false; resources.cancel(); reset() },
+    cancel() { active = false; pendingTicket = null; resources.cancel(); reset() },
   }
 }

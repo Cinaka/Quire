@@ -65,6 +65,21 @@ const port: ScheduleConflictPort = {
   },
 }
 /** Internal only. Caller must explicitly confirm and successfully preserve the evidence before any write. */
-export function createInternalScheduleConflictResolver(transport: ScheduleConflictTransport) {
-  return createScheduleConflictResolver(port,transport)
+export function createInternalScheduleConflictResolver(transport: ScheduleConflictTransport,
+  boundary?: { lease: ConversionLease; active(): boolean }) {
+  if (!boundary) return createScheduleConflictResolver(port, transport)
+  const expected = conversionCanonical(conversionCopy(boundary.lease))
+  const assert = (ticket?: Omit<ScheduleConflictTicket, "server">) => {
+    if (!boundary.active() || (ticket && conversionCanonical(ticket.lease) !== expected)) throw new Error("原核对会话已失效，不能重绑账号")
+  }
+  return createScheduleConflictResolver({
+    async capture(id) { assert(); const ticket = await port.capture(id); assert(ticket); return ticket },
+    async verify(ticket) { assert(ticket); await port.verify(ticket); assert(ticket) },
+    async apply(ticket, choice, evidence) {
+      // Same-store nested transaction: cancellation before the outer commit rolls back all writes.
+      await db.transaction("rw", db.schedules, db.entries, db.meta, async () => {
+        assert(ticket); await port.apply(ticket, choice, evidence); assert(ticket)
+      })
+    },
+  }, transport)
 }
