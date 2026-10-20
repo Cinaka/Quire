@@ -3,7 +3,7 @@
     <header><h2>预简 / 待刻</h2><p>内部准备组件；仅本机操作，云端日程尚未开放。</p></header>
     <p v-if="state.error" role="alert">{{ state.error }}</p>
     <p v-if="state.notice" role="status">{{ state.notice }}</p>
-    <ScheduleEditorPanel v-if="session" :key="state.editorKey" ref="editorRef" :session="session" @saved="workspace.refresh()" @leave="finishEditor" @discarded="finishEditor" />
+    <ScheduleEditorPanel v-if="session" :key="state.editorKey" ref="editorRef" :session="session" :expired="state.expired" @saved="workspace.refresh()" @leave="finishEditor" @discarded="finishEditor" />
     <template v-else-if="!state.expired">
       <ScheduleDraftNotice :recovery="state.recovery" :busy="blocked" @resume="workspace.resume()" @discard-request="discardDraft" />
       <form class="filters" @submit.prevent="applyFilters">
@@ -58,7 +58,7 @@ import ScheduleEditorPanel from "./ScheduleEditorPanel.vue"
 import ScheduleList from "./ScheduleList.vue"
 
 // 只接受内部显式注入；未被路由/底栏/DEV引用。contextKey由未来宿主绑定账号与恢复代际。
-const props = defineProps<{ port: ScheduleWorkspacePort; contextKey: string }>()
+const props = defineProps<{ port: ScheduleWorkspacePort; contextKey: string; expired?: boolean }>()
 const emit = defineEmits<{ "open-entry": [string]; "context-expired": [] }>()
 const workspace = createScheduleWorkspace(props.port)
 const state = ref(workspace.inspect())
@@ -102,12 +102,17 @@ onMounted(() => {
   window.addEventListener("focus", refreshOnFocus)
   document.addEventListener("visibilitychange", visibility)
 })
+watch(() => props.expired, expired => { if (expired) workspace.invalidate() }, { immediate: true, flush: "sync" })
 watch(() => props.contextKey, () => { workspace.invalidate(); emit("context-expired") }, { flush: "sync" })
 function canCompose(): boolean {
   const current = workspace.inspect()
   return workspace.canLeave() && !current.loading && !current.prompt && !current.expired
 }
-defineExpose({ prepareLeave, refresh: workspace.refresh, canCompose })
+function needsLeaveConfirmation(): boolean {
+  const current = workspace.inspect()
+  return current.busy || current.loading || Boolean(editorRef.value?.needsLeaveConfirmation())
+}
+defineExpose({ prepareLeave, refresh: workspace.refresh, canCompose, needsLeaveConfirmation })
 onBeforeUnmount(() => {
   if (timer !== undefined) window.clearInterval(timer)
   window.removeEventListener("focus", refreshOnFocus)

@@ -11,14 +11,14 @@ export function createScheduleEditorPanel(session: ScheduleEditorSession) {
   let state = {
     body: { remindDate: initial.payload.remindDate, title: initial.payload.title, content: initial.payload.content } as ScheduleEditorBody,
     sourceStatus: initial.status as ScheduleDraftReadResult["status"],
-    pending: 0, busy: false, closed: false, error: "", notice: "仅编辑本机；尚未确认云端保存。",
+    pending: 0, busy: false, closed: false, expired: false, error: "", notice: "仅编辑本机；尚未确认云端保存。",
   }
   let revision = 0
   let snapshotFailed = false
   let disposed = false
   const listeners = new Set<() => void>()
   function notify(): void { if (!disposed) for (const listener of listeners) listener() }
-  function writable(): boolean { return !disposed && !state.closed && !state.busy }
+  function writable(): boolean { return !disposed && !state.closed && !state.expired && !state.busy }
   function fail(error: unknown): void {
     state.error = message(error)
     state.notice = "操作失败。请保留当前文字；不能据此确认最新内容已存为安全草稿。"
@@ -47,15 +47,15 @@ export function createScheduleEditorPanel(session: ScheduleEditorSession) {
       notify()
       try {
         const result = await session.persist(snapshot)
-        if (disposed || state.closed) return false
-        if (at === revision) {
+        if (disposed || state.closed || state.expired) return false
+        if (!state.expired && at === revision) {
           state.sourceStatus = result.status
           state.notice = "安全草稿已存本机；尚未保存为预简，也未上传云端。"
           state.error = ""
         }
         return true
       } catch (error) {
-        if (!disposed && !state.closed && at === revision) fail(error)
+        if (!disposed && !state.closed && !state.expired && at === revision) fail(error)
         return false
       } finally { if (!disposed) { state.pending -= 1; notify() } }
     },
@@ -67,12 +67,12 @@ export function createScheduleEditorPanel(session: ScheduleEditorSession) {
       notify()
       try {
         await session.submit(copy(state.body))
-        if (disposed || state.closed) return false
+        if (disposed || state.closed || state.expired) return false
         state.sourceStatus = "empty"
         state.notice = "预简已保存本机；日程云端同步尚未开放。"
         return true
       } catch (error) {
-        if (!disposed && !state.closed) fail(error)
+        if (!disposed && !state.closed && !state.expired) fail(error)
         return false
       } finally { if (!disposed) { state.busy = false; notify() } }
     },
@@ -82,13 +82,28 @@ export function createScheduleEditorPanel(session: ScheduleEditorSession) {
       notify()
       try {
         await session.flush()
-        if (disposed || state.error) return false
+        if (disposed || state.expired || state.error) return false
         stop()
         return true
       } catch (error) {
-        if (!disposed) fail(error)
+        if (!disposed && !state.expired) fail(error)
         return false
       } finally { if (!disposed) { state.busy = false; notify() } }
+    },
+    /** 失效只锁旧会话；保留面板最新文字，绝不向新账号重放或清理旧草稿。 */
+    freeze(): void {
+      if (disposed || state.closed || state.expired) return
+      state.expired = true; revision += 1; session.close()
+      state.notice = "账号或恢复批次已变化。当前文字仅保留在此面板，请先复制；不能确认已保存。"
+      notify()
+    },
+    needsLeaveConfirmation(): boolean {
+      return !state.closed && (state.expired || state.busy || state.pending > 0 || Boolean(state.error) || snapshotFailed)
+    },
+    /** 只弃去失效面板的内存副本，不调用clear/commit，不影响任何账号的持久数据。 */
+    discardMemoryConfirmed(): boolean {
+      if (disposed || state.closed || !state.expired || state.busy || state.pending > 0) return false
+      stop(); return true
     },
     /** 只在用户明确确认后调用；不由打开/卸载/来源冲突自动调用。 */
     async discardConfirmed(): Promise<boolean> {
@@ -97,11 +112,11 @@ export function createScheduleEditorPanel(session: ScheduleEditorSession) {
       notify()
       try {
         await session.discard()
-        if (disposed) return false
+        if (disposed || state.expired) return false
         stop()
         return true
       } catch (error) {
-        if (!disposed) fail(error)
+        if (!disposed && !state.expired) fail(error)
         return false
       } finally { if (!disposed) { state.busy = false; notify() } }
     },

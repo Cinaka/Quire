@@ -131,9 +131,9 @@ export function createScheduleWorkspace(port: ScheduleWorkspacePort, clock: () =
     })
   }
   function invalidate(reason = "账号或恢复批次已变化，请重新进入；未重放旧操作。"): void {
-    active = false; request += 1; session?.close(); session = null
+    active = false; request += 1; session?.close()
     state.items = []; state.total = 0; state.recovery = null; state.prompt = null; state.result = null
-    state.editing = false; state.busy = false; state.loading = false; state.expired = true; state.error = reason; notify()
+    state.editing = Boolean(session); state.busy = false; state.loading = false; state.expired = true; state.error = reason; notify()
   }
   return {
     inspect() { return copy(state) },
@@ -180,7 +180,7 @@ export function createScheduleWorkspace(port: ScheduleWorkspacePort, clock: () =
     async editorFinished(): Promise<boolean> {
       if (!session || !session.inspect().closed) { fail(new Error("请先完成安全草稿返回检查")); return false }
       session = null; state.editing = false; notify()
-      return load()
+      return active ? load() : true
     },
     requestAction(kind: Prompt["kind"], id: string, expectedRevision?: string, remindDate?: LocalDate): boolean {
       if (!available()) return false
@@ -233,8 +233,8 @@ export function createScheduleWorkspace(port: ScheduleWorkspacePort, clock: () =
       })
       return entryId
     },
-    canLeave(): boolean { return active && !state.busy && !state.editing },
+    canLeave(): boolean { return !state.loading && !state.busy && !state.editing },
     invalidate,
-    dispose(): void { invalidate("预简页面已关闭。"); disposed = true; listeners.clear() },
+    dispose(): void { invalidate("预简页面已关闭。"); session = null; state.editing = false; disposed = true; listeners.clear() },
   }
 }

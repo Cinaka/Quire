@@ -6,6 +6,11 @@
     <ScheduleTextEditor :initial-content="initialContent" :disabled="locked" @change="contentChanged" @invalid="editorError = $event" />
     <p v-if="state.error || editorError" role="alert">{{ state.error || editorError }}</p>
     <p role="status" aria-live="polite">{{ state.notice }}</p>
+    <section v-if="state.expired" aria-label="失效编辑副本">
+      <p role="alert">旧会话已锁定。请先手动复制以下文字；刷新或关闭页面可能丢失未落库输入。</p>
+      <label class="field">可复制编辑副本<textarea readonly :value="memoryCopy" rows="10" /></label>
+      <button type="button" :disabled="state.busy || state.pending > 0 || state.closed" @click="discardMemory">已复制，明确弃去此面板副本并返回…</button>
+    </section>
     <div class="actions">
       <button type="button" :disabled="locked || Boolean(editorError) || state.sourceStatus === 'conflict' || state.sourceStatus === 'sourceUnavailable'" @click="save">保存预简</button>
       <button v-if="state.error" type="button" :disabled="locked || Boolean(editorError)" @click="changed">重试保存安全草稿</button>
@@ -16,7 +21,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue"
+import { computed, onBeforeUnmount, ref, watch } from "vue"
 import { createScheduleEditorPanel } from "@/shared/scheduleEditorPanel"
 import type { ScheduleEditorSession } from "@/shared/scheduleEditor"
 import { draftRecoveryMessage } from "@/shared/schedulePresentation"
@@ -25,7 +30,7 @@ import type { EntryContent } from "@/shared/types"
 import ScheduleTextEditor from "./ScheduleTextEditor.vue"
 
 // 此组件不可复用为另一会话：父组件须以打开时固定的会话身份为key（不随保存ID变化），切换前await prepareLeave。
-const props = defineProps<{ session: ScheduleEditorSession }>()
+const props = defineProps<{ session: ScheduleEditorSession; expired?: boolean }>()
 const emit = defineEmits<{ saved: []; leave: []; discarded: [] }>()
 const panel = createScheduleEditorPanel(props.session)
 const initialState = panel.inspect()
@@ -36,8 +41,10 @@ let initialBlock = ""
 try { assertScheduleEditorContent(initialContent) } catch (error) { initialBlock = String(error) }
 const readOnlyContent = Boolean(initialBlock)
 const editorError = ref(initialBlock)
-const actionLocked = computed(() => state.value.busy || state.value.closed)
+const actionLocked = computed(() => state.value.busy || state.value.closed || state.value.expired)
 const locked = computed(() => actionLocked.value || readOnlyContent)
+const memoryCopy = computed(() => JSON.stringify(body.value, null, 2))
+watch(() => props.expired, expired => { if (expired) { panel.freeze(); state.value = panel.inspect() } }, { immediate: true, flush: "sync" })
 const unsubscribe = panel.subscribe(() => { state.value = panel.inspect() })
 function changed(): void { void panel.change({ ...body.value }) }
 function contentChanged(content: EntryContent): void { body.value.content = content; editorError.value = ""; changed() }
@@ -51,7 +58,12 @@ async function discard(): Promise<void> {
   if (!window.confirm("只弃去安全草稿，已保存预简不删除。确定弃去？")) return
   if (await panel.discardConfirmed()) emit("discarded")
 }
-defineExpose({ prepareLeave })
+function discardMemory(): void {
+  if (!window.confirm("明确弃去此失效面板的内存副本？持久草稿和已保存预简不会被清除。")) return
+  if (panel.discardMemoryConfirmed()) emit("leave")
+}
+function needsLeaveConfirmation(): boolean { return Boolean(editorError.value) || panel.needsLeaveConfirmation() }
+defineExpose({ prepareLeave, needsLeaveConfirmation })
 onBeforeUnmount(() => { unsubscribe(); panel.dispose() })
 </script>
 

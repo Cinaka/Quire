@@ -145,7 +145,7 @@ test("uninstalled late editor result is closed if context validation fails", asy
 })
 test("explicit invalidation stops reads and closes mounted editor without clearing persisted text", async () => {
   const h = harness(); const m = await start(h); await m.openNew("2026-10-09"); const s = m.editorSession(); await s.persist(body())
-  m.invalidate(); assert.equal(s.inspect().closed, true); assert.equal(m.inspect().editing, false)
+  m.invalidate(); assert.equal(s.inspect().closed, true); assert.equal(m.inspect().editing, true); assert.equal(m.editorSession(), s); assert.equal(m.canLeave(), false)
   assert.ok((await journal(h)).draft); assert.equal(await m.resume(), false)
 })
 test("soft-delete confirmation pins revision, retains linked draft, and restore does not reset a terminal identity", async () => {
@@ -297,7 +297,7 @@ test("work area writes leave P2 metadata, ordinary diary draft, schema and backu
 test("workspace component explicitly injects a port/context key, guards leave and never navigates on conversion automatically", () => {
   const component = source("components/schedules/ScheduleWorkspace.vue")
   assert.match(component, /port: ScheduleWorkspacePort; contextKey: string/); assert.match(component, /flush: "sync"/)
-  assert.match(component, /editorRef\.value\.prepareLeave/); assert.match(component, /defineExpose\(\{ prepareLeave, refresh: workspace.refresh, canCompose \}\)/)
+  assert.match(component, /editorRef\.value\.prepareLeave/); assert.match(component, /defineExpose\(\{ prepareLeave, refresh: workspace.refresh, canCompose, needsLeaveConfirmation \}\)/)
   assert.match(component, /workspace\.openResultEntry/); assert.match(component, /value="original"/); assert.match(component, /:max="state.today"/)
   assert.doesNotMatch(component, /@\/repo|scheduleWorkspaceRepo|useRouter|router\.|syncNow|beforeunload/)
 })
@@ -385,4 +385,23 @@ test("a stale query's current owner check still expires context even after a new
   await m.initialize(); hold = true; const old = m.refresh(); await entered.promise
   await m.setQuery(query({ view: "converted" })); await h.db.meta.put({ key: "ownerGeneration", value: "restored" }); wait.release()
   await old; assert.equal(m.inspect().expired, true); assert.equal(m.inspect().items.length, 0)
+})
+
+test("expired editor remains pinned until explicit panel-memory discard, without deleting the stored draft", async () => {
+  const h = harness(); const m = await start(h); await m.openNew("2026-10-09")
+  const s = m.editorSession(); const p = h.load("shared/scheduleEditorPanel.ts").createScheduleEditorPanel(s)
+  await p.change(body({ title: "账号变化前的最后输入" })); const before = snapshot(h)
+  m.invalidate(); p.freeze()
+  assert.equal(m.editorSession(), s); assert.equal(m.canLeave(), false)
+  assert.equal(await p.prepareLeave(), false); assert.equal(await p.submit(), false)
+  assert.equal(snapshot(h), before)
+  assert.equal(p.discardMemoryConfirmed(), true); assert.equal(await m.editorFinished(), true)
+  assert.equal(m.editorSession(), null); assert.equal(m.canLeave(), true); assert.equal(m.inspect().expired, true)
+  assert.equal(snapshot(h), before); assert.equal(await m.openNew("2026-10-10"), false)
+})
+test("expiry with no editor allows closing an inert workspace, never resumes under another owner", async () => {
+  const h = harness(); const m = await start(h); const before = snapshot(h)
+  m.invalidate(); assert.equal(m.canLeave(), true)
+  assert.equal(await m.refresh(), false); assert.equal(await m.resume(), false)
+  assert.equal(snapshot(h), before)
 })

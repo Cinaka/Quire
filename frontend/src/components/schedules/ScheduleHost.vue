@@ -3,9 +3,9 @@
     <p v-if="state.error" role="alert">{{ state.error }}</p>
     <p v-if="bridgeError" role="alert">{{ bridgeError }}</p>
     <p v-if="state.notice" role="status">{{ state.notice }}</p>
-    <template v-if="state.ready && !state.expired">
+    <template v-if="workspacePort">
       <fieldset v-show="!diarySession" :disabled="state.busy" class="work-area">
-        <section class="first-save" aria-label="未关联日记草稿首次保存">
+        <section v-if="state.ready && !state.expired" class="first-save" aria-label="未关联日记草稿首次保存">
           <p>内部首存桥，仅处理明确读取的未关联日记安全草稿；不自动修改既有日记或预简。</p>
           <p v-if="state.firstSaveError" role="alert">{{ state.firstSaveError }}</p>
           <button type="button" :disabled="state.busy" @click="host.refreshDraft()">明确读取原日记安全草稿</button>
@@ -17,7 +17,7 @@
             <button v-if="state.plan" type="button" :disabled="state.busy" @click="firstSave">明确确认首次保存</button>
           </template>
         </section>
-        <ScheduleWorkspace v-if="workspacePort" ref="workspaceRef" :port="workspacePort" :context-key="host.contextKey()" @open-entry="openTarget" @context-expired="host.invalidate()" />
+        <ScheduleWorkspace v-if="workspacePort" ref="workspaceRef" :port="workspacePort" :context-key="host.contextKey()" :expired="state.expired" @open-entry="openTarget" @context-expired="host.invalidate()" />
       </fieldset>
     </template>
     <!-- 账号/恢复失效不卸载未保存文字：面板锁写，但保留副本与明确弃去。 -->
@@ -47,7 +47,9 @@ const diarySession = shallowRef<ScheduleDiaryEditorSession | null>(null)
 const diaryRef = ref<InstanceType<typeof ScheduleDiaryPanel> | null>(null)
 const diaryKey = ref(0)
 const unsubscribe = host.subscribe(() => {
-  state.value = host.inspect(); workspacePort.value = host.workspacePort()
+  state.value = host.inspect()
+  const nextWorkspace = host.workspacePort()
+  if (nextWorkspace) workspacePort.value = nextWorkspace
   const next = host.diaryEditor()
   if (next && !next.inspect().closed) {
     if (diarySession.value !== next) diaryKey.value += 1
@@ -82,7 +84,7 @@ async function prepareLeave(): Promise<boolean> {
 async function saveTarget(update: EntryUpdateDto): Promise<boolean> { return host.saveTarget(update) }
 function beforeUnload(event: BeforeUnloadEvent): void {
   const current = diarySession.value?.inspect()
-  if (state.value.busy || current?.dirty || current?.busy || diaryRef.value?.needsLeaveConfirmation()) {
+  if (state.value.busy || workspaceRef.value?.needsLeaveConfirmation() || current?.dirty || current?.busy || diaryRef.value?.needsLeaveConfirmation()) {
     event.preventDefault(); event.returnValue = ""
   }
 }
