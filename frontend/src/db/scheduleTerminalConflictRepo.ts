@@ -1,3 +1,6 @@
+import { createScheduleTerminalDiscardResolver } from "@/shared/scheduleTerminalDiscard"
+import { terminalDiscardEvidence, terminalDiscardTombstone } from "@/shared/scheduleTerminalConflict"
+import type { TerminalDiscardChoice } from "@/shared/scheduleTerminalConflict"
 import { createConflictEvidenceFilePreserver } from "@/io/scheduleConflictEvidenceFile"
 import type { ConflictEvidenceFileHandle } from "@/io/scheduleConflictEvidenceFile"
 import { createScheduleSourceTombstoneResolver } from "@/shared/scheduleSourceTombstone"
@@ -107,6 +110,41 @@ export function createInternalScheduleSourceTombstoneResolver(transport: Termina
   return { review:controller.review, cancel:controller.cancel,
     async resolve(reviewId: number, confirmed: boolean, handle?: ConflictEvidenceFileHandle) {
       return controller.resolve(reviewId,confirmed,handle ? createConflictEvidenceFilePreserver(handle) : undefined)
+    },
+  }
+}
+
+/** Existing permanent-discard intent only. Does not issue remote writes or clean media/shared tags. */
+export function createInternalScheduleTerminalDiscardResolver(transport: TerminalConflictTransport) {
+  const controller=createScheduleTerminalDiscardResolver({capture:port.capture,verify:port.verify,
+    async applyDiscard(ticket,evidence,active){
+      await db.transaction("rw",db.schedules,db.entries,db.media,db.meta,async()=>{
+        active();await check(ticket);active()
+        const valid=terminalDiscardEvidence(ticket,evidence.choice);valid.exportedAt=evidence.exportedAt
+        if(conversionCanonical(valid)!==conversionCanonical(evidence))throw new Error("弃去证据不一致")
+        const cloud=ticket.server.schedule!,source=ticket.local.source!,base=await readScheduleServerState(ticket.lease,ticket.id)
+        if((base && base.serverUpdatedAt>cloud.serverUpdatedAt) || (source.serverUpdatedAt && conversionUtc(source.serverUpdatedAt)>cloud.serverUpdatedAt))throw new Error("来源水位倒退")
+        if(base && base.serverUpdatedAt===cloud.serverUpdatedAt && conversionCanonical(base)!==conversionCanonical(cloud))throw new Error("同水位来源证明矛盾")
+        if(ticket.local.entry?.serverUpdatedAt && ticket.server.entry && terminalVersionKey(ticket.local.entry.serverUpdatedAt)>terminalVersionKey(ticket.server.entry.serverUpdatedAt))throw new Error("日记水位倒退")
+        const result=evidence.choice==="finish-cloud-purged"?null:terminalDiscardTombstone(ticket,evidence.exportedAt)
+        const archive=await records(SCHEDULE_CONFLICT_ARCHIVE)
+        active();await db.meta.put({key:SCHEDULE_CONFLICT_ARCHIVE,value:[...archive,{kind:"terminal-existing-purge-resolution",
+          scheduleId:ticket.id,ownerUserId:ticket.lease.ownerUserId,generation:ticket.lease.generation,evidence:conversionCopy(evidence),result:conversionCopy(result)}]})
+        await rememberScheduleServerState(ticket.lease,cloud)
+        await db.schedules.put({...conversionCopy(cloud),contentText:toPlainText(cloud.content),dirty:0})
+        if(result)await db.entries.put(result);else await db.entries.delete(ticket.id)
+        const queue=await readCheckedConversionQueue(ticket.lease.ownerUserId)
+        await db.meta.put({key:SCHEDULE_META_KEYS.conversions,value:queue.filter(row=>row.scheduleId!==ticket.id)})
+        const candidates=await records(SCHEDULE_META_KEYS.conflicts)
+        await db.meta.put({key:SCHEDULE_META_KEYS.conflicts,value:candidates.filter(row=>!target(row,ticket.id))})
+        if(!result)await db.meta.put({key:"pendingPurges",value:ticket.local.pendingPurges.filter(id=>id!==ticket.id)})
+        await assertScheduleLease(ticket.lease);active()
+      })
+    },
+  },transport)
+  return {review:controller.review,cancel:controller.cancel,
+    async resolve(reviewId: number,choice: TerminalDiscardChoice,confirmed: boolean,handle?: ConflictEvidenceFileHandle){
+      return controller.resolve(reviewId,choice,confirmed,handle?createConflictEvidenceFilePreserver(handle):undefined)
     },
   }
 }

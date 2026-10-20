@@ -38,7 +38,7 @@ export function terminalVersionKey(raw: string): string {
   const millis=conversionUtc(`${m[1]}.${digits.slice(0,3)}Z`)
   return `${millis.slice(0,-1)}${digits.slice(3)}Z`
 }
-export function assertTerminalTextEntry(raw: unknown,id: string): asserts raw is Entry {
+function assertTerminalEntry(raw: unknown,id: string, allowCleared: boolean): asserts raw is Entry {
   if (!raw || typeof raw!=="object" || Array.isArray(raw)) throw new Error("日记不存在")
   const r=raw as Entry
   if (Object.keys(r).some(key=>!ENTRY_KEYS.has(key)) || r.id!==id || r.fromScheduleId!==id || typeof r.title!=="string" || r.title.length>255 ||
@@ -46,11 +46,15 @@ export function assertTerminalTextEntry(raw: unknown,id: string): asserts raw is
       !Array.isArray(r.tagIds) || r.tagIds.length || ![0,1].includes(r.dirty) || ![0,1].includes(r.isDeleted) ||
       !(r.mood===null || typeof r.mood==="string") || !(r.weather===null || typeof r.weather==="string")) throw new Error("仅支持稳定关联的无标签纯文本日记")
   if(r.serverUpdatedAt!=="" && typeof r.serverUpdatedAt!=="string")throw new Error("日记云端水位字段无效")
-  assertScheduleDate(r.entryDate);assertScheduleContent(r.content)
+  assertScheduleDate(r.entryDate)
+  if (allowCleared && r.content===null) {
+    if (r.isDeleted!==1 || r.title!=="" || r.contentText!=="" || r.mood!==null || r.weather!==null) throw new Error("弃去墓碑不是已清空内容")
+  } else assertScheduleContent(r.content)
   terminalVersionKey(r.createdAt);terminalVersionKey(r.updatedAt);const at=terminalVersionKey(r.clientUpdatedAt)
   if(r.serverUpdatedAt)terminalVersionKey(r.serverUpdatedAt)
   if(r.isDeleted===0 ? r.deletedAt!==null : r.deletedAt===null || terminalVersionKey(r.deletedAt)>at) throw new Error("日记删除修订不一致")
 }
+export function assertTerminalTextEntry(raw: unknown,id: string): asserts raw is Entry { assertTerminalEntry(raw,id,false) }
 function portableIntent(raw: unknown,id: string,owner: string) {
   if (!isBackupConversion(raw) || raw.scheduleId!==id || Object.keys(raw).some(key=>!["scheduleId","source","entry","queuedAt","ownerUserId","protectedMediaIds"].includes(key))) throw new Error("首次意图未知")
   const intent=raw as ScheduleConversion
@@ -58,7 +62,7 @@ function portableIntent(raw: unknown,id: string,owner: string) {
   assertKnownConflictSchedule(intent.source,id);assertTerminalTextEntry(intent.entry,id);conversionUtc(intent.queuedAt)
   return {scheduleId:id,source:conversionCopy(intent.source),entry:conversionCopy(intent.entry),queuedAt:intent.queuedAt}
 }
-function candidateEvidence(raw: unknown,id: string,owner: string): unknown {
+function candidateEvidence(raw: unknown,id: string,owner: string, allowCleared = false): unknown {
   if (!raw || typeof raw!=="object" || Array.isArray(raw)) throw new Error("未知候选")
   const r=raw as Record<string,unknown>
   const shapes: Record<string,string[]>={
@@ -72,7 +76,7 @@ function candidateEvidence(raw: unknown,id: string,owner: string): unknown {
   if (!allowed || r.scheduleId!==id || Object.keys(r).some(key=>!allowed.includes(key)) || allowed.some(key=>!(key in r) && !(r.kind==="conversion-entry" && key==="localEntry"))) throw new Error("候选结构未知，未删字段")
   if (r.reason!==undefined && !["identity","server_entry_changed","identity_conflict","invalid_state","source_deleted","source_revision","conversion_revision","source_content","source_snapshot","receipt_unknown","intent_conflict","stale","conflict","terminal","not_terminal","echo_mismatch","dirty_conflict","terminal_regression","terminal_source_changed","same_revision_conflict","revision_regression","entry_identity_conflict","retry","network","unauthorized","not_found","invalid_request","invalid_response","storage","aborted"].includes(String(r.reason))) throw new Error("候选原因未知")
   const result=conversionCopy(r)
-  for(const key of ["localEntry","serverEntry"])if(result[key]!=null)assertTerminalTextEntry(result[key],id)
+  for(const key of ["localEntry","serverEntry"])if(result[key]!=null)assertTerminalEntry(result[key],id,allowCleared)
   for(const key of ["localSchedule","serverSchedule","submitted"])if(result[key]!=null)assertKnownConflictSchedule(result[key],id)
   if(result.firstIntent!==undefined)result.firstIntent=portableIntent(result.firstIntent,id,owner)
   if(result.stage!==undefined && !["source","convert"].includes(String(result.stage)))throw new Error("候选阶段未知")
@@ -116,6 +120,45 @@ export function terminalSourceTombstoneEvidence(ticket: TerminalConflictTicket):
     intentions:ticket.local.intentions.map(row=>portableIntent(row,ticket.id,ticket.lease.ownerUserId)),
     candidates:ticket.local.candidates.map(row=>candidateEvidence(row,ticket.id,ticket.lease.ownerUserId)),
     meaning:"source_only_not_diary_or_intent_confirmation"}
+}
+export type TerminalDiscardChoice = "finish-cloud-purged" | "handoff-cleared-tombstone"
+export type TerminalDiscardEvidence = Omit<TerminalConflictEvidence,"format"|"choice"|"meaning"|"localEntry"> & {
+  format: "terminal-discard-evidence"; choice: TerminalDiscardChoice; localEntry: Entry | null
+  pendingPurges: string[]; meaning: "existing_purge_not_first_intent_confirmation"
+}
+/** Only an already requested, cleared local purge may be handed off; never invent a purge choice. */
+export function terminalDiscardEvidence(ticket: TerminalConflictTicket, choice: TerminalDiscardChoice): TerminalDiscardEvidence {
+  const {id,local,server}=ticket
+  if (!Array.isArray(local.pendingPurges) || local.pendingPurges.some(value=>typeof value!=="string" || !value.trim())) throw new Error("弃去队列字段无效")
+  assertKnownConflictSchedule(local.source,id);assertKnownConflictSchedule(server.schedule,id)
+  if (!server.reviewable || !server.receiptKnown || server.reason!=="terminal_review" ||
+      local.source.status!=="converted" || server.schedule.status!=="converted" ||
+      (local.source.isDeleted===1 && server.schedule.isDeleted!==1) || local.intentions.length!==1 ||
+      !local.candidates.length || !local.pendingPurges.includes(id) || local.media.length || local.p2Conflicts.length ||
+      local.diaryDraft!==null || (local.scheduleDraft!==null && parseScheduleDraftState(local.scheduleDraft).draft!==null)) throw new Error("弃去条件未核实")
+  if (local.entry!==null) {
+    assertTerminalEntry(local.entry,id,true)
+    if (local.entry.isDeleted!==1 || local.entry.content!==null || local.linkedEntries.length!==1 ||
+        conversionCanonical(local.linkedEntries[0])!==conversionCanonical(local.entry)) throw new Error("仅接受既有清空墓碑，不丢弃活动或后来编辑内容")
+  } else if (local.linkedEntries.length) throw new Error("缺失日记身份异常")
+  if (choice==="finish-cloud-purged") {
+    if (server.entryState!=="purged" || server.entry!==null) throw new Error("云端尚未确认永久清除")
+  } else if (choice==="handoff-cleared-tombstone") {
+    if (!local.entry || server.entryState!=="deleted" || !server.entry) throw new Error("只能交接已有清空墓碑")
+    assertTerminalEntry(server.entry,id,true)
+  } else throw new Error("弃去选择无效")
+  return {app:"quire",format:"terminal-discard-evidence",formatVersion:1,exportedAt:conversionUtc(new Date().toISOString()),
+    scheduleId:id,choice,localSource:conversionCopy(local.source),localEntry:conversionCopy(local.entry),cloudReview:conversionCopy(server),
+    intentions:local.intentions.map(row=>portableIntent(row,id,ticket.lease.ownerUserId)),
+    candidates:local.candidates.map(row=>candidateEvidence(row,id,ticket.lease.ownerUserId,true)),
+    pendingPurges:conversionCopy(local.pendingPurges),meaning:"existing_purge_not_first_intent_confirmation"}
+}
+export function terminalDiscardTombstone(ticket: TerminalConflictTicket, now: string): Entry {
+  terminalDiscardEvidence(ticket,"handoff-cleared-tombstone")
+  const local=ticket.local.entry!,remote=ticket.server.entry!
+  const previous=Math.max(Date.parse(terminalVersionKey(local.clientUpdatedAt)),Date.parse(terminalVersionKey(remote.clientUpdatedAt)))
+  const revision=conversionUtc(new Date(Math.max(previous+1,Date.parse(conversionUtc(now)))).toISOString())
+  return {...conversionCopy(local),updatedAt:revision,clientUpdatedAt:revision,serverUpdatedAt:remote.serverUpdatedAt,dirty:1}
 }
 export function terminalConflictEvidence(ticket: TerminalConflictTicket,choice: TerminalConflictChoice): TerminalConflictEvidence {
   if(!terminalConflictChoices(ticket).includes(choice))throw new Error("选择未开放，不自动恢复日记")
