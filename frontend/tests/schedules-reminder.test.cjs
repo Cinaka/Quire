@@ -124,10 +124,12 @@ for (const [zone, instant, expected] of [["Asia/Shanghai", "2026-10-09T16:30:00Z
     const script = `const {loadTS}=require('./frontend/tests/schedules-harness.cjs');let day;const m=loadTS('shared/scheduleReminder.ts').createScheduleReminder({read:async d=>{day=d;return {asOf:d,dueToday:0,overdue:0,dueTotal:0}}},()=>new Date('${instant}'));m.refresh().then(()=>process.stdout.write(day))`
     assert.equal(execFileSync(process.execPath, ["-e", script], { cwd: path.join(__dirname, "../.."), env: { ...process.env, TZ: zone }, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }), expected)
   })
-test("panel refresh/cleanup is wired only in existing isolated guest acceptance, not formal routes", () => {
+test("panel refresh/cleanup is reused by existing isolated acceptance and formal home, not cloud synchronization", () => {
   const read = p => fs.readFileSync(path.join(__dirname, "../src", p), "utf8"), panel = read("components/schedules/ScheduleReminderPanel.vue")
   for (const text of ["visibilitychange", '"focus"', "60_000", "clearInterval", "removeEventListener", "controller.dispose()", "controller.invalidate()", "props.port.watch", "不是云端全部数据", "关闭浏览器后不保证提醒"]) assert.ok(panel.includes(text))
   const page = read("acceptance/AcceptancePage.vue"); assert.ok(page.includes("ScheduleReminderPanel")); assert.ok(page.includes("createLocalScheduleReminderPort")); assert.ok(page.includes("workspaceArea.value?.focus()"))
   for (const file of ["router/index.ts", "views/ScheduleView.vue", "api/sync.ts"]) assert.equal(read(file).includes("ScheduleReminder"), false)
+  assert.match(read("views/HomeView.vue"), /<ScheduleReminderPanel :port="scheduleReminderPort"/)
+  assert.match(read("repo/index.ts"), /export const createScheduleReminderPort = createLocalScheduleReminderPort/)
   const repo = read("db/scheduleReminderRepo.ts"); assert.ok(repo.includes('db.transaction("r", db.schedules, db.meta')); assert.equal(repo.includes(".put("), false)
 })
