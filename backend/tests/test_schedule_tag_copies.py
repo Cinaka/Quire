@@ -315,3 +315,64 @@ def test_second_add_failure_rolls_back_the_whole_batch(tmp_path, monkeypatch):
         assert client.post(URL, json=body).status_code == 500 and calls == 2
         assert db.session.get(Tag, COPY) is None and db.session.get(Tag, SECOND) is None
         assert db.commits == 0 and db.rollbacks > 0
+
+
+def test_readonly_presence_never_creates_missing_tags(tmp_path, monkeypatch):
+    with fixture(tmp_path, monkeypatch) as (client, db, _):
+        body, before = request(client), original_state(db)
+        result = client.post(f"{URL}/review", json=body)
+        assert result.status_code == 409
+        assert result.headers["Cache-Control"] == "no-store"
+        assert db.session.get(Tag, COPY) is None
+        assert db.commits == db.flushes == 0 and original_state(db) == before
+
+
+def test_readonly_presence_has_no_writes_and_preserves_creation_identity(tmp_path, monkeypatch):
+    with fixture(tmp_path, monkeypatch) as (client, db, _):
+        body = request(client)
+        first = success(client.post(URL, json=body))
+        before, counts = original_state(db), (db.commits, db.flushes)
+        result = success(client.post(f"{URL}/review", json=body))
+        assert result["tags_confirmed"] and not result["tags"][0]["created"]
+        assert result["tags"][0]["created_at"] == first["tags"][0]["created_at"]
+        assert not result["resolution_enabled"] and not result["diary_sync_enabled"]
+        assert original_state(db) == before and (db.commits, db.flushes) == counts
+
+
+@pytest.mark.parametrize("mode", ["deleted", "name", "color", "foreign", "stale"])
+def test_readonly_presence_changes_fail_without_recreation(mode, tmp_path, monkeypatch):
+    with fixture(tmp_path, monkeypatch) as (client, db, _):
+        body = request(client)
+        success(client.post(URL, json=body))
+        tag = db.session.get(Tag, COPY)
+        if mode == "deleted":
+            db.session.delete(tag)
+        elif mode == "name":
+            tag.name = "已改变"
+        elif mode == "color":
+            tag.color = "blue"
+        elif mode == "foreign":
+            tag.user_id = OTHER_USER_ID
+        else:
+            db.session.get(DiaryEntry, ID).title = "已改变"
+        db.session.commit()
+        before, counts = original_state(db), (db.commits, db.flushes)
+        result = client.post(f"{URL}/review", json=body)
+        assert result.status_code == 409 and result.headers["Cache-Control"] == "no-store"
+        assert original_state(db) == before and (db.commits, db.flushes) == counts
+        if mode == "deleted":
+            assert db.session.get(Tag, COPY) is None
+
+
+def test_readonly_presence_batch_missing_member_does_not_create_it(tmp_path, monkeypatch):
+    with fixture(tmp_path, monkeypatch) as (client, db, _):
+        body = request(client, choice="cloud-source-keep-diary")
+        success(client.post(URL, json=body))
+        body["copies"].append({
+            "from_tag_id": str(SECOND), "id": str(uuid.UUID(int=PLAN.int + 5)),
+            "name": "第二个明确副本", "color": None,
+        })
+        counts = db.commits, db.flushes
+        result = client.post(f"{URL}/review", json=body)
+        assert result.status_code == 409 and (db.commits, db.flushes) == counts
+        assert db.session.get(Tag, uuid.UUID(int=PLAN.int + 5)) is None

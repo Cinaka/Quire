@@ -26,8 +26,8 @@ export async function readSharedTagCopyArchive() {
   const row = await db.meta.get(SCHEDULE_CONFLICT_ARCHIVE)
   const rows = row ? row.value : []
   if (!Array.isArray(rows)) throw new Error("留档损坏，未准备标签")
-  const { plans, publications } = readTagSafetyArchive(rows)
-  return { rows, plans, publications }
+  const { plans, publications, handoffs } = readTagSafetyArchive(rows)
+  return { rows, plans, publications, handoffs }
 }
 export async function captureSharedTagCopySnapshot(id: string, lease: ConversionLease, write = false) {
   const raw = await captureScheduleResourceSnapshot(id, lease), pending = encodeScheduleResourceSnapshot(raw, id, lease)
@@ -163,7 +163,7 @@ export function createInternalSharedTagCopyPreparer(transport: ScheduleCloudReso
     },
     async listPrepared() {
       const lease = await captureSyncContext(), saved = await readSharedTagCopyArchive(); await assertScheduleLease(lease)
-      return saved.plans.filter(plan => plan.ownerUserId === lease.ownerUserId && plan.state === "prepared").map(plan => ({
+      return saved.plans.filter(plan => plan.ownerUserId === lease.ownerUserId && plan.state === "prepared" && !saved.handoffs.some(row => row.planId === plan.id)).map(plan => ({
         planId: plan.id, scheduleId: plan.scheduleId, choice: plan.choice, names: conversionCopy(plan.names),
         copies: conversionCopy(plan.copies), currentEpoch: plan.generation === lease.generation,
         cloudConfirmed: false, resolutionEnabled: false, diarySyncEnabled: false,

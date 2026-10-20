@@ -313,8 +313,9 @@ export async function getPinnedScheduleResourceImage(
 }
 
 /** Explicit create-only P4 tag POST; bounded decoding, fixed account, no generic retry loop. */
-export async function postPinnedScheduleIndependentTags(
+async function pinnedScheduleIndependentTags(
   id: string, body: unknown, lease: { ownerUserId: string; tokenGeneration: number }, signal: AbortSignal,
+  reviewOnly: boolean,
 ): Promise<unknown> {
   const payload = JSON.stringify(body)
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
@@ -328,7 +329,7 @@ export async function postPinnedScheduleIndependentTags(
       responseType: "text", transformResponse: [(value: unknown) => value], maxContentLength: limit,
       onDownloadProgress: (progress: { loaded: number }) => { if (progress.loaded > limit) controller.abort() },
     }
-    const res = await http.post<string>(`/schedules/${id}/independent-tags`, JSON.parse(payload), options)
+    const res = await http.post<string>(`/schedules/${id}/independent-tags${reviewOnly ? "/review" : ""}`, JSON.parse(payload), options)
     if (signal.aborted || controller.signal.aborted || accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
       throw new ApiError(-1, "旧标签发布响应已失效，请保留原准备核对")
     }
@@ -342,3 +343,10 @@ export async function postPinnedScheduleIndependentTags(
     return row.data
   } finally { signal.removeEventListener("abort", abort) }
 }
+
+export const postPinnedScheduleIndependentTags = (
+  id: string, body: unknown, lease: { ownerUserId: string; tokenGeneration: number }, signal: AbortSignal,
+) => pinnedScheduleIndependentTags(id, body, lease, signal, false)
+export const reviewPinnedScheduleIndependentTags = (
+  id: string, body: unknown, lease: { ownerUserId: string; tokenGeneration: number }, signal: AbortSignal,
+) => pinnedScheduleIndependentTags(id, body, lease, signal, true)

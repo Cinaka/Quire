@@ -1,4 +1,4 @@
-import { localKeepImageIds } from "@/shared/scheduleDualResourceAdoption"
+import { independentTagLocalImageIds, localKeepImageIds } from "@/shared/scheduleDualResourceAdoption"
 import { digestScheduleResourceBytes } from "./scheduleResourceConflictFile"
 import { parseScheduleCloudResourceReview } from "@/shared/scheduleCloudResources"
 import { checkDualResourceEvidence, parseDualResourceEvidence, serializeDualResourceEvidence } from "@/shared/scheduleDualResourceEvidence"
@@ -60,7 +60,11 @@ export async function readDualResourceEvidenceFile(file: ConflictEvidenceReadabl
 
 /** Retained local images need valid uploadable signatures too; no resize/re-encoding is performed. */
 export async function verifyDualLocalKeepImages(value: ScheduleDualResourceEvidence) {
-  for (const id of localKeepImageIds(value)) {
+  localKeepImageIds(value)
+  return verifyIndependentTagLocalImages(value)
+}
+export async function verifyIndependentTagLocalImages(value: ScheduleDualResourceEvidence) {
+  for (const id of independentTagLocalImageIds(value)) {
     const row = value.local.media.find(item => item.id === id)!
     for (const variant of ["original", "thumbnail"] as const) {
       const base64 = variant === "original" ? row.blobBase64 : row.thumbBase64

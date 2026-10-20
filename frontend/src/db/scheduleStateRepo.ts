@@ -120,12 +120,14 @@ export async function protectedConversions(): Promise<{ entryIds: Set<string>; m
   const archiveRows = archive ? archive.value : []
   if (!Array.isArray(archiveRows)) throw new Error("独立标签保护留档损坏")
   const owner = (await localOwnerSnapshot()).ownerUserId
-  for (const plan of readTagSafetyArchive(archiveRows).plans) {
+  const tagSafety = readTagSafetyArchive(archiveRows)
+  for (const plan of tagSafety.plans) {
     if (plan.ownerUserId !== owner || plan.state !== "prepared") continue
     // A restore epoch invalidates old writes, not the original definitions' safety hold.
-    entryIds.add(plan.scheduleId)
+    const handedOff = tagSafety.handoffs.some(row => row.planId === plan.id)
+    if (!handedOff) entryIds.add(plan.scheduleId)
     for (const id of plan.originalTagIds) tagIds.add(id)
-    for (const copy of plan.copies) tagIds.add(copy.tag.id)
+    if (!handedOff) for (const copy of plan.copies) tagIds.add(copy.tag.id)
     for (const id of plan.evidence.local.mediaIds) mediaIds.add(id)
     for (const item of plan.evidence.cloudMedia) mediaIds.add(item.id)
   }

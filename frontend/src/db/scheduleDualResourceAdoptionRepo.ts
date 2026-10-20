@@ -34,7 +34,7 @@ async function records(key: string): Promise<unknown[]> {
   return (row?.value ?? []) as unknown[]
 }
 /** Includes deleted diaries and other queued/historical candidates, not just current visible bodies. */
-async function assertExclusiveMedia(id: string, ids: string[], kind = "图片") {
+export async function assertExclusiveMedia(id: string, ids: string[], kind = "图片") {
   const target = new Set(ids)
   const scan = (root: unknown) => {
     const stack = [{ value: root, depth: 0 }]; let work = 0

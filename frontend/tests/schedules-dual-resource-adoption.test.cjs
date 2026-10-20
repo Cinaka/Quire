@@ -1061,3 +1061,116 @@ test("same-owner restore invalidates publication writes but retains historical c
   assert.equal((await h.publisher.list())[0].currentEpoch,false);assert.equal((await h.publishReview()).ready,false);assert.equal(all(h),before)
   const held=await h.load("db/scheduleStateRepo.ts").protectedConversions();assert.ok(held.entryIds.has(ID));assert.ok(held.tagIds.has(h.done.copies[0].tag.id))
 })
+
+async function handoffFixture(choice=CHOICE,options={}) {
+  const h=await publisherFixture(choice,options),r=await h.publishReview()
+  assert.equal((await h.publisher.publish(r.reviewId,true)).tagsConfirmed,true)
+  h.checks=[];h.handoffActive=false
+  h.transport.checkTags=async(id,body,lease,signal)=>{
+    h.checks.push({id,body:structuredClone(body),lease:structuredClone(lease),signal})
+    await options.onCheck?.(h,h.checks.length)
+    const tags=body.copies.map(copy=>{const tag=h.serverTags.get(copy.id);if(!tag||tag.name!==copy.name||tag.color!==copy.color)throw Error("missing or changed server tag");return {...tag,from_tag_id:copy.from_tag_id,created:false}})
+    const receipt={proof_scope:"independent_tag_presence",tags_confirmed:true,resolution_enabled:false,diary_sync_enabled:false,schedule_id:id,plan_id:body.plan_id,tags}
+    await options.onPresence?.(h,receipt);return receipt
+  }
+  h.handoff=h.load("db/scheduleTagHandoffRepo.ts").createInternalIndependentTagHandoff(h.transport)
+  h.handoffActive=true;h.handoffReview=()=>h.handoff.review(h.done.planId,h.file)
+  return h
+}
+const HANDOFF_KIND="terminal-independent-tag-handoff"
+for(const choice of [CHOICE,KEEP])test(`independent final ${choice} remaps only chosen diary and preserves shared definitions`,async()=>{
+  const h=await handoffFixture(choice),plan=(await meta(h,ARCHIVE))[0],tag=await h.db.tags.get(TAG),posts=h.posts.length
+  const before=await h.db.entries.get(ID),r=await h.handoffReview();assert.equal(r.ready,true);assert.equal(h.checks.length,1)
+  const done=await h.handoff.resolve(r.reviewId,choice,true);assert.equal(done.applied,true);assert.equal(done.cloudSynced,false);assert.equal(done.serverDiaryChanged,false)
+  const result=await h.db.entries.get(ID);assert.equal(result.id,ID);assert.equal(result.fromScheduleId,ID);assert.equal(result.title,choice===KEEP?before.title:"云端版本");assert.equal(result.dirty,1)
+  assert.deepEqual(result.tagIds,plan.copies.map(copy=>copy.tag.id));assert.ok(result.clientUpdatedAt>before.clientUpdatedAt);assert.equal(result.serverUpdatedAt,SERVER)
+  assert.deepEqual(await h.db.tags.get(TAG),tag);assert.equal(h.posts.length,posts);assert.equal(h.checks.length,2)
+  for(const copy of plan.copies){const row=await h.db.tags.get(copy.tag.id);assert.equal(row.dirty,0);assert.equal(row.name,copy.tag.name);assert.equal(row.createdAt,h.load("shared/scheduleTerminalConflict.ts").terminalVersionKey(SERVER))}
+  const records=await meta(h,ARCHIVE),applied=records.filter(row=>row.kind===HANDOFF_KIND);assert.equal(applied.length,1);assert.deepEqual(records[0],plan);assert.deepEqual(applied[0].entry,result)
+  assert.equal((await meta(h,"scheduleConversions")).length,0);assert.equal((await meta(h,"scheduleConflicts")).length,1)
+  const held=await h.load("db/scheduleStateRepo.ts").protectedConversions();assert.equal(held.entryIds.has(ID),false);assert.equal(held.tagIds.has(TAG),true);assert.equal(held.tagIds.has(plan.copies[0].tag.id),false)
+  if(choice===KEEP){assert.notEqual(result.content.doc.content[0].attrs.src,`local://media/${OTHER_ID}`);const newId=result.content.doc.content[0].attrs.src.slice(14);assert.equal((await h.db.media.get(newId)).dirty,1);assert.equal(await h.db.media.get(OTHER_ID),undefined)}
+  else assert.deepEqual(Buffer.from(await (await h.db.media.get(OTHER_ID)).blob.arrayBuffer()),cloudBytes)
+  const after=all(h);assert.equal((await h.handoffReview()).ready,false);assert.equal((await h.handoff.resolve(r.reviewId,choice,true)).applied,false);assert.equal(all(h),after)
+  assert.equal((await h.publishReview()).ready,false)
+})
+for(const mode of ["confirmation","choice","ticket"])test(`independent final explicit ${mode} required`,async()=>{
+  const h=await handoffFixture(),r=await h.handoffReview(),before=all(h),checks=h.checks.length
+  assert.equal((await h.handoff.resolve(mode==="ticket"?r.reviewId+1:r.reviewId,mode==="choice"?KEEP:CHOICE,mode!=="confirmation")).applied,false)
+  assert.equal(all(h),before);assert.equal(h.checks.length,checks)
+})
+for(const mode of ["missing","renamed","recolored","rebuilt","created-flag","wrong-map","wrong-plan"])test(`independent final rejects stale presence ${mode} without recreation`,async()=>{
+  const h=await handoffFixture(CHOICE,{onPresence:async(h,receipt)=>{if(!h.handoffActive)return;if(mode==="created-flag")receipt.tags[0].created=true;if(mode==="wrong-map")receipt.tags[0].from_tag_id=SECOND;if(mode==="wrong-plan")receipt.plan_id=SECOND}})
+  const copy=(await meta(h,ARCHIVE))[0].copies[0].tag.id
+  if(mode==="missing")h.serverTags.delete(copy)
+  if(mode==="renamed")h.serverTags.get(copy).name="changed"
+  if(mode==="recolored")h.serverTags.get(copy).color="blue"
+  if(mode==="rebuilt")h.serverTags.get(copy).created_at="2026-10-09T10:00:00Z"
+  const before=all(h),posts=h.posts.length;assert.equal((await h.handoffReview()).ready,false);assert.equal(all(h),before);assert.equal(h.posts.length,posts)
+})
+for(const mode of ["account","relogin","epoch","file","source","entry","tag","catalog","bytes","cloud","publication","digest","shared-image","copy-id"])test(`independent final ${mode} change after review retains all protection`,async()=>{
+  const h=await handoffFixture(),r=await h.handoffReview();assert.equal(r.ready,true)
+  if(mode==="account")h.user("account-b")
+  if(mode==="relogin"){h.user("account-b");h.user("account-a")}
+  if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"restored"})
+  if(mode==="file"){const p=JSON.parse(h.fileText);p.exportedAt="2026-10-13T00:00:00Z";h.fileText=JSON.stringify(p)}
+  if(mode==="source")await h.db.schedules.update(ID,{title:"changed"})
+  if(mode==="entry")await h.db.entries.update(ID,{title:"changed"})
+  if(mode==="tag")await h.db.tags.update(TAG,{name:"changed"})
+  if(mode==="catalog")await h.db.tags.put({id:SECOND,name:"another",color:null,createdAt:AT,dirty:0})
+  if(mode==="bytes")await h.db.media.update(OTHER_ID,{blob:blob(png(9))})
+  if(mode==="cloud")h.reply.review.entry.title="changed"
+  if(mode==="publication"||mode==="digest"){const rows=await meta(h,ARCHIVE),pub=rows.find(row=>row.kind===PUB_KIND);if(mode==="digest")pub.planDigest="0".repeat(64);else pub.state="started",pub.receipt=null;await h.db.meta.put({key:ARCHIVE,value:rows})}
+  if(mode==="shared-image")await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:image(OTHER_ID)}))
+  if(mode==="copy-id"){const plan=(await meta(h,ARCHIVE))[0];await h.db.entries.put(entry({id:plan.copies[0].tag.id,fromScheduleId:null,content:null}))}
+  const before=all(h);assert.equal((await h.handoff.resolve(r.reviewId,CHOICE,true)).applied,false);assert.equal(all(h),before)
+})
+for(const table of ["tags","entries","schedules","media","meta"])test(`independent final transaction ${table} failure rolls back entire handoff`,async()=>{
+  const h=await handoffFixture(),r=await h.handoffReview(),before=all(h)
+  const method=table==="tags"?"add":"put",old=h.db[table][method];h.db[table][method]=async()=>{throw Error("write failed")}
+  assert.equal((await h.handoff.resolve(r.reviewId,CHOICE,true)).applied,false);h.db[table][method]=old;assert.equal(all(h),before)
+  assert.equal((await h.load("db/scheduleStateRepo.ts").protectedConversions()).entryIds.has(ID),true)
+})
+for(const mode of ["cancel","account","epoch","bytes","catalog"])test(`independent final changes during readonly presence ${mode} cannot commit`,async()=>{
+  const h=await handoffFixture(CHOICE,{onCheck:async(h,n)=>{if(n!==2)return;if(mode==="cancel")h.handoff.cancel();if(mode==="account")h.user("account-b");if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"restored"});if(mode==="bytes")await h.db.media.update(OTHER_ID,{blob:blob(png(9))});if(mode==="catalog")await h.db.tags.put({id:SECOND,name:"new",color:null,createdAt:AT,dirty:0})}}),r=await h.handoffReview()
+  assert.equal((await h.handoff.resolve(r.reviewId,CHOICE,true)).applied,false);assert.equal((await meta(h,ARCHIVE)).some(row=>row.kind===HANDOFF_KIND),false)
+})
+for(const mode of ["entry","receipt","mapping","duplicate","orphan","unknown"])test(`independent final corrupt ${mode} archive fails closed`,async()=>{
+  const h=await handoffFixture(),r=await h.handoffReview();assert.equal((await h.handoff.resolve(r.reviewId,CHOICE,true)).applied,true)
+  const rows=await meta(h,ARCHIVE),record=rows.find(row=>row.kind===HANDOFF_KIND)
+  if(mode==="entry")record.entry.tagIds=[TAG]
+  if(mode==="receipt")record.receipt.tags[0].created=true
+  if(mode==="mapping")record.mediaMap=[{from:OTHER_ID,to:SECOND}]
+  if(mode==="duplicate")rows.push(structuredClone(record))
+  if(mode==="orphan")rows.splice(rows.findIndex(row=>row.kind===PUB_KIND),1)
+  if(mode==="unknown")record.unknown=true
+  await h.db.meta.put({key:ARCHIVE,value:rows});await assert.rejects(()=>h.load("db/scheduleStateRepo.ts").protectedConversions())
+})
+
+for(const mode of ["cancel","bytes","catalog","epoch"])test(`independent final byte-wait ${mode} invalidates final transaction`,async()=>{
+ let touched=false;const h=await handoffFixture(CHOICE,{onWait:async h=>{if(!h.handoffActive||!h.checks||h.checks.length<2||touched)return;touched=true;if(mode==="cancel")h.handoff.cancel();if(mode==="bytes")await h.db.media.update(OTHER_ID,{blob:blob(png(8))});if(mode==="catalog")await h.db.tags.update(TAG,{name:"changed"});if(mode==="epoch")await h.db.meta.put({key:"ownerGeneration",value:"restored"})}})
+ const r=await h.handoffReview(),before=all(h);assert.equal(r.ready,true);assert.equal((await h.handoff.resolve(r.reviewId,CHOICE,true)).applied,false);assert.equal(touched,true);assert.equal(all(h),before)
+})
+test("independent final two controllers converge to one local handoff without replay",async()=>{
+ const h=await handoffFixture(),other=h.load("db/scheduleTagHandoffRepo.ts").createInternalIndependentTagHandoff(h.transport)
+ const a=await h.handoffReview(),b=await other.review(h.done.planId,h.file);assert.ok(a.ready&&b.ready)
+ const results=await Promise.all([h.handoff.resolve(a.reviewId,CHOICE,true),other.resolve(b.reviewId,CHOICE,true)])
+ assert.equal(results.filter(row=>row.applied).length,1);assert.equal((await meta(h,ARCHIVE)).filter(row=>row.kind===HANDOFF_KIND).length,1)
+})
+test("independent final history is no longer offered as pending preparation and preserves unrelated shared-tag diary",async()=>{
+ const h=await handoffFixture();await h.db.entries.put(entry({id:OTHER_ENTRY,fromScheduleId:null,content:null,tagIds:[TAG],title:"other",dirty:1}))
+ const original=await h.db.entries.get(OTHER_ENTRY),r=await h.handoffReview();assert.equal(r.ready,true);assert.equal((await h.handoff.resolve(r.reviewId,CHOICE,true)).applied,true)
+ assert.deepEqual(await h.db.entries.get(OTHER_ENTRY),original);assert.equal((await h.preparer.listPrepared()).length,0)
+ const rows=await h.publisher.list();assert.equal(rows[0].referencesHandedOff,true);assert.equal(rows[0].requiresRecheck,true)
+})
+
+for(const choice of [CHOICE,KEEP])test(`independent final ordinary P2 ${choice} sends only selected references and never original definitions`,async()=>{
+ const h=await handoffFixture(choice),r=await h.handoffReview(),sent=[],uploaded=[]
+ assert.equal((await h.handoff.resolve(r.reviewId,choice,true)).applied,true)
+ const ids=(await h.db.entries.get(ID)).tagIds,original=await h.db.tags.get(TAG)
+ h.mocks["@/api/mappers"]={fromWireEntry:r=>r,fromWireTag:r=>r,mediaPatchFromWire:r=>r,toWireEntry:r=>r,toWireTag:r=>r,toWireMediaMetaPush:r=>r}
+ h.mocks["@/api/endpoints"]={uploadMedia:async id=>uploaded.push(id),pushBatch:async body=>{sent.push(body);return {serverTime:SERVER,entries:body.entries.map(r=>({id:r.id,status:"applied"})),tags:body.tags.map(r=>({id:r.id,status:"applied"})),mediaMeta:body.mediaMeta.map(r=>({id:r.id,status:"applied"}))}},pullChanges:async()=>({serverTime:SERVER,syncUntil:SERVER,cursorId:"",hasMore:false,entries:[],tags:[],mediaMeta:[]})}
+ await h.load("api/sync.ts").runSync();assert.deepEqual(sent.flatMap(body=>body.entries.map(row=>row.tagIds)),[ids]);assert.ok(sent.every(body=>body.tags.length===0));assert.deepEqual(await h.db.tags.get(TAG),original)
+ assert.equal(uploaded.includes(OTHER_ID),false);if(choice===KEEP)assert.equal(uploaded.length,1)
+ assert.equal((await h.db.entries.get(ID)).dirty,0);assert.equal((await meta(h,ARCHIVE)).filter(row=>row.kind===HANDOFF_KIND).length,1)
+})

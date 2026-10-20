@@ -2,6 +2,9 @@ import { conversionCanonical, conversionCopy, conversionUtc } from "./scheduleCo
 import { assertDualResourceTarget } from "./scheduleDualResourceEvidence"
 import { sharedTagCopyArchivePlans } from "./scheduleSharedTagCopy"
 import type { SharedTagCopyRecord } from "./scheduleSharedTagCopy"
+import { assertDualResourceAdoptionBase, planIndependentTagLocalImages } from "./scheduleDualResourceAdoption"
+import type { Entry } from "./types"
+import { toPlainText } from "./text"
 import { terminalVersionKey } from "./scheduleTerminalConflict"
 
 export const TAG_PUBLICATION_KIND = "terminal-independent-tag-publication"
@@ -63,5 +66,43 @@ export function readTagSafetyArchive(rows: unknown[]) {
     if (row.receipt !== null) parseTagPublicationReceipt(row.receipt, plan)
     return conversionCopy(row) as unknown as TagPublicationRecord
   })
-  return { plans, publications }
+  const handoffIds = new Set<string>()
+  const handoffs = rows.filter(raw => raw && typeof raw === "object" && "kind" in raw && raw.kind === TAG_HANDOFF_KIND).map(raw => {
+    const row = object(raw, ["kind", "version", "planId", "scheduleId", "ownerUserId", "generation", "at", "receipt", "mediaMap", "entry"])
+    const plan = plans.find(item => item.id === row.planId), pub = publications.find(item => item.planId === row.planId)
+    if (!plan || !pub || pub.state !== "confirmed" || row.version !== 1 || row.scheduleId !== plan.scheduleId ||
+        row.ownerUserId !== plan.ownerUserId || row.generation !== plan.generation || typeof row.at !== "string" ||
+        conversionUtc(row.at) !== row.at || !Array.isArray(row.mediaMap) || handoffIds.has(plan.id)) throw new Error("标签引用交接留档损坏")
+    handoffIds.add(plan.id)
+    const tags = parseTagPublicationReceipt(row.receipt, plan), previous = parseTagPublicationReceipt(pub.receipt, plan)
+    if (tags.some((tag, index) => tag.created || tag.createdAt !== previous[index]!.createdAt)) throw new Error("交接并非原标签的只读存在核对")
+    const pairs = row.mediaMap.map(raw => {
+      const pair = object(raw, ["from", "to"])
+      if (typeof pair.from !== "string" || typeof pair.to !== "string") throw new Error("图片映射无效")
+      return [pair.from, pair.to] as const
+    })
+    const map = new Map(pairs)
+    const reserved = new Set(plans.flatMap(item => [item.id, ...item.copies.map(copy => copy.tag.id)]))
+    if (pairs.some(([, to]) => reserved.has(to) || plan.catalog.some(tag => tag.id === to))) throw new Error("交接图片身份占用独立准备或原目录")
+    if (map.size !== pairs.length || conversionCanonical(row.entry) !== conversionCanonical(independentTagHandoffEntry(plan, map, row.at))) throw new Error("交接结果不是原明确选择")
+    return conversionCopy(row) as unknown as TagHandoffRecord
+  })
+  return { plans, publications, handoffs }
+}
+
+export const TAG_HANDOFF_KIND = "terminal-independent-tag-handoff"
+export interface TagHandoffRecord {
+  kind: typeof TAG_HANDOFF_KIND; version: 1; planId: string; scheduleId: string
+  ownerUserId: string; generation: string; at: string; receipt: unknown
+  mediaMap: Array<{ from: string; to: string }>; entry: Entry
+}
+/** Both choices edit tag references, so even cloud-body adoption is a new dirty diary revision. */
+export function independentTagHandoffEntry(plan: SharedTagCopyRecord, mediaMap: ReadonlyMap<string, string>, at: string): Entry {
+  const cloud = assertDualResourceAdoptionBase(plan.evidence), remote = cloud.review.entry!, local = plan.evidence.local.state.entry!
+  const chosen = plan.choice === "cloud-source-keep-diary" ? planIndependentTagLocalImages(plan.evidence, mediaMap, at).entry : conversionCopy(remote)
+  if (plan.choice === "cloud-source-use-diary" && mediaMap.size) throw new Error("云端正文不能附带本机图片映射")
+  const revision = conversionUtc(new Date(Math.max(Date.parse(conversionUtc(at)),
+    Date.parse(terminalVersionKey(local.clientUpdatedAt)) + 1, Date.parse(terminalVersionKey(remote.clientUpdatedAt)) + 1)).toISOString())
+  return { ...chosen, tagIds: plan.copies.map(copy => copy.tag.id), contentText: toPlainText(chosen.content),
+    dirty: 1, clientUpdatedAt: revision, updatedAt: revision, serverUpdatedAt: remote.serverUpdatedAt }
 }

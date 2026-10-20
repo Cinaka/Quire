@@ -90,3 +90,20 @@ test("tag publication transport factory is inert and preserves fixed lease, orig
  assert.equal(await transport.review(ID,lease),"wire");assert.equal(await transport.publish(ID,body,lease,signal),"presence")
  assert.equal(calls[1][1],ID);assert.equal(calls[1][2],body);assert.equal(calls[1][3],lease);assert.equal(calls[1][4],signal)
 })
+
+test("tag readonly presence uses fixed review suffix and never publication endpoint",async()=>{
+ const h=tagPublicationHTTP(),signal=new AbortController().signal
+ assert.equal((await h.api.reviewPinnedScheduleIndependentTags(ID,h.input,lease,signal)).presence,"only")
+ assert.equal(h.calls.length,1);assert.equal(h.calls[0].url,`/schedules/${ID}/independent-tags/review`)
+ assert.equal(h.calls[0].config._syncOwner,"account-a");assert.equal(h.calls[0].config._tokenGeneration,0)
+})
+for(const mode of ["owner","relogin","cancel","progress"])test(`tag readonly presence late ${mode} rejects stale proof`,async()=>{
+ const c=new AbortController(),h=tagPublicationHTTP({during:async(h,config)=>{if(mode==="owner")h.switchOwner();if(mode==="relogin")h.relogin();if(mode==="cancel")c.abort();if(mode==="progress")config.onDownloadProgress({loaded:128*1024+1})}})
+ await assert.rejects(h.api.reviewPinnedScheduleIndependentTags(ID,h.input,lease,c.signal));assert.equal(h.calls.length,1)
+})
+test("tag handoff transport is inert, readonly only, fixed lease and signal",async()=>{
+ const calls=[],body={confirmed:true},signal=new AbortController().signal,mocks={"./request":{getPinnedScheduleResourceReview:async(...args)=>{calls.push(["get",...args]);return "wire"},reviewPinnedScheduleIndependentTags:async(...args)=>{calls.push(["check",...args]);return "current"},postPinnedScheduleIndependentTags:async()=>{throw Error("must not publish")}}}
+ const transport=loadTS("api/scheduleTagPublicationTransport.ts",mocks).createScheduleTagHandoffTransport();assert.equal(calls.length,0)
+ assert.equal(await transport.review(ID,lease),"wire");assert.equal(await transport.checkTags(ID,body,lease,signal),"current")
+ assert.equal(calls[1][2],body);assert.equal(calls[1][3],lease);assert.equal(calls[1][4],signal)
+})

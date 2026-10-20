@@ -31,7 +31,11 @@ export function assertDualCloudAdoption(evidence: ScheduleDualResourceEvidence) 
 
 /** Complete evidence sets include local history; these are not per-image merge instructions. */
 export function dualResourceImageSets(evidence: ScheduleDualResourceEvidence) {
-  const cloud = assertDualCloudAdoption(evidence), local = evidence.local.mediaIds
+  assertDualCloudAdoption(evidence)
+  return independentTagImageSets(evidence)
+}
+export function independentTagImageSets(evidence: ScheduleDualResourceEvidence) {
+  const cloud = assertDualResourceAdoptionBase(evidence), local = evidence.local.mediaIds
   return { localOnly: local.filter(id => !cloud.mediaIds.includes(id)),
     cloudOnly: cloud.mediaIds.filter(id => !local.includes(id)),
     common: local.filter(id => cloud.mediaIds.includes(id)) }
@@ -48,6 +52,10 @@ export function dualResourceTagSets(evidence: ScheduleDualResourceEvidence) {
 /** Preserve first-occurrence document order, and never rewrite literal text or unrelated attributes. */
 export function localKeepImageIds(evidence: ScheduleDualResourceEvidence): string[] {
   assertDualCloudAdoption(evidence)
+  return independentTagLocalImageIds(evidence)
+}
+export function independentTagLocalImageIds(evidence: ScheduleDualResourceEvidence): string[] {
+  assertDualResourceAdoptionBase(evidence)
   const ids: string[] = [], stack: Array<{ value: unknown; depth: number }> = [{ value: evidence.local.state.entry!.content, depth: 0 }]
   let work = 0
   while (stack.length) {
@@ -71,7 +79,11 @@ export function localKeepImageIds(evidence: ScheduleDualResourceEvidence): strin
 
 /** Fresh-ID plan only. It neither generates IDs nor mutates the file, first intent or database. */
 export function planDualLocalKeep(evidence: ScheduleDualResourceEvidence, mapping: ReadonlyMap<string, string>, now: string) {
-  const ids = localKeepImageIds(evidence), cloud = assertDualCloudAdoption(evidence)
+  assertDualCloudAdoption(evidence)
+  return planIndependentTagLocalImages(evidence, mapping, now)
+}
+export function planIndependentTagLocalImages(evidence: ScheduleDualResourceEvidence, mapping: ReadonlyMap<string, string>, now: string) {
+  const ids = independentTagLocalImageIds(evidence), cloud = assertDualResourceAdoptionBase(evidence)
   if (mapping.size !== ids.length || ids.some(id => !mapping.has(id)) ||
       new Set(mapping.values()).size !== mapping.size || [...mapping.values()].some(id =>
         typeof id !== "string" || scheduleEntryId(id) !== id || (evidence.local.mediaIds.includes(id) || cloud.mediaIds.includes(id) || evidence.local.tagIds.includes(id) || cloud.tagIds.includes(id)))) {

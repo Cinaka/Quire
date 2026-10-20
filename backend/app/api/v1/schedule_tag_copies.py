@@ -90,3 +90,38 @@ async def publish_independent_tags(
     except Exception:
         await db.rollback()
         raise
+
+
+@router.post(
+    "/{schedule_id}/independent-tags/review",
+    response_model=Envelope[IndependentTagCopiesResponse],
+)
+async def review_independent_tags(
+    schedule_id: uuid.UUID,
+    body: IndependentTagCopiesRequest,
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read-only current presence. Never recreate missing tags or acknowledge diary references."""
+    response.headers.update(PRIVATE_HEADERS)
+    if schedule_id.version != 7:
+        raise HTTPException(status_code=422, detail="来源必须为UUID v7", headers=PRIVATE_HEADERS)
+    owner = ScheduleWriteOwner(user.id)
+    try:
+        await lock_schedule_owner(db, owner)
+        proof = await locked_resource_review(db, owner, schedule_id)
+        tags, created = await create_independent_tags(
+            db, owner, schedule_id, body, proof, require_existing=True,
+        )
+        if created:
+            raise HTTPException(status_code=409, detail="只读复核不能创建标签")
+        result = IndependentTagCopiesResponse(
+            schedule_id=schedule_id, plan_id=body.plan_id, tags=tags,
+        )
+        return ok(result)
+    except HTTPException as error:
+        error.headers = {**(error.headers or {}), **PRIVATE_HEADERS}
+        raise
+    finally:
+        await db.rollback()

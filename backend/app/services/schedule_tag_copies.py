@@ -75,7 +75,7 @@ class IndependentTagCopiesRequest(BaseModel):
         return self
 
 
-async def create_independent_tags(db, owner, schedule_id, body, proof):
+async def create_independent_tags(db, owner, schedule_id, body, proof, *, require_existing=False):
     """Caller holds source/resource locks, owns the one commit and handles duplicate races."""
     if (proof.resource_state != "verified" or not proof.resources_complete
             or not proof.review.reviewable or not proof.review.receipt_known
@@ -124,6 +124,8 @@ async def create_independent_tags(db, owner, schedule_id, body, proof):
             row.user_id != owner.id or row.name != copy.name or row.color != copy.color
         ):
             raise HTTPException(status_code=409, detail="副本身份已占用或定义已变化，未覆盖")
+        if require_existing and row is None:
+            raise HTTPException(status_code=409, detail="独立标签已缺失，复核不重新创建")
         existing.append(row)
     clock = utcnow()
     created_at = clock.replace(microsecond=clock.microsecond // 1000 * 1000)

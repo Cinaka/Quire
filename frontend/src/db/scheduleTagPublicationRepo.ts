@@ -18,7 +18,7 @@ const localKey = (value: SharedTagCopyRecord["evidence"]["local"]) => {
   const { exportedAt: _time, ...rest } = value
   return conversionCanonical(rest)
 }
-async function planDigest(plan: SharedTagCopyRecord) {
+export async function sharedTagPlanDigest(plan: SharedTagCopyRecord) {
   const bytes = await new Blob([conversionCanonical(plan)]).arrayBuffer()
   const hash = await crypto.subtle.digest("SHA-256", bytes)
   return [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, "0")).join("")
@@ -59,7 +59,8 @@ export function createInternalScheduleTagPublisher(transport: ScheduleTagPublica
       return saved.publications.filter(row => row.ownerUserId === lease.ownerUserId).map(row => ({
         planId: row.planId, scheduleId: row.scheduleId, state: row.state,
         currentEpoch: row.generation === lease.generation, historicalConfirmation: row.state === "confirmed",
-        requiresRecheck: true, resolutionEnabled: false, diarySyncEnabled: false,
+        requiresRecheck: true, referencesHandedOff: saved.handoffs.some(item => item.planId === row.planId),
+        resolutionEnabled: false, diarySyncEnabled: false,
       }))
     },
     async review(planId: string, file: ConflictEvidenceReadableFile) {
@@ -68,10 +69,10 @@ export function createInternalScheduleTagPublisher(transport: ScheduleTagPublica
       try {
         const lease = await captureSyncContext(), saved = await readSharedTagCopyArchive(); await check(run, lease)
         const plan = saved.plans.find(row => row.id === planId)
-        if (!plan || plan.state !== "prepared" || plan.ownerUserId !== lease.ownerUserId || plan.generation !== lease.generation) throw new Error("旧准备不能发布")
+        if (saved.handoffs.some(row => row.planId === planId) || !plan || plan.state !== "prepared" || plan.ownerUserId !== lease.ownerUserId || plan.generation !== lease.generation) throw new Error("旧准备不能发布")
         const fileValue = await readDualResourceEvidenceFile(file); await check(run, lease)
         if (!same(fileValue, plan.evidence)) throw new Error("请重读原双方实物文件")
-        const current = await captureSharedTagCopySnapshot(plan.scheduleId, lease), digest = await planDigest(plan)
+        const current = await captureSharedTagCopySnapshot(plan.scheduleId, lease), digest = await sharedTagPlanDigest(plan)
         await check(run, lease)
         const wire = conversionCopy(await transport.review(plan.scheduleId, conversionCopy(lease))); await check(run, lease)
         const request = makeTagPublicationRequest(plan, wire), ticket = { plan, digest, lease, file, fingerprint: current.fingerprint, request }
