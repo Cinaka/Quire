@@ -34,8 +34,8 @@ onBeforeUnmount(() => leaveGuard.dispose())
   <section class="schedule-page">
     <header class="page-header">
       <h1>预简 / 待刻</h1>
-      <p role="status">本机试用：可创建文字预简、改期、移入断简/恢复，以及到期后明确刻成日记。日程云端同步尚未开放。</p>
-      <p>不会自动转简。请定期到设置中进行防蠹备份；此页不会自动认领、重置或清除本地数据。资源/终态核对仅由另行明确操作请求云端，日程自动同步未开启。</p>
+      <p role="status">本机试用：可创建文字预简、改期、移入断简/恢复，以及到期后明确刻成日记。日程同步需在云笺明确启用本次会话。</p>
+      <p>不会自动转简。请定期到设置中进行防蠹备份；此页不会自动认领、重置或清除本地数据。资源/终态核对仅由另行明确操作请求云端，日程自动调度仅在云笺明确启用本次会话后运行。</p>
       <nav aria-label="页面导航"><RouterLink to="/">返回今简</RouterLink><RouterLink to="/list">简册</RouterLink><RouterLink to="/settings">设置 / 防蠹</RouterLink></nav>
     </header>
     <p v-if="leaveNotice" class="leave-notice" role="alert">{{ leaveNotice }}</p>

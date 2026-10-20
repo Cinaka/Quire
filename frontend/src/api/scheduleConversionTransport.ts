@@ -24,7 +24,7 @@ function safeFailure(stage: ConversionFailure["stage"], error: unknown, id: stri
   return new ConversionTransportError(conversionFailure(stage, "network"))
 }
 /** Real protocol adapter, but factory creation does not send or enable anything. */
-export function createScheduleConversionTransport(): ConversionTransport {
+export function createScheduleConversionTransport(unavailable?: () => void): ConversionTransport {
   return {
     async pushSource(body, lease) {
       const request = body as { schedules?: Array<{ id?: unknown }> } | null
@@ -34,7 +34,7 @@ export function createScheduleConversionTransport(): ConversionTransport {
       }
       let raw: unknown
       try { raw = await postPinnedSchedule("/schedules/sync/push", body, lease) }
-      catch (error) { throw safeFailure("source", error, id) }
+      catch (error) { if (error instanceof ApiError && [404, 405, 501].includes(error.status ?? 0)) unavailable?.(); throw safeFailure("source", error, id) }
       try {
         const failure = parseConversionSourceFailure(raw, id)
         if (failure) throw new ConversionTransportError(failure)
@@ -47,7 +47,7 @@ export function createScheduleConversionTransport(): ConversionTransport {
     async convert(id, body, lease) {
       if (!validSourceId(id)) throw new ConversionTransportError(conversionFailure("convert", "invalid_request"))
       try { return await postPinnedSchedule(`/schedules/${id}/convert`, body, lease) }
-      catch (error) { throw safeFailure("convert", error, id) }
+      catch (error) { if (error instanceof ApiError && [405, 501].includes(error.status ?? 0)) unavailable?.(); throw safeFailure("convert", error, id) }
     },
   }
 }

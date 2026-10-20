@@ -7,12 +7,13 @@
     </header>
 
     <section class="card">
-      <h2>同步状态</h2>
+      <h2>日记等数据同步（P2）</h2>
+      <p class="note">此按钮不驱动独立日程同步；下列预简待处理计数不能由P2完成状态代替。</p>
       <template v-if="loggedIn">
         <dl class="kv">
           <div><dt>本地归属</dt><dd>{{ status.ownerUserId || "读取中" }}</dd></div>
           <div><dt>网络状态</dt><dd>{{ networkLabel }}</dd></div>
-          <div><dt>上次同步</dt><dd>{{ status.lastSyncAt || "尚未完成" }}</dd></div>
+          <div><dt>P2上次同步</dt><dd>{{ status.lastSyncAt || "尚未完成" }}</dd></div>
           <div>
             <dt>待上传</dt>
             <dd>
@@ -25,7 +26,7 @@
         </dl>
         <p v-if="message" class="message" :class="{ bad: failed }">{{ message }}</p>
         <button type="button" class="primary" :disabled="busy || backgroundBusy || offline" @click="syncNow">
-          {{ busy || backgroundBusy ? "正在同步……" : offline ? "当前离线" : "立即同步" }}
+          {{ busy || backgroundBusy ? "正在同步……" : offline ? "当前离线" : "同步日记等数据" }}
         </button>
         <button
           v-if="status.dirtyTotal || status.conflictCount || status.errorCount"
@@ -47,6 +48,8 @@
       </template>
     </section>
 
+    <ScheduleSyncPanel />
+
     <section class="card">
       <h2>本地优先</h2>
       <p class="note">IndexedDB 始终是当前设备的权威副本。同步顺序固定为先推后拉，未上传的本地内容不会被云端覆盖。</p>
@@ -55,6 +58,7 @@
 </template>
 
 <script setup lang="ts">
+import ScheduleSyncPanel from "@/components/schedules/ScheduleSyncPanel.vue"
 import { computed, onMounted, onUnmounted, ref } from "vue"
 import { useRouter } from "vue-router"
 
@@ -110,7 +114,7 @@ async function handleBackgroundState(state: BackgroundSyncState): Promise<void> 
   await refresh()
   if (state.phase === "success") {
     failed.value = false
-    message.value = status.value.dirtyTotal ? `仍有 ${status.value.dirtyTotal} 项待处理。` : "自动同步完成。"
+    message.value = status.value.dirtyTotal ? `仍有 ${status.value.dirtyTotal} 项待处理。` : "本轮P2同步结束；日程请查看下方独立状态。"
   } else {
     failed.value = true
     message.value = `后台同步失败：${state.message}；${state.retryInSeconds} 秒后重试。`
@@ -131,7 +135,7 @@ async function syncNow(): Promise<void> {
       message.value = "数据已传输，但仍有冲突或错误记录需要确认。"
       failed.value = true
     } else {
-      message.value = "同步完成。"
+      message.value = "本轮P2同步结束；日程请查看下方独立状态。"
     }
   } catch (error) {
     failed.value = true

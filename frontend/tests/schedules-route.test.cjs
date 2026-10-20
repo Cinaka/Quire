@@ -119,7 +119,7 @@ test('formal route exposes local-only workflow through repo facade, with no raw 
   const view = source('views/ScheduleView.vue'); const repo = source('repo/index.ts')
   assert.match(view, /from "@\/repo"/); assert.match(view, /<ScheduleHost v-show="!conflictOpen" ref="hostRef"/)
   assert.match(view, /:first-save-enabled="false"/); assert.match(view, /onBeforeRouteLeave/)
-  assert.match(view, /日程云端同步尚未开放/)
+  assert.match(view, /日程同步需在云笺明确启用本次会话/)
   assert.doesNotMatch(view, /@\/db\/|useRoute\(|:key=|router\.push|syncNow|autoSync|setInterval|fetch\(|localStorage/)
   assert.match(repo, /export const scheduleHostRepo = localScheduleHostRepo/)
   assert.doesNotMatch(repo, /scheduleSyncRepo|schedulePushRepo|scheduleConversionRepo|scheduleFirstSaveRepo/)

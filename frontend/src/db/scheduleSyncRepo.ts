@@ -2,6 +2,7 @@ import { captureSyncContext } from "@/api/syncContext"
 import { conversionCanonical } from "@/shared/scheduleConversionSync"
 import type { ConversionLease, ConversionTransport } from "@/shared/scheduleConversionSync"
 import { readScopedPullCursor } from "@/shared/schedulePull"
+import type { Schedule } from "@/shared/types"
 import type { SchedulePullTransport } from "@/shared/schedulePull"
 import type { SchedulePushTransport } from "@/shared/schedulePush"
 import { createScheduleSyncCoordinator } from "@/shared/scheduleSync"
@@ -23,7 +24,8 @@ async function verify(lease: ConversionLease) {
   await db.transaction("r",db.meta,async()=>{ await assertScheduleLease(lease); await readCheckedConversionQueue(lease.ownerUserId); await conflicts(); await conflicts(SCHEDULE_META_KEYS.errors); await assertScheduleLease(lease) })
 }
 /** Explicit injected transports only. No factory creation sends a request or enables P2/diary sync. */
-export function createInternalScheduleSyncCoordinator(transports: ScheduleSyncTransports) {
+export function createInternalScheduleSyncCoordinator(transports: ScheduleSyncTransports, expected?: ConversionLease) {
+  const expectedKey = expected ? conversionCanonical(expected) : null
   const check = async (outer: ConversionLease, inner: ConversionLease) => {
     if (conversionCanonical(outer) !== conversionCanonical(inner)) throw new Error("不能重捕获新账号租约继续旧协调")
     await verify(outer)
@@ -31,6 +33,7 @@ export function createInternalScheduleSyncCoordinator(transports: ScheduleSyncTr
   return createScheduleSyncCoordinator({
     async capture() {
       const lease = await captureSyncContext()
+      if (expectedKey !== null && conversionCanonical(lease) !== expectedKey) throw new Error("正式调度不能重捕获新账号继续旧轮次")
       return db.transaction("r",db.meta,async()=>{
         await assertScheduleLease(lease)
         const queue = await readCheckedConversionQueue(lease.ownerUserId), candidates = await conflicts()
@@ -66,7 +69,8 @@ export function createInternalScheduleSyncCoordinator(transports: ScheduleSyncTr
         const queue = await readCheckedConversionQueue(lease.ownerUserId), candidates = await conflicts()
         await conflicts(SCHEDULE_META_KEYS.errors)
         const cursor = readScopedPullCursor((await db.meta.get(SCHEDULE_META_KEYS.cursor))?.value ?? null,lease)
-        const dirty = (await db.schedules.toArray()).filter(row=>row.dirty === 1).length
+        const rows: Schedule[] = await db.schedules.toArray()
+        const dirty = rows.filter(row=>row.dirty === 1).length
         await assertScheduleLease(lease)
         return { conversions:queue.length,dirty,conflicts:candidates.length,pullContinuation:cursor.afterId !== null }
       })
