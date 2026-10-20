@@ -14,7 +14,7 @@
     <button
       type="button"
       aria-label="后一天"
-      :disabled="props.modelValue >= props.max"
+      :disabled="Boolean(props.max && props.modelValue >= props.max)"
       @click="step(1)"
     >
       ›
@@ -29,7 +29,7 @@ import { addLocalDays, isLocalDate } from "@/shared/time"
 
 const props = defineProps<{
   modelValue: string
-  max: string
+  max?: string
 }>()
 
 const emit = defineEmits<{
@@ -41,7 +41,7 @@ const inputRef = ref<HTMLInputElement | null>(null)
 
 function choose(value: string): void {
   if (!isLocalDate(value)) return
-  if (value > props.max) {
+  if (props.max && value > props.max) {
     emit("blocked")
     return
   }
@@ -50,7 +50,7 @@ function choose(value: string): void {
 
 function step(days: number): void {
   const next = addLocalDays(props.modelValue, days)
-  if (next > props.max) {
+  if (props.max && next > props.max) {
     emit("blocked")
     return
   }

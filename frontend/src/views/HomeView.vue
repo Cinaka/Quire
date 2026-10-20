@@ -4,7 +4,7 @@
       <div class="date-block">
         <div class="day-number">{{ dayNum }}</div>
         <div class="month-weekday">{{ monthLabel }} · {{ almanac?.weekday }}</div>
-        <HomeDateNavigator v-model="selectedDate" :max="today" @blocked="showBlockedNotice" />
+        <HomeDateNavigator v-model="selectedDate" @blocked="showBlockedNotice" />
       </div>
       <nav class="head-actions" aria-label="首页导航">
         <button type="button" class="plain accent" @click="openSchedules">预简 / 待刻</button>
@@ -65,7 +65,7 @@
           </span>
         </li>
       </ul>
-      <p v-else class="empty">简册尚空，今日宜落笔</p>
+      <p v-else class="empty">{{ selectedDate > today ? "此日尚未来临，可留一简待刻" : "简册尚空，今日宜落笔" }}</p>
     </section>
 
     <footer class="footer">{{ Number(selectedDate.slice(5, 7)) }} 月已记 {{ monthDays }} 天</footer>
@@ -120,7 +120,7 @@ const {
 
 const dayNum = computed(() => Number(selectedDate.value.slice(8, 10)))
 const monthLabel = computed(() => `${Number(selectedDate.value.slice(5, 7))} 月`)
-const writeLabel = computed(() => selectedDate.value !== today ? "补记一简" : dateEntries.value.length ? "再刻一简" : "刻一简")
+const writeLabel = computed(() => selectedDate.value > today ? "留一简" : selectedDate.value !== today ? "补记一简" : dateEntries.value.length ? "再刻一简" : "刻一简")
 
 function hasText(entry: EntryListItem): boolean { return entry.contentText.trim().length > 0 }
 function preview(entry: EntryListItem): string { const value = entryExcerpt(entry.contentText, imageCountByEntry.value[entry.id] ?? 0); return value.length > 40 ? `${value.slice(0, 40)}…` : value }
@@ -144,7 +144,7 @@ async function load(): Promise<void> {
 
 function loadCheckins(): Promise<void> { return loadCurrentCheckins() }
 function refreshActiveCheckins(): void { revalidateActiveCheckins(true) }
-function showBlockedNotice(): void { notice.value = "此处仍只补记已至之日；未来文字预简请从“预简 / 待刻”入口创建。" }
+function showBlockedNotice(): void { notice.value = "日期未能选取，请重新核对；未来文字可留为预简 / 待刻。" }
 function openSchedules(): void { void router.push("/schedules") }
 function write(): void { void router.push({ path: "/entry/new", query: { date: selectedDate.value } }) }
 function open(id: string): void { void router.push(`/entry/${id}`) }

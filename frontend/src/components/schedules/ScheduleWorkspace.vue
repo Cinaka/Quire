@@ -58,7 +58,8 @@ import ScheduleEditorPanel from "./ScheduleEditorPanel.vue"
 import ScheduleList from "./ScheduleList.vue"
 
 // 由固定宿主显式注入；contextKey绑定账号/恢复代际，路由参数不能切换来源。
-const props = defineProps<{ port: ScheduleWorkspacePort; contextKey: string; expired?: boolean }>()
+const props = defineProps<{ port: ScheduleWorkspacePort; contextKey: string; expired?: boolean; initialComposeDate?: string }>()
+const initialComposeDate = props.initialComposeDate
 const emit = defineEmits<{ "open-entry": [string]; "context-expired": [] }>()
 const workspace = createScheduleWorkspace(props.port)
 const state = ref(workspace.inspect())
@@ -97,7 +98,10 @@ function refreshOnFocus(): void { workspace.tick(); void workspace.refresh() }
 function visibility(): void { if (document.visibilityState === "visible") refreshOnFocus() }
 let timer: number | undefined
 onMounted(() => {
-  void workspace.initialize()
+  void workspace.initialize().then(async ok => {
+    // 只对初次进入、空草稿槽打开明确请求的未来编辑；不覆盖/自动恢复已有草稿。
+    if (ok && initialComposeDate && workspace.inspect().recovery?.status === "empty") await workspace.openNew(initialComposeDate)
+  })
   timer = window.setInterval(() => workspace.tick(), 60_000)
   window.addEventListener("focus", refreshOnFocus)
   document.addEventListener("visibilitychange", visibility)

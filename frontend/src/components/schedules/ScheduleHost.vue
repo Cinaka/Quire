@@ -6,18 +6,19 @@
     <template v-if="workspacePort">
       <fieldset v-show="!diarySession" :disabled="state.busy" class="work-area">
         <section v-if="firstSaveEnabled && state.ready && !state.expired" class="first-save" aria-label="未关联日记草稿首次保存">
-          <p>内部首存桥，仅处理明确读取的未关联日记安全草稿；不自动修改既有日记或预简。</p>
+          <p>未关联原稿的首存核对；不会自动修改既有日记或预简。日期决定首次写入，原稿中不支持的字段不会静默丢弃。</p>
           <p v-if="state.firstSaveError" role="alert">{{ state.firstSaveError }}</p>
           <button type="button" :disabled="state.busy" @click="host.refreshDraft()">明确读取原日记安全草稿</button>
           <template v-if="state.frame">
             <p>{{ state.frame.draft.title || "无题" }} · 原草稿日 {{ state.frame.draft.entryDate }}</p>
+            <label>原稿只读副本（不含图片字节）<textarea readonly :value="JSON.stringify(state.frame.draft, null, 2)" rows="6" /></label>
             <label>首存日<input v-model="selectedDate" type="date" :disabled="state.busy" @input="host.preview(selectedDate)" /></label>
             <button type="button" :disabled="state.busy" @click="host.preview(selectedDate)">核对分流</button>
             <p v-if="state.plan">{{ state.plan.date }}：{{ state.plan.resource === "schedule" ? "保存为预简（仅文本）" : "保存为日记" }}。原稿与目标写入在同一事务处理。</p>
             <button v-if="state.plan" type="button" :disabled="state.busy" @click="firstSave">明确确认首次保存</button>
           </template>
         </section>
-        <ScheduleWorkspace v-if="workspacePort" ref="workspaceRef" :port="workspacePort" :context-key="host.contextKey()" :expired="state.expired" @open-entry="openTarget" @context-expired="host.invalidate()" />
+        <ScheduleWorkspace v-if="workspacePort" ref="workspaceRef" :port="workspacePort" :context-key="host.contextKey()" :expired="state.expired" :initial-compose-date="props.initialComposeDate" @open-entry="openTarget" @context-expired="host.invalidate()" />
       </fieldset>
     </template>
     <!-- 账号/恢复失效不卸载未保存文字：面板锁写，但保留副本与明确弃去。 -->
@@ -28,7 +29,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef } from "vue"
 import { createScheduleHost } from "@/shared/scheduleHost"
-import type { ScheduleHostPort } from "@/shared/scheduleHostTypes"
+import type { ScheduleHostPort, ScheduleHostContext } from "@/shared/scheduleHostTypes"
 import type { ScheduleDiaryEditorSession } from "@/shared/scheduleDiaryEditor"
 import type { EntryUpdateDto } from "@/shared/types"
 import type { ScheduleWorkspacePort } from "@/shared/scheduleWorkspace"
@@ -36,11 +37,11 @@ import ScheduleWorkspace from "./ScheduleWorkspace.vue"
 import ScheduleDiaryPanel from "./ScheduleDiaryPanel.vue"
 
 // 显式注入并固定账号/恢复上下文；正式页面关闭首存桥，隔离页保留既有默认行为。
-const props = defineProps<{ port: ScheduleHostPort; firstSaveEnabled?: boolean }>()
+const props = defineProps<{ port: ScheduleHostPort; firstSaveEnabled?: boolean; context?: ScheduleHostContext; initialComposeDate?: string; initialFirstSaveDate?: string }>()
 const firstSaveEnabled = props.firstSaveEnabled !== false
-const host = createScheduleHost(props.port, undefined, { firstSaveEnabled })
+const host = createScheduleHost(props.port, undefined, { firstSaveEnabled, context: props.context })
 const state = ref(host.inspect())
-const selectedDate = ref("")
+const selectedDate = ref(props.initialFirstSaveDate ?? "")
 const bridgeError = ref("")
 const workspacePort = shallowRef<ScheduleWorkspacePort | null>(null)
 const workspaceRef = ref<InstanceType<typeof ScheduleWorkspace> | null>(null)
@@ -90,7 +91,10 @@ function beforeUnload(event: BeforeUnloadEvent): void {
   }
 }
 defineExpose({ prepareLeave, saveTarget })
-onMounted(() => { window.addEventListener("beforeunload", beforeUnload); void host.initialize() })
+onMounted(async () => {
+  window.addEventListener("beforeunload", beforeUnload)
+  if (await host.initialize() && props.initialFirstSaveDate && host.inspect().frame) host.preview(props.initialFirstSaveDate)
+})
 onBeforeUnmount(() => { window.removeEventListener("beforeunload", beforeUnload); unsubscribe(); host.dispose() })
 </script>
 

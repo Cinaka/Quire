@@ -47,7 +47,7 @@ test('ordinary home write and open entry paths remain unchanged and do not trigg
 test('blocked future diary notice points to the existing local schedules page without changing diary selection', () => {
   const h = home(); h.showBlockedNotice()
   assert.equal(h.selectedDate.value, '2026-10-20'); assert.equal(h.navigation.length, 0)
-  assert.match(h.notice.value, /此处仍只补记已至之日/); assert.match(h.notice.value, /未来文字预简/)
+  assert.match(h.notice.value, /日期未能选取/); assert.match(h.notice.value, /未来文字可留为预简/)
   assert.doesNotMatch(h.notice.value, /预简（待刻）尚未开放/)
 })
 test('home manual retry still revalidates active P3 month; current-month load stays separate', async () => {
@@ -115,9 +115,9 @@ test('home wiring has a non-date key, independent fallback entry and no DB/netwo
   assert.match(repo, /export const createScheduleReminderPort = createLocalScheduleReminderPort/)
   assert.doesNotMatch(repo, /scheduleSyncRepo|schedulePushRepo|scheduleConversionRepo/)
 })
-test('home keeps P3 current-month event wiring and historical diary date maximum unchanged', () => {
+test('home keeps P3 current-month wiring while allowing future first-save dates', () => {
   const home = read('views/HomeView.vue')
-  assert.match(home, /@current-month="loadCheckins"/); assert.match(home, /:max="today" @blocked="showBlockedNotice"/)
+  assert.match(home, /@current-month="loadCheckins"/); assert.match(home, /<HomeDateNavigator v-model="selectedDate" @blocked="showBlockedNotice"/); assert.doesNotMatch(home, /:max="today"/)
   assert.match(home, /if \(loggedIn.value\) void loadCheckins\(\)/)
   assert.match(home, /loadCurrent: loadCurrentCheckins/); assert.match(home, /revalidateActiveCheckins\(true\)/)
 })

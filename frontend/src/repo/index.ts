@@ -1,6 +1,7 @@
 import { localBackupRepo } from "@/db/backupRepo"
 import { localFirstMediaRepo } from "@/db/cloudMediaRepo"
 import { localDraftRepo } from "@/db/draftRepo"
+import { readEntryNewDestination } from "@/db/entryNewDestinationRepo"
 import { localEntryRepo, type IEntryRepo } from "@/db/entryRepo"
 import { localScheduleHostRepo } from "@/db/scheduleHostRepo"
 import { createLocalScheduleReminderPort } from "@/db/scheduleReminderRepo"
@@ -28,3 +29,5 @@ export const scheduleHostRepo = localScheduleHostRepo
 
 // 惰性只读端口：每次挂载独立固定上下文，不启动同步或认领。
 export const createScheduleReminderPort = createLocalScheduleReminderPort
+
+export const entryNewDestination = { read: readEntryNewDestination }

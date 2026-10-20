@@ -9,9 +9,10 @@ const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 /** 无DOM宿主状态机；上下文捕获一次，重新进入必须创建新实例，不在旧操作后采样新账号。 */
 export function createScheduleHost(
   port: ScheduleHostPort, clock: () => LocalDate = todayLocal,
-  options: { firstSaveEnabled?: boolean } = {},
+  options: { firstSaveEnabled?: boolean; context?: ScheduleHostContext } = {},
 ) {
   const firstSaveEnabled = options.firstSaveEnabled !== false
+  const initialContext = options.context ? copy(options.context) : null
   let context: ScheduleHostContext | null = null
   let workspace: ScheduleWorkspacePort | null = null
   let targetEditor: ScheduleDiaryEditorSession | null = null
@@ -75,7 +76,7 @@ export function createScheduleHost(
       if (!active || context || state.busy) return false
       state.busy = true; notify()
       try {
-        const pin = await port.capture(); await port.validate(pin)
+        const pin = initialContext ? copy(initialContext) : await port.capture(); await port.validate(pin)
         if (!active) return false
         context = copy(pin); workspace = port.workspace(copy(pin)); state.ready = true
         stopWatch = port.watch(copy(pin), invalidate)

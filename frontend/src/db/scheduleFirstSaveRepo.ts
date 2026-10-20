@@ -12,7 +12,7 @@ import { localMediaRepo } from "./mediaRepo"
 import { localScheduleDraftRepo } from "./scheduleDraftRepo"
 import { db } from "./schema"
 
-function parseNewDiaryDraft(raw: unknown): EditorDraft {
+export function parseNewDiaryDraft(raw: unknown): EditorDraft {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("原日记安全草稿格式不受支持，未覆盖")
   const draft = raw as EditorDraft
   if (Object.keys(raw).some(key => !["entryId", "entryDate", "title", "mood", "weather", "tagIds", "doc", "updatedAt"].includes(key)) ||
