@@ -185,3 +185,26 @@ test('paused in-flight runtime cannot grant review until its late result has set
   h.runtime.pause(); assert.equal(h.runtime.inspect().reviewing, true); assert.equal(await h.runtime.enable(), false)
   release(); assert.equal(h.runtime.inspect().enabled, false); assert.equal(h.timers.size, 0)
 })
+
+for (const stage of ['push', 'pull']) for (const reason of stage === 'push' ? ['conversion_pending', 'changed_locally', 'older_server_state'] : ['conversion_pending', 'local_pending', 'older_server_state']) test(`${stage} known protective ${reason} permits bounded continuation without clearing the hold`, async () => {
+  const h = apiFixture(); h.cycleResult.pending.dirty = 1
+  const item = { id: ID, kind: 'held', reason }
+  if (stage === 'push') h.cycleResult.push.items = [item]; else h.cycleResult.pull = [{ applied: true, hasMore: false, reason: 'page_processed', items: [item] }]
+  const before = JSON.stringify(h.cycleResult), result = await h.api.scheduleRuntimePort.run(pin(), () => true)
+  assert.equal(result.blocked, false); assert.equal(result.failed, false); assert.equal(result.more, true); assert.equal(JSON.stringify(h.cycleResult), before)
+})
+for (const stage of ['push', 'pull']) for (const reason of ['conflict_pending', 'unknown_new_reason', 'invalid_local']) test(`${stage} held ${reason} is still blocked even when other work remains`, async () => {
+  const h = apiFixture(), item = { id: ID, kind: 'held', reason }; h.cycleResult.pending.dirty = 1
+  if (stage === 'push') h.cycleResult.push.items = [item]; else h.cycleResult.pull = [{ applied: true, hasMore: false, items: [item] }]
+  const result = await h.api.scheduleRuntimePort.run(pin(), () => true); assert.equal(result.blocked, true)
+})
+test('safe hold cannot hide persisted conflicts, failed conversion or an explicitly classified conflict', async () => {
+  const h = apiFixture(); h.cycleResult.push.items = [{ id: ID, kind: 'held', reason: 'conversion_pending' }]
+  h.cycleResult.pending.conflicts = 1; assert.equal((await h.api.scheduleRuntimePort.run(pin(), () => true)).blocked, true)
+  h.cycleResult.pending.conflicts = 0; h.cycleResult.conversions = [{ id: ID, kind: 'held', reason: 'unconfirmed' }]; assert.equal((await h.api.scheduleRuntimePort.run(pin(), () => true)).blocked, true)
+  h.cycleResult.conversions = []; h.cycleResult.pull = [{ items: [{ id: ID, kind: 'conflict', reason: 'local_pending' }] }]; assert.equal((await h.api.scheduleRuntimePort.run(pin(), () => true)).blocked, true)
+})
+test('stopped upstream with unknown held cause still fails closed rather than treating every hold as network retry', async () => {
+  const h = apiFixture(); h.cycleResult.stopped = true; h.cycleResult.push.items = [{ id: ID, kind: 'held', reason: 'unknown_new_reason' }]
+  const result = await h.api.scheduleRuntimePort.run(pin(), () => true); assert.equal(result.blocked, true); assert.equal(result.failed, true)
+})

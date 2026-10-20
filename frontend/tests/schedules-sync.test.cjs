@@ -216,3 +216,39 @@ test("source clock mismatch remains dirty/held instead of silently rebasing a lo
   assert.equal(r.push.items[0].reason,"revision_not_ahead");assert.equal((await h.db.schedules.get(ID)).dirty,1)
   assert.equal(r.needsAnotherRun,true)
 })
+
+// Real existing DB coordinators and formal adapter over mock storage/transports; not live HTTP/IndexedDB.
+function formalRuntimePort(h) {
+  h.mocks.dexie = { liveQuery() { throw Error('watch not used in explicit adapter integration') } }
+  const guard = h.load('db/scheduleHostContext.ts').assertHostContext
+  h.mocks['@/db/scheduleHostRepo'] = { localScheduleHostRepo: { async validate(pin) { await h.db.transaction('r', h.db.meta, () => guard(pin)) } } }
+  h.mocks['./scheduleConversionTransport'] = { createScheduleConversionTransport: () => h.transports.conversion }
+  h.mocks['./schedulePushTransport'] = { createSchedulePushTransport: () => h.transports.push }
+  h.mocks['./schedulePullTransport'] = { createSchedulePullTransport: () => h.transports.pull }
+  return h.load('api/scheduleSyncRuntime.ts').scheduleRuntimePort
+}
+const formalPin = () => ({ ownerUserId: 'account-a', generation: 'epoch', authSubject: 'account-a', authGeneration: 0 })
+test('formal adapter continues after a real in-flight local edit without overwriting it or inventing a conflict', async () => {
+  let edited = false
+  const h = await harness({ async duringPush(h) { if (edited) return; edited = true; const row = await h.db.schedules.get(ID); await h.db.schedules.put({ ...row, title: '请求期间更新', clientUpdatedAt: LATER, updatedAt: LATER, dirty: 1 }) } })
+  await h.db.schedules.put(schedule()); const port = formalRuntimePort(h)
+  const first = await port.run(formalPin(), () => true)
+  assert.equal(first.blocked, false); assert.equal(first.failed, false); assert.equal(first.more, true)
+  assert.equal((await h.db.schedules.get(ID)).title, '请求期间更新'); assert.equal((await h.db.schedules.get(ID)).dirty, 1)
+  assert.equal((await h.db.meta.get('scheduleConflicts'))?.value.length ?? 0, 0)
+  const second = await port.run(formalPin(), () => true)
+  assert.equal(second.blocked, false); assert.equal(second.failed, false); assert.equal(second.more, false)
+  assert.equal((await h.db.schedules.get(ID)).title, '请求期间更新'); assert.equal((await h.db.schedules.get(ID)).dirty, 0)
+})
+test('formal adapter leaves conversion eleven protected after first ten, then confirms it in the next bounded cycle', async () => {
+  const h = await harness()
+  for (let i = 1; i <= 11; i++) await h.seed(ID.slice(0, -12) + String(i).padStart(12, '0'))
+  const diaries = JSON.stringify(await h.db.entries.toArray()), port = formalRuntimePort(h)
+  const first = await port.run(formalPin(), () => true)
+  assert.equal(first.blocked, false); assert.equal(first.failed, false); assert.equal(first.more, true); assert.equal((await queue(h)).length, 1)
+  assert.equal(h.calls.filter(row => row.stage === 'convert').length, 10)
+  const second = await port.run(formalPin(), () => true)
+  assert.equal(second.blocked, false); assert.equal(second.failed, false); assert.equal(second.more, false); assert.equal((await queue(h)).length, 0)
+  assert.equal(h.calls.filter(row => row.stage === 'convert').length, 11); assert.equal(h.receipts.size, 11)
+  assert.equal(JSON.stringify(await h.db.entries.toArray()), diaries)
+})

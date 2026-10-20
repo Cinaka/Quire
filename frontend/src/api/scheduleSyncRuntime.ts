@@ -12,6 +12,10 @@ import { createScheduleConversionTransport } from "./scheduleConversionTransport
 import { createSchedulePushTransport } from "./schedulePushTransport"
 import { createSchedulePullTransport } from "./schedulePullTransport"
 
+// A known protective hold is not permission to merge/clear it; it only allows another bounded cycle.
+const safePushHolds = new Set(["conversion_pending", "changed_locally", "older_server_state"])
+const safePullHolds = new Set(["conversion_pending", "local_pending", "older_server_state"])
+const retryableErrors = new Set(["network", "retry", "storage", "aborted", "ack_storage"])
 export const scheduleRuntimePort: ScheduleRuntimePort = {
   capture: () => localScheduleHostRepo.capture(),
   verify: context => localScheduleHostRepo.validate(context),
@@ -60,7 +64,11 @@ export const scheduleRuntimePort: ScheduleRuntimePort = {
       push: { async push(body, candidate) { await guard(); const r = await push.push(body, candidate); await guard(); return r } },
       pull: { async pull(params, candidate) { await guard(); const r = await pull.pull(params, candidate); await guard(); return r } },
     }, lease).runOnce()
-    const blocked = (result.pending?.conflicts ?? 0) > 0 || result.conversions.some(row => row.kind !== "confirmed") || result.push?.items.some(row => row.kind === "conflict" || (!result.stopped && row.kind === "held") || (row.kind === "error" && !["network", "retry", "storage", "aborted", "ack_storage"].includes(row.reason))) === true || result.pull.some(page => page.items.some(row => row.kind === "held" || row.kind === "conflict"))
+    const blocked = (result.pending?.conflicts ?? 0) > 0 || result.conversions.some(row => row.kind !== "confirmed") || result.push?.items.some(row =>
+      row.kind === "conflict" ||
+      (row.kind === "held" && !safePushHolds.has(row.reason) && !(result.stopped && retryableErrors.has(row.reason))) ||
+      (row.kind === "error" && !retryableErrors.has(row.reason))) === true ||
+      result.pull.some(page => page.items.some(row => row.kind === "conflict" || (row.kind === "held" && !safePullHolds.has(row.reason))))
     const pending = result.pending
     return { unsupported, blocked: !unsupported && blocked, failed: result.stopped || result.push?.items.some(row => row.kind === "error") === true, pending,
       more: pending !== null && (pending.dirty > 0 || pending.conversions > 0 || pending.pullContinuation) || result.push?.more === true || result.pull.at(-1)?.hasMore === true }
