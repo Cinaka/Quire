@@ -9,6 +9,8 @@ import {
 } from "@/api/mappers"
 import type { PushItemResult, WireMediaMeta, WireTag } from "@/api/wire"
 import { db } from "@/db/schema"
+import { holdConversionServerEntry, protectedConversions } from "@/db/scheduleStateRepo"
+import { assertSyncContext, captureSyncContext, type SyncContext } from "./syncContext"
 import { utcNow } from "@/shared/time"
 import type { Entry, MediaItem, Tag } from "@/shared/types"
 
@@ -18,6 +20,7 @@ const CONFLICT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const FULL_PULL_CURSOR = "1970-01-01T00:00:00.000Z"
 const DUPLICATE_TAG_PREFIX = "duplicate_tag:"
 let running: Promise<void> | null = null
+let runningKey = ""
 
 interface ConflictRecord {
   entryId: string
@@ -154,19 +157,26 @@ async function attachServerConflict(server: Entry): Promise<void> {
   await db.meta.put({ key: "conflicts", value: list })
 }
 
-async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWork: boolean }> {
+// 共享标签未取舍前，依赖它的普通日记也不先上传；无关记录保持P2原流程。
+function heldEntry(entry: Entry, held: Awaited<ReturnType<typeof protectedConversions>>): boolean {
+  return held.entryIds.has(entry.id) || entry.tagIds.some(id => held.tagIds.has(id))
+}
+
+async function pushAll(context: SyncContext): Promise<{ serverTime: string; complete: boolean; hadWork: boolean }> {
   let serverTime = ""
   let hadWork = false
   for (;;) {
+    await assertSyncContext(context)
+    const protectedRows = await protectedConversions()
     const blocked = await blockedIds()
     const [allEntries, allTags, allMedia] = await Promise.all([
       db.entries.where("dirty").equals(1).toArray(),
       db.tags.where("dirty").equals(1).toArray(),
       db.media.where("dirty").equals(1).toArray(),
     ])
-    const entries = allEntries.filter((item) => !blocked.entry.has(item.id)).slice(0, BATCH)
-    const tags = allTags.filter((item) => !blocked.tag.has(item.id)).slice(0, BATCH)
-    const mediaMeta = allMedia.filter((item) => !blocked.media.has(item.id)).slice(0, BATCH)
+    const entries = allEntries.filter((item) => !blocked.entry.has(item.id) && !heldEntry(item, protectedRows)).slice(0, BATCH)
+    const tags = allTags.filter((item) => !blocked.tag.has(item.id) && !protectedRows.tagIds.has(item.id)).slice(0, BATCH)
+    const mediaMeta = allMedia.filter((item) => !blocked.media.has(item.id) && !protectedRows.entryIds.has(item.entryId) && !protectedRows.mediaIds.has(item.id)).slice(0, BATCH)
     if (!entries.length && !tags.length && !mediaMeta.length) {
       return { serverTime, complete: true, hadWork }
     }
@@ -176,35 +186,53 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
     for (const media of mediaMeta) {
       if (!media.entryId || media.blob.size === 0) continue
       try {
+        await assertSyncContext(context)
         await uploadMedia(media.id, media.blob, {
           thumb: media.thumbBlob,
           entryId: media.entryId,
           sortOrder: media.sortOrder,
           width: media.width,
           height: media.height,
-        })
+        }, context.ownerUserId)
       } catch (error) {
         uploadFailed.add(media.id)
-        await noteError("media", media.id, (error as Error).message)
+        await noteError("media", media.id, (error as Error).message, context)
       }
     }
 
+    await assertSyncContext(context)
+    // 图片上传跨越await边界；重新计算，避免期间新增转换保护漏入正文/标签批次。
+    const beforeSend = await protectedConversions()
+    await assertSyncContext(context)
+    const outboundEntries = entries.filter(item => !heldEntry(item, beforeSend))
+    const outboundTags = tags.filter(item => !beforeSend.tagIds.has(item.id))
+    const outboundMedia = mediaMeta.filter(item => !uploadFailed.has(item.id)
+      && !beforeSend.entryIds.has(item.entryId) && !beforeSend.mediaIds.has(item.id))
+    if (!outboundEntries.length && !outboundTags.length && !outboundMedia.length) {
+      if (uploadFailed.size) return { serverTime, complete: false, hadWork }
+      continue
+    }
     const result = await pushBatch({
-      entries: entries.map(toWireEntry),
-      tags: tags.map(toWireTag),
-      mediaMeta: mediaMeta.filter((item) => !uploadFailed.has(item.id)).map(toWireMediaMetaPush),
-    })
+      entries: outboundEntries.map(toWireEntry),
+      tags: outboundTags.map(toWireTag),
+      mediaMeta: outboundMedia.map(toWireMediaMetaPush),
+    }, context.ownerUserId)
     serverTime = result.serverTime
-    const sentEntries = new Map(entries.map((item) => [item.id, item]))
-    const sentTags = new Map(tags.map((item) => [item.id, item]))
-    const sentMedia = new Map(mediaMeta.map((item) => [item.id, item]))
+    const sentEntries = new Map(outboundEntries.map((item) => [item.id, item]))
+    const sentTags = new Map(outboundTags.map((item) => [item.id, item]))
+    const sentMedia = new Map(outboundMedia.map((item) => [item.id, item]))
     let reconciledDuplicate = false
     let superseded = false
 
-    await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
+    await db.transaction("rw", db.entries, db.tags, db.media, db.schedules, db.meta, async () => {
+      await assertSyncContext(context)
+      const protectedNow = await protectedConversions()
       const currentPurges = await pendingPurgeIds()
       for (const item of result.entries) {
+        const sent = sentEntries.get(item.id)
+        if (!sent || heldEntry(sent, protectedNow)) continue
         const local = await db.entries.get(item.id)
+        if (local && heldEntry(local, protectedNow)) continue
         if (!sameEntryRevision(local, sentEntries.get(item.id))) {
           superseded = true
           continue
@@ -225,6 +253,7 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
         }
       }
       for (const item of result.tags) {
+        if (!sentTags.has(item.id) || protectedNow.tagIds.has(item.id)) continue
         const local = await db.tags.get(item.id)
         if (!sameTagRevision(local, sentTags.get(item.id))) {
           superseded = true
@@ -233,14 +262,20 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
         if (item.status === "applied") {
           await db.tags.update(item.id, { dirty: 0 })
           await clearError("tag", item.id)
-        } else if (await reconcileDuplicateTag(item)) {
-          reconciledDuplicate = true
-          await clearError("tag", item.id)
-        } else if (item.status === "error") {
-          await noteError("tag", item.id, item.message)
+        } else {
+          const duplicate = await reconcileDuplicateTag(item)
+          if (duplicate === "deferred") continue // 等待资源取舍不是失败，不累计至永久暂停。
+          if (duplicate) {
+            reconciledDuplicate = true
+            await clearError("tag", item.id)
+          } else if (item.status === "error") {
+            await noteError("tag", item.id, item.message)
+          }
         }
       }
       for (const item of result.mediaMeta) {
+        const sent = sentMedia.get(item.id)
+        if (protectedNow.mediaIds.has(item.id) || (sent && protectedNow.entryIds.has(sent.entryId))) continue
         const local = await db.media.get(item.id)
         if (!sameMediaRevision(local, sentMedia.get(item.id))) {
           superseded = true
@@ -263,11 +298,14 @@ async function pushAll(): Promise<{ serverTime: string; complete: boolean; hadWo
   }
 }
 
-async function reconcileDuplicateTag(item: PushItemResult): Promise<boolean> {
+async function reconcileDuplicateTag(item: PushItemResult): Promise<boolean | "deferred"> {
   if (item.status !== "error" || !item.message?.startsWith(DUPLICATE_TAG_PREFIX)) return false
   const canonicalId = item.message.slice(DUPLICATE_TAG_PREFIX.length)
   if (!canonicalId || canonicalId === item.id) return false
+  const held = await protectedConversions()
+  if (held.tagIds.has(item.id) || held.tagIds.has(canonicalId)) return "deferred"
   const affected = await db.entries.where("tagIds").equals(item.id).toArray()
+  if (affected.some(entry => heldEntry(entry, held))) return "deferred"
   for (const entry of affected) {
     const now = utcNow()
     await db.entries.update(entry.id, {
@@ -279,23 +317,30 @@ async function reconcileDuplicateTag(item: PushItemResult): Promise<boolean> {
   return true
 }
 
-async function pullAll(since: string): Promise<void> {
+async function pullAll(since: string, context: SyncContext): Promise<void> {
   let cursor = since
   let afterId = ""
   let syncUntil = ""
   const purges = await pendingPurgeIds()
   for (;;) {
+    await assertSyncContext(context)
     const result = await pullChanges({
       since: cursor,
       afterId: afterId || undefined,
       until: syncUntil || undefined,
       limit: 200,
-    })
+    }, context.ownerUserId)
     if (!syncUntil) syncUntil = result.syncUntil
-    await db.transaction("rw", db.entries, db.tags, db.media, db.meta, async () => {
+    await db.transaction("rw", db.entries, db.tags, db.media, db.schedules, db.meta, async () => {
+      await assertSyncContext(context)
+      const protectedNow = await protectedConversions()
       for (const wire of result.entries) {
-        if (purges.has(wire.id)) continue
         const incoming: Entry = fromWireEntry(wire)
+        if (protectedNow.entryIds.has(wire.id)) {
+          await holdConversionServerEntry(incoming)
+          continue
+        }
+        if (purges.has(wire.id)) continue
         const local = await db.entries.get(incoming.id)
         if (!local) {
           await db.entries.put({ ...incoming, dirty: 0 })
@@ -320,43 +365,67 @@ async function pullAll(since: string): Promise<void> {
           await db.entries.put({ ...incoming, dirty: 0 })
         }
       }
-      await mergeTags(result.tags)
-      await mergeMediaMeta(result.mediaMeta)
+      // 本页的受保护云端日记可能刚增加新的候选标签引用。
+      const afterCandidates = await protectedConversions()
+      await mergeTags(result.tags.filter(row => !afterCandidates.tagIds.has(row.id)))
+      await mergeMediaMeta(result.mediaMeta.filter(row => (!row.entry_id || !protectedNow.entryIds.has(row.entry_id)) && !protectedNow.mediaIds.has(row.id)))
     })
     cursor = result.serverTime
     afterId = result.cursorId
     if (!result.hasMore) break
   }
-  await db.meta.put({ key: "lastSyncAt", value: syncUntil || cursor })
-  await clearPendingPurges(purges)
+  await db.transaction("rw", db.entries, db.schedules, db.meta, async () => {
+    await assertSyncContext(context)
+    const protectedNow = await protectedConversions()
+    await db.meta.put({ key: "lastSyncAt", value: syncUntil || cursor })
+    await clearPendingPurges(new Set([...purges].filter(id => !protectedNow.entryIds.has(id))))
+  })
 }
 
-async function syncOnce(): Promise<void> {
-  if (!(await meta("ownerUserId"))) return
-  const pushed = await pushAll()
+async function syncOnce(context: SyncContext): Promise<void> {
+  await assertSyncContext(context)
+  const pushed = await pushAll(context)
   if (!pushed.complete) return
   const since = await meta("lastSyncAt")
   if (!since) {
     if (pushed.hadWork) {
-      await db.meta.put({ key: "lastSyncAt", value: FULL_PULL_CURSOR })
+      await db.transaction("rw", db.meta, async () => {
+        await assertSyncContext(context)
+        await db.meta.put({ key: "lastSyncAt", value: FULL_PULL_CURSOR })
+      })
       return
     }
-    await pullAll(FULL_PULL_CURSOR)
+    await pullAll(FULL_PULL_CURSOR, context)
     return
   }
-  await pullAll(since)
+  await pullAll(since, context)
 }
 
-export function runSync(): Promise<void> {
-  if (running) return running
-  const task = syncOnce().finally(() => {
-    if (running === task) running = null
+export async function runSync(): Promise<void> {
+  if (!(await meta("ownerUserId"))) return
+  const context = await captureSyncContext()
+  const key = `${context.ownerUserId}:${context.generation}:${context.tokenGeneration}`
+  if (running && runningKey === key) return running
+  if (running) {
+    await running.catch(() => undefined)
+    return runSync()
+  }
+  runningKey = key
+  const task = syncOnce(context).finally(() => {
+    if (running === task) { running = null; runningKey = "" }
   })
   running = task
   return task
 }
 
-async function noteError(kind: string, id: string, message?: string): Promise<void> {
+async function noteError(kind: string, id: string, message?: string, context?: SyncContext): Promise<void> {
+  if (context) {
+    await db.transaction("rw", db.meta, async () => {
+      await assertSyncContext(context)
+      await noteError(kind, id, message)
+    })
+    return
+  }
   const list = await errorRecords()
   const hit = list.find((item) => item.kind === kind && item.id === id)
   const count = (hit?.count ?? 0) + 1

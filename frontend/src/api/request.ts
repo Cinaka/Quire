@@ -1,11 +1,12 @@
 import axios, {
   AxiosError,
   type AxiosInstance,
+  type AxiosRequestConfig,
   type AxiosResponse,
   type InternalAxiosRequestConfig,
 } from "axios"
 
-import { clearAccessToken, getAccessToken, setAccessToken } from "./tokenStore"
+import { accessTokenSubject, clearAccessToken, getAccessToken, setAccessToken, tokenGeneration } from "./tokenStore"
 
 /** 后端统一响应体。code === 0 才是成功。 */
 export interface Envelope<T> {
@@ -24,16 +25,19 @@ export interface Envelope<T> {
 export class ApiError extends Error {
   readonly code: number
   readonly status?: number
+  /** Only explicitly pinned P4 HTTP 409 requests retain candidate data in memory. */
+  readonly data?: unknown
 
-  constructor(code: number, message: string, status?: number) {
+  constructor(code: number, message: string, status?: number, data?: unknown) {
     super(message)
     this.name = "ApiError"
     this.code = code
     this.status = status
+    this.data = data
   }
 }
 
-type RetriableConfig = InternalAxiosRequestConfig & { _retried?: boolean }
+type RetriableConfig = InternalAxiosRequestConfig & { _retried?: boolean; _syncOwner?: string; _tokenGeneration?: number; _retainScheduleConflict?: boolean }
 
 export const http: AxiosInstance = axios.create({
   // 开发走 Vite proxy、生产走 Nginx 反代，两者都是同源，所以这里只有路径。
@@ -44,6 +48,11 @@ export const http: AxiosInstance = axios.create({
 })
 
 http.interceptors.request.use((config) => {
+  const guarded = config as RetriableConfig
+  if (guarded._syncOwner && (accessTokenSubject() !== guarded._syncOwner ||
+      (guarded._tokenGeneration !== undefined && guarded._tokenGeneration !== tokenGeneration()))) {
+    throw new ApiError(-1, "同步账号已变化，请重新发起同步")
+  }
   const token = getAccessToken()
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
@@ -54,10 +63,18 @@ http.interceptors.request.use((config) => {
 // 若每个都去刷新，而 refresh 又是轮换的（每次下发新的、旧的立即作废），
 // 后到的刷新必然失败，用户会被莫名踢下线。所以全局只允许有一个刷新在飞。
 let refreshing: Promise<string> | null = null
+let refreshingGeneration = -1
 
 async function refreshAccessToken(): Promise<string> {
-  if (refreshing) return refreshing
+  if (refreshing) {
+    if (refreshingGeneration === tokenGeneration()) return refreshing
+    await refreshing.catch(() => undefined)
+    return refreshAccessToken()
+  }
 
+  const subject = accessTokenSubject()
+  const generation = tokenGeneration()
+  refreshingGeneration = generation
   refreshing = (async () => {
     try {
       // 用裸 axios，绕开本实例的拦截器，避免刷新自身 401 时递归。
@@ -68,11 +85,17 @@ async function refreshAccessToken(): Promise<string> {
       )
       const token = res.data?.data?.access_token ?? ""
       if (!token) throw new ApiError(-1, "refresh 未返回 access_token", 401)
+      if (tokenGeneration() !== generation || accessTokenSubject() !== subject ||
+        (subject && accessTokenSubject(token) !== subject)) {
+        throw new ApiError(-1, "旧刷新响应已失效", 401)
+      }
       setAccessToken(token)
       return token
     } catch (e) {
-      clearAccessToken()
-      onUnauthorized?.()
+      if (tokenGeneration() === generation && accessTokenSubject() === subject) {
+        clearAccessToken()
+        onUnauthorized?.()
+      }
       throw e
     } finally {
       refreshing = null
@@ -94,7 +117,8 @@ http.interceptors.response.use(
     const body = res.data
     // 有 code 字段就按统一响应体校验；文件流等无 envelope 的响应原样放过。
     if (body && typeof body.code === "number" && body.code !== 0) {
-      throw new ApiError(body.code, body.message || "请求失败", res.status)
+      throw new ApiError(body.code, body.message || "请求失败", res.status,
+        (res.config as RetriableConfig)?._retainScheduleConflict && res.status === 409 && body.code === 409 ? body.data : undefined)
     }
     return res
   },
@@ -107,7 +131,15 @@ http.interceptors.response.use(
     if (status === 401 && config && !config._retried) {
       config._retried = true
       try {
+        if (config._syncOwner && (accessTokenSubject() !== config._syncOwner ||
+            config._tokenGeneration !== tokenGeneration())) {
+          throw new ApiError(-1, "旧同步会话已失效，禁止刷新或重放", 401)
+        }
         const token = await refreshAccessToken()
+        if (config._syncOwner && (accessTokenSubject(token) !== config._syncOwner ||
+            config._tokenGeneration !== tokenGeneration())) {
+          throw new ApiError(-1, "同步账号已变化，禁止重放旧请求", 401)
+        }
         config.headers.Authorization = `Bearer ${token}`
         return http.request(config)
       } catch {
@@ -117,20 +149,21 @@ http.interceptors.response.use(
 
     const body = error.response?.data
     if (body && typeof body.code === "number") {
-      throw new ApiError(body.code, body.message || error.message, status)
+      throw new ApiError(body.code, body.message || error.message, status,
+        config?._retainScheduleConflict && status === 409 && body.code === 409 ? body.data : undefined)
     }
     throw new ApiError(-1, error.message || "网络异常", status)
   },
 )
 
 /** 业务层只用这四个，永远拿到已解包的 data。 */
-export async function get<T>(url: string, params?: unknown): Promise<T> {
-  const res = await http.get<Envelope<T>>(url, { params })
+export async function get<T>(url: string, params?: unknown, syncOwner?: string): Promise<T> {
+  const res = await http.get<Envelope<T>>(url, { params, ...syncRequestOptions(syncOwner) })
   return res.data.data
 }
 
-export async function post<T>(url: string, body?: unknown): Promise<T> {
-  const res = await http.post<Envelope<T>>(url, body)
+export async function post<T>(url: string, body?: unknown, syncOwner?: string): Promise<T> {
+  const res = await http.post<Envelope<T>>(url, body, syncRequestOptions(syncOwner))
   return res.data.data
 }
 
@@ -143,3 +176,177 @@ export async function del<T>(url: string, body?: unknown): Promise<T> {
   const res = await http.delete<Envelope<T>>(url, { data: body })
   return res.data.data
 }
+
+function syncRequestOptions(syncOwner?: string): AxiosRequestConfig & { _syncOwner?: string; _tokenGeneration?: number } {
+  return syncOwner ? { _syncOwner: syncOwner, _tokenGeneration: tokenGeneration() } : {}
+}
+
+
+/** Internal P4-only POST: pin the supplied generation, never recapture it at send time. */
+export async function postPinnedSchedule<T>(
+  url: string, body: unknown, lease: { ownerUserId: string; tokenGeneration: number },
+): Promise<T> {
+  const id = "[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+  if (!new RegExp(`^/schedules/(?:sync/push|${id}/convert)$`).test(url) ||
+      !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0) {
+    throw new ApiError(-1, "日程请求路径或登录租约无效")
+  }
+  const options: AxiosRequestConfig & { _syncOwner: string; _tokenGeneration: number; _retainScheduleConflict: boolean } = {
+    _syncOwner: lease.ownerUserId, _tokenGeneration: lease.tokenGeneration, _retainScheduleConflict: true,
+  }
+  const res = await http.post<Envelope<T>>(url, body, options)
+  if (accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
+    throw new ApiError(-1, "旧日程响应已失效")
+  }
+  return res.data.data
+}
+
+/** P4 changes GET pins the caller's original token generation, just like its POST. */
+export async function getPinnedScheduleChanges<T>(
+  params: unknown, lease: { ownerUserId: string; tokenGeneration: number },
+): Promise<T> {
+  if (!lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0) {
+    throw new ApiError(-1, "日程拉取登录租约无效")
+  }
+  const options: AxiosRequestConfig & { _syncOwner: string; _tokenGeneration: number } = {
+    params, _syncOwner: lease.ownerUserId, _tokenGeneration: lease.tokenGeneration,
+  }
+  const res = await http.get<Envelope<T>>("/schedules/sync/changes", options)
+  if (accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
+    throw new ApiError(-1, "旧日程拉取响应已失效")
+  }
+  return res.data.data
+}
+
+/** Conflict review GET accepts a stable source ID only and never recaptures a new login lease. */
+export async function getPinnedScheduleDetail<T>(
+  id: string, lease: { ownerUserId: string; tokenGeneration: number },
+): Promise<T> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
+      !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0) {
+    throw new ApiError(-1, "日程核对ID或登录租约无效")
+  }
+  const options: AxiosRequestConfig & { _syncOwner: string; _tokenGeneration: number } = {
+    _syncOwner: lease.ownerUserId, _tokenGeneration: lease.tokenGeneration,
+  }
+  const res = await http.get<Envelope<T>>(`/schedules/${id}`, options)
+  if (accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
+    throw new ApiError(-1, "旧日程核对响应已失效")
+  }
+  return res.data.data
+}
+
+/** Terminal review GET is read-only; it must never call convert to obtain conflict evidence. */
+export async function getPinnedScheduleReview<T>(
+  id: string, lease: { ownerUserId: string; tokenGeneration: number },
+): Promise<T> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
+      !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0) {
+    throw new ApiError(-1, "终态核对ID或登录租约无效")
+  }
+  const options: AxiosRequestConfig & { _syncOwner: string; _tokenGeneration: number } = {
+    _syncOwner: lease.ownerUserId, _tokenGeneration: lease.tokenGeneration,
+  }
+  const res = await http.get<Envelope<T>>(`/schedules/${id}/review`, options)
+  if (accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
+    throw new ApiError(-1, "旧终态核对响应已失效")
+  }
+  return res.data.data
+}
+
+/** Current resource hashes are read-only evidence, never conversion or ownership confirmation. */
+export async function getPinnedScheduleResourceReview<T>(
+  id: string, lease: { ownerUserId: string; tokenGeneration: number },
+): Promise<T> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
+      !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0) {
+    throw new ApiError(-1, "资源核对ID或登录租约无效")
+  }
+  const options: AxiosRequestConfig & { _syncOwner: string; _tokenGeneration: number } = {
+    _syncOwner: lease.ownerUserId, _tokenGeneration: lease.tokenGeneration,
+  }
+  const res = await http.get<Envelope<T>>(`/schedules/${id}/review/resources`, options)
+  if (accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
+    throw new ApiError(-1, "旧资源核对响应已失效")
+  }
+  return res.data.data
+}
+
+/** Bounded P4 image JSON only, never a caller-provided URL or an unpinned generic GET. */
+export async function getPinnedScheduleResourceImage(
+  id: string, mediaId: string, variant: "original" | "thumbnail",
+  proof: { state: string; size: number | null; mime: string | null; sha256: string | null },
+  lease: { ownerUserId: string; tokenGeneration: number }, signal: AbortSignal,
+): Promise<unknown> {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+  if (!uuid.test(id) || !uuid.test(mediaId) || !["original", "thumbnail"].includes(variant) ||
+      proof.state !== "verified" || !Number.isSafeInteger(proof.size) || !proof.size || proof.size < 1 || proof.size > 10 * 1024 * 1024 ||
+      !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(proof.mime ?? "") ||
+      !/^[0-9a-f]{64}$/.test(proof.sha256 ?? "") || !lease.ownerUserId ||
+      !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0 || signal.aborted) {
+    throw new ApiError(-1, "图片下载证明、身份或会话无效")
+  }
+  const controller = new AbortController(), abort = () => controller.abort()
+  signal.addEventListener("abort", abort, { once: true })
+  // Bound transfer before JSON parsing; browser progress limits are supplemented by a final text limit.
+  const limit = Math.ceil(proof.size / 3) * 4 + 4096
+  try {
+    const options: AxiosRequestConfig & { _syncOwner: string; _tokenGeneration: number } = {
+      params: { expected_size: proof.size, expected_mime: proof.mime, expected_sha256: proof.sha256 },
+      _syncOwner: lease.ownerUserId, _tokenGeneration: lease.tokenGeneration, signal: controller.signal,
+      responseType: "text", transformResponse: [(value: unknown) => value], maxContentLength: limit,
+      onDownloadProgress: (progress: { loaded: number }) => { if (progress.loaded > limit) controller.abort() },
+    }
+    const res = await http.get<string>(`/schedules/${id}/review/resources/${mediaId}/${variant}`, options)
+    if (signal.aborted || controller.signal.aborted || accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
+      throw new ApiError(-1, "旧图片下载响应已失效")
+    }
+    if (res.status !== 200 || typeof res.data !== "string" || res.data.length > limit) throw new ApiError(-1, "图片响应超限或格式无效")
+    const body: unknown = JSON.parse(res.data)
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new ApiError(-1, "图片响应信封无效")
+    const r = body as Record<string, unknown>
+    if (Object.keys(r).length !== 3 || !["code", "message", "data"].every(key => key in r) || r.code !== 0 || typeof r.message !== "string") {
+      throw new ApiError(-1, "图片响应未确认")
+    }
+    return r.data
+  } finally { signal.removeEventListener("abort", abort) }
+}
+
+/** Explicit create-only P4 tag POST; bounded decoding, fixed account, no generic retry loop. */
+async function pinnedScheduleIndependentTags(
+  id: string, body: unknown, lease: { ownerUserId: string; tokenGeneration: number }, signal: AbortSignal,
+  reviewOnly: boolean,
+): Promise<unknown> {
+  const payload = JSON.stringify(body)
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
+      !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0 || signal.aborted ||
+      typeof payload !== "string" || new Blob([payload]).size > 2 * 1024 * 1024) throw new ApiError(-1, "标签发布身份、租约或请求无效")
+  const controller = new AbortController(), abort = () => controller.abort(), limit = 128 * 1024
+  signal.addEventListener("abort", abort, { once: true })
+  try {
+    const options: AxiosRequestConfig & { _syncOwner: string; _tokenGeneration: number } = {
+      _syncOwner: lease.ownerUserId, _tokenGeneration: lease.tokenGeneration, signal: controller.signal,
+      responseType: "text", transformResponse: [(value: unknown) => value], maxContentLength: limit,
+      onDownloadProgress: (progress: { loaded: number }) => { if (progress.loaded > limit) controller.abort() },
+    }
+    const res = await http.post<string>(`/schedules/${id}/independent-tags${reviewOnly ? "/review" : ""}`, JSON.parse(payload), options)
+    if (signal.aborted || controller.signal.aborted || accessTokenSubject() !== lease.ownerUserId || tokenGeneration() !== lease.tokenGeneration) {
+      throw new ApiError(-1, "旧标签发布响应已失效，请保留原准备核对")
+    }
+    if (res.status !== 200 || typeof res.data !== "string" || res.data.length > limit || new Blob([res.data]).size > limit) throw new ApiError(-1, "标签发布响应超限或无效")
+    const packet: unknown = JSON.parse(res.data)
+    if (!packet || typeof packet !== "object" || Array.isArray(packet)) throw new ApiError(-1, "标签发布信封无效")
+    const row = packet as Record<string, unknown>
+    if (Object.keys(row).length !== 3 || !["code", "message", "data"].every(key => key in row) || row.code !== 0 || typeof row.message !== "string") {
+      throw new ApiError(-1, "标签发布未确认")
+    }
+    return row.data
+  } finally { signal.removeEventListener("abort", abort) }
+}
+
+export const postPinnedScheduleIndependentTags = (
+  id: string, body: unknown, lease: { ownerUserId: string; tokenGeneration: number }, signal: AbortSignal,
+) => pinnedScheduleIndependentTags(id, body, lease, signal, false)
+export const reviewPinnedScheduleIndependentTags = (
+  id: string, body: unknown, lease: { ownerUserId: string; tokenGeneration: number }, signal: AbortSignal,
+) => pinnedScheduleIndependentTags(id, body, lease, signal, true)

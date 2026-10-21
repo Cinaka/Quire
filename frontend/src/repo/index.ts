@@ -1,7 +1,10 @@
 import { localBackupRepo } from "@/db/backupRepo"
 import { localFirstMediaRepo } from "@/db/cloudMediaRepo"
 import { localDraftRepo } from "@/db/draftRepo"
+import { readEntryNewDestination } from "@/db/entryNewDestinationRepo"
 import { localEntryRepo, type IEntryRepo } from "@/db/entryRepo"
+import { localScheduleHostRepo } from "@/db/scheduleHostRepo"
+import { createLocalScheduleReminderPort } from "@/db/scheduleReminderRepo"
 import { localStatsRepo } from "@/db/statsRepo"
 import { localSyncRepo } from "@/db/syncRepo"
 import { localTagRepo, type ITagRepo } from "@/db/tagRepo"
@@ -21,3 +24,13 @@ export const backupRepo = localBackupRepo
 export const statsRepo = localStatsRepo
 export const syncRepo = localSyncRepo
 export const draftRepo = localDraftRepo
+// 仅公开受账号/恢复代际约束的本机宿主，不公开裸预简写库或云端协调器。
+export const scheduleHostRepo = localScheduleHostRepo
+
+// 惰性只读端口：每次挂载独立固定上下文，不启动同步或认领。
+export const createScheduleReminderPort = createLocalScheduleReminderPort
+
+export const entryNewDestination = { read: readEntryNewDestination }
+
+// 显式核对入口：构造惰性会话，不启动自动同步。
+export { listScheduleConflictSources, createScheduleConflictSession } from "@/db/scheduleConflictCenterRepo"

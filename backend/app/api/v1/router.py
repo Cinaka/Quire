@@ -1,6 +1,22 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, checkins, entries, health, media, sessions, sync, tags
+from app.api.v1 import (
+    auth,
+    checkins,
+    entries,
+    health,
+    media,
+    schedule_conversion,
+    schedule_resource_download,
+    schedule_resource_review,
+    schedule_review,
+    schedule_sync,
+    schedule_tag_copies,
+    schedules,
+    sessions,
+    sync,
+    tags,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -11,3 +27,10 @@ api_router.include_router(tags.router)
 api_router.include_router(media.router)
 api_router.include_router(sync.router)
 api_router.include_router(checkins.router)
+api_router.include_router(schedule_conversion.router)
+api_router.include_router(schedule_review.router)
+api_router.include_router(schedule_resource_download.router)
+api_router.include_router(schedule_resource_review.router)
+api_router.include_router(schedule_tag_copies.router)
+api_router.include_router(schedule_sync.router)
+api_router.include_router(schedules.router)

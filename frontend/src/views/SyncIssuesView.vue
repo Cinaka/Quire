@@ -98,7 +98,7 @@ const busy = ref(false)
 const hasAllServer = computed(() => conflicts.value.every((item) => Boolean(item.server)))
 
 function kindLabel(kind: PendingSyncItem["kind"]): string {
-  return { entry: "日记", tag: "标签", media: "图片" }[kind]
+  return { entry: "日记", tag: "标签", media: "图片", schedule: "预简" }[kind]
 }
 
 function stateLabel(entry: Entry): string {

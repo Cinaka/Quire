@@ -4,13 +4,17 @@
       <div class="date-block">
         <div class="day-number">{{ dayNum }}</div>
         <div class="month-weekday">{{ monthLabel }} · {{ almanac?.weekday }}</div>
-        <HomeDateNavigator v-model="selectedDate" :max="today" @blocked="showBlockedNotice" />
+        <HomeDateNavigator v-model="selectedDate" @blocked="showBlockedNotice" />
       </div>
-      <button type="button" class="plain" @click="router.push('/settings')">设置</button>
+      <nav class="head-actions" aria-label="首页导航">
+        <button type="button" class="plain accent" @click="openSchedules">预简 / 待刻</button>
+        <button type="button" class="plain" @click="router.push('/settings')">设置</button>
+      </nav>
     </header>
 
     <p v-if="notice" class="notice" role="status">{{ notice }}</p>
     <AlmanacCard v-if="almanac" :key="selectedDate" :almanac="almanac" />
+    <ScheduleReminderPanel :port="scheduleReminderPort" context-key="home-local-reminder" @open="openSchedules" />
 
     <section class="mt-6">
       <h2 v-if="dateEntries.length" class="section-title">{{ selectedDate === today ? "今日已记" : "当日已记" }} {{ dateEntries.length }} 篇</h2>
@@ -61,7 +65,7 @@
           </span>
         </li>
       </ul>
-      <p v-else class="empty">简册尚空，今日宜落笔</p>
+      <p v-else class="empty">{{ selectedDate > today ? "此日尚未来临，可留一简待刻" : "简册尚空，今日宜落笔" }}</p>
     </section>
 
     <footer class="footer">{{ Number(selectedDate.slice(5, 7)) }} 月已记 {{ monthDays }} 天</footer>
@@ -77,14 +81,17 @@ import AlmanacCard from "@/components/AlmanacCard.vue"
 import BambooSlipEmpty from "@/components/BambooSlipEmpty.vue"
 import CheckinCard from "@/components/CheckinCard.vue"
 import HomeDateNavigator from "@/components/HomeDateNavigator.vue"
+import ScheduleReminderPanel from "@/components/schedules/ScheduleReminderPanel.vue"
 import { useCheckins } from "@/composables/useCheckins"
-import { entryRepo, mediaRepo } from "@/repo"
+import { entryRepo, mediaRepo, createScheduleReminderPort } from "@/repo"
 import { getAlmanac, type AlmanacDay } from "@/shared/almanac"
 import { entryExcerpt } from "@/shared/entryMeta"
 import { todayLocal } from "@/shared/time"
 import type { EntryListItem } from "@/shared/types"
 
 const router = useRouter()
+// 一个首页实例一个只读端口；浏览历史日不重建上下文，也不改变提醒的本机自然日。
+const scheduleReminderPort = createScheduleReminderPort()
 const today = todayLocal()
 const selectedDate = ref(today)
 const almanac = ref<AlmanacDay | null>(null)
@@ -113,7 +120,7 @@ const {
 
 const dayNum = computed(() => Number(selectedDate.value.slice(8, 10)))
 const monthLabel = computed(() => `${Number(selectedDate.value.slice(5, 7))} 月`)
-const writeLabel = computed(() => selectedDate.value !== today ? "补记一简" : dateEntries.value.length ? "再刻一简" : "刻一简")
+const writeLabel = computed(() => selectedDate.value > today ? "留一简" : selectedDate.value !== today ? "补记一简" : dateEntries.value.length ? "再刻一简" : "刻一简")
 
 function hasText(entry: EntryListItem): boolean { return entry.contentText.trim().length > 0 }
 function preview(entry: EntryListItem): string { const value = entryExcerpt(entry.contentText, imageCountByEntry.value[entry.id] ?? 0); return value.length > 40 ? `${value.slice(0, 40)}…` : value }
@@ -137,7 +144,8 @@ async function load(): Promise<void> {
 
 function loadCheckins(): Promise<void> { return loadCurrentCheckins() }
 function refreshActiveCheckins(): void { revalidateActiveCheckins(true) }
-function showBlockedNotice(): void { notice.value = "预简（待刻）尚未开放，暂只能刻已至之日" }
+function showBlockedNotice(): void { notice.value = "日期未能选取，请重新核对；未来文字可留为预简 / 待刻。" }
+function openSchedules(): void { void router.push("/schedules") }
 function write(): void { void router.push({ path: "/entry/new", query: { date: selectedDate.value } }) }
 function open(id: string): void { void router.push(`/entry/${id}`) }
 watch(selectedDate, () => { notice.value = ""; void load() })
@@ -147,6 +155,7 @@ onMounted(() => { void load(); if (loggedIn.value) void loadCheckins() })
 <style scoped>
 .home { padding-bottom: 108px; }
 .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.head-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
 .date-block { display: grid; gap: 4px; }
 .day-number { font-family: var(--font-cn-serif); font-size: var(--text-display); line-height: var(--leading-display); color: var(--color-ink); }
 .month-weekday { margin-bottom: 6px; font-size: var(--text-body); line-height: var(--leading-body); color: var(--color-ink-soft); }

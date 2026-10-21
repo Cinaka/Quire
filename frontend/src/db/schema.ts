@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie"
 
-import type { Entry, MediaItem, Tag } from "@/shared/types"
+import type { Entry, MediaItem, Schedule, Tag } from "@/shared/types"
 
 export interface MetaRow {
   key: string
@@ -8,13 +8,14 @@ export interface MetaRow {
 }
 
 export class QuireDb extends Dexie {
+  schedules!: EntityTable<Schedule, "id">
   entries!: EntityTable<Entry, "id">
   tags!: EntityTable<Tag, "id">
   media!: EntityTable<MediaItem, "id">
   meta!: EntityTable<MetaRow, "key">
 
-  constructor() {
-    super("quire")
+  constructor(name = "quire") {
+    super(name)
 
     this.version(1).stores({
       entries:
@@ -43,9 +44,31 @@ export class QuireDb extends Dexie {
           if (typeof e.serverUpdatedAt !== "string") e.serverUpdatedAt = ""
         })
       })
+
+    // P4：只添加新表和来源索引，既有 v1/v2 定义与数据保持原样。
+    this.version(3).stores({
+      entries:
+        "id, entryDate, updatedAt, isDeleted, dirty, *tagIds, fromScheduleId, [isDeleted+entryDate], [isDeleted+updatedAt]",
+      tags: "id, name, dirty",
+      media: "id, entryId, createdAt, dirty, remoteUrl",
+      meta: "key",
+      schedules: "id, remindDate, status, updatedAt, dirty, isDeleted, [isDeleted+status+remindDate]",
+    })
   }
 }
 
 
 
 export const db = new QuireDb()
+
+/** Keep the current IndexedDB transaction alive while verifying immutable Blob snapshots. */
+export function waitForScheduleResourceBytes<T>(promise: Promise<T>): Promise<T> {
+  return Dexie.waitFor(promise, 10000)
+}
+
+/** Capture within the write transaction; cancellation can then abort it outside its zone. */
+export function scheduleResourceTransactionAborter(): () => void {
+  const transaction = Dexie.currentTransaction
+  if (!transaction) throw new Error("资源补齐不在事务内")
+  return () => transaction.abort()
+}

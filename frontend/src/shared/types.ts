@@ -103,3 +103,68 @@ export interface LocalStats {
   media: number
   mediaBytes: number
 }
+
+/** P4 预简：到期/逾期为展示派生状态，不写回 status。 */
+export type ScheduleStatus = "pending" | "converted"
+export type SchedulePhase = "future" | "due" | "overdue" | "converted" | "deleted"
+
+export interface Schedule {
+  id: string
+  remindDate: LocalDate
+  title: string
+  content: EntryContent | null
+  contentText: string
+  status: ScheduleStatus
+  convertedEntryId: string | null
+  convertedAt: Iso | null
+  createdAt: Iso
+  updatedAt: Iso
+  clientUpdatedAt: Iso
+  serverUpdatedAt: Iso | ""
+  deletedAt: Iso | null
+  isDeleted: 0 | 1
+  dirty: 0 | 1
+}
+
+export interface ScheduleCreateDto {
+  remindDate: LocalDate
+  title?: string
+  content?: EntryContent | null
+}
+
+export type ScheduleUpdateDto = Partial<ScheduleCreateDto>
+/** 手动转简只复制已保存的来源修订，不接受页面另传正文或任意 Entry ID。 */
+export interface ScheduleConvertDto {
+  expectedClientUpdatedAt: Iso
+  /** 不传时保留 remindDate；显式目标必须是设备本地已至之日。 */
+  entryDate?: LocalDate
+}
+export interface ScheduleConvertResult {
+  schedule: Schedule
+  entry: Entry | undefined
+  created: boolean
+  /** pendingPurges中的物理墓碑也按purged处理，不能再次打开为可编辑正文。 */
+  entryState: "active" | "deleted" | "purged"
+  pendingConfirmation: boolean
+}
+export interface ScheduleListParams {
+  page?: number
+  pageSize?: number
+  status?: ScheduleStatus
+  onlyDeleted?: boolean
+  dateFrom?: LocalDate
+  dateTo?: LocalDate
+}
+
+/** 离线转简意图；owner/generation 属于运行时边界，不直接写入备份。 */
+export interface ScheduleConversion {
+  scheduleId: string
+  /** 首次转换前的 pending 修订，用于先同步来源和服务端乐观锁。 */
+  source: Schedule
+  /** 首次转换快照独立保存，之后 Entry 编辑或弃去不得改写它。 */
+  entry: Entry
+  queuedAt: Iso
+  ownerUserId: string
+  /** 可增长的保护关联，不属于不可变的首次正文快照；确认前不释放。 */
+  protectedMediaIds?: string[]
+}

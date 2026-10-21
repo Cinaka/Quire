@@ -2,7 +2,7 @@ import { db } from "@/db/schema"
 
 import { clearCheckinCache, currentCheckinCacheOwner } from "./checkinCache"
 import { del, get, post } from "./request"
-import { clearAccessToken, getAccessToken, setAccessToken } from "./tokenStore"
+import { clearAccessToken, getAccessToken, invalidateTokenContext, setAccessToken } from "./tokenStore"
 
 const DEFAULT_TIMEZONE = "Asia/Shanghai"
 const SESSION_EVENT_KEY = "quire_session_event"
@@ -107,6 +107,7 @@ export async function refreshSession(): Promise<string> {
 }
 
 export async function logout(): Promise<void> {
+  invalidateTokenContext()
   const checkinCacheOwner = currentCheckinCacheOwner()
   try {
     await post<null>("/auth/logout")
