@@ -103,3 +103,14 @@ test('visible-image subscription observes only supplied media identity and is di
   const stop=f.port.subscribeMedia('entry',id,()=>changed++,()=>{})
   f.emit();assert.equal(changed,1);stop();f.emit();assert.equal(changed,1);assert.equal(f.stops,1)
 })
+
+for (const [name, original, thumbnail, expected] of [
+  ['empty supported MIME with null thumbnail', new Blob([], {type:'image/png'}), null, 'missing'],
+  ['empty original with unsupported thumbnail', new Blob(), new Blob(['svg'], {type:'image/svg+xml'}), 'unsupported'],
+  ['unsupported original with empty thumbnail', new Blob(['html'], {type:'text/html'}), new Blob([], {type:'image/png'}), 'unsupported'],
+]) test(`Blob guard false branch: ${name}`, async()=>{
+  const f=fixture();f.media.blob=original;f.media.thumbBlob=thumbnail
+  const result=await f.port.readMedia(f.entry,id)
+  assert.equal(result.state,expected)
+  assert.equal(f.media.blob,original);assert.equal(f.media.thumbBlob,thumbnail)
+})

@@ -27,7 +27,7 @@ export interface NotebookReadIO {
   observe(ids: readonly string[], changed: () => void, failed: () => void, mediaIds?: readonly string[]): () => void
 }
 const active = (entry: Entry | undefined): entry is Entry => Boolean(entry && entry.isDeleted === 0 && entry.deletedAt === null)
-const image = (blob: Blob | null | undefined): blob is Blob => Boolean(blob && blob.size > 0 && ["image/png", "image/jpeg", "image/webp", "image/gif"].includes(blob.type.toLowerCase()))
+const image = (blob: Blob | null | undefined): boolean => Boolean(blob && blob.size > 0 && ["image/png", "image/jpeg", "image/webp", "image/gif"].includes(blob.type.toLowerCase()))
 const expired = () => new Error("简册登录、归属或恢复上下文已失效，请返回列表重新核验。")
 
 /** Internal only: the P5-2 /auth/me gate must create the lease, not a view prop. */
@@ -78,7 +78,7 @@ export function createNotebookReadCore(io: NotebookReadIO, source: NotebookReadL
       const media = await io.media(mediaId)
       if (!media) return { state: "missing" }
       if (image(media.blob)) return { state: "ready", blob: media.blob, thumbnailOnly: false }
-      if (image(media.thumbBlob)) return { state: "ready", blob: media.thumbBlob, thumbnailOnly: true }
+      if (media.thumbBlob && image(media.thumbBlob)) return { state: "ready", blob: media.thumbBlob, thumbnailOnly: true }
       return { state: media.blob?.size || media.thumbBlob?.size ? "unsupported" : "missing" }
     }),
     subscribe,
