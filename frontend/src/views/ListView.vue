@@ -107,7 +107,7 @@
 
     <NotebookBook v-if="book && readPort && !restoring && !queryError && !filterError && items.length"
       :port="readPort" :ids="entryIds" :anchor="anchor" :width="width" :total="total"
-      :busy="loading || moving" :has-more="hasMore" :tag-names="tagNameById" @move="move" @edit="editFromBook" />
+      :busy="loading || moving" :has-more="hasMore" :tag-names="tagNameById" @move="move" @edit="editFromBook" @refresh="refreshUnavailable" />
     <div v-else-if="(loading || restoring) && !items.length && !filterError && !queryError" class="skeleton-list" aria-label="检简中">
       <div v-for="index in 5" :key="index" class="skeleton-row">
         <span class="skeleton-thumb" />
@@ -229,7 +229,7 @@ const readPort = shallowRef<NotebookReadPort | null>(null)
 const anchor = ref(""), width = ref(window.innerWidth), moving = ref(false), protectedTarget = ref(false)
 const restoring = ref(true)
 const entryIds = computed(() => items.value.map(entry => entry.id))
-let gateSeq = 0, disposed = false, initialized = false
+let gateSeq = 0, disposed = false, initialized = false, listScopeKey = "", missingRefreshKey = ""
 function resize(): void { width.value = window.innerWidth }
 function state(id = anchor.value): NotebookListState {
   return { keyword: keyword.value, order: order.value, tagIds: [...tagIds.value], dateFrom: dateFrom.value, dateTo: dateTo.value, hasImage: hasImage.value, filterOpen: filterOpen.value, anchor: id, book: book.value }
@@ -252,6 +252,16 @@ async function switchView(reading: boolean): Promise<void> {
       if (!disposed && mine === gateSeq) fallback("登录、归属或恢复上下文已失效，已清除阅读正文；请重新核验。")
     })
     if (disposed || mine !== gateSeq) { candidate.close(); return }
+    await candidate.assertCurrent()
+    if (disposed || mine !== gateSeq) { candidate.close(); return }
+    const scopeKey = JSON.stringify(await captureNotebookScope())
+    if (scopeKey !== listScopeKey) {
+      // A new dataset/session must never reuse A's row IDs or tag IDs for B's port.
+      items.value = []; total.value = 0; anchor.value = ""; tagIds.value = []; tags.value = []
+      await reload(); await loadTags(); await candidate.assertCurrent()
+      if (disposed || mine !== gateSeq) { candidate.close(); return }
+      listScopeKey = scopeKey
+    }
     await candidate.assertCurrent()
     if (disposed || mine !== gateSeq) { candidate.close(); return }
     readPort.value?.close(); readPort.value = candidate; book.value = true
@@ -303,6 +313,13 @@ async function move(direction: -1 | 1): Promise<void> {
     if (entryIds.value[target]) anchor.value = entryIds.value[target]!
   } catch { if (!disposed && port === readPort.value) fallback("阅读上下文已失效，请重新核验。") }
   finally { moving.value = false }
+}
+function refreshUnavailable(): void {
+  const key = `${revision.value}:${anchor.value}`
+  if (disposed || key === missingRefreshKey) return
+  missingRefreshKey = key
+  notice.value = "当前日记已删除或不再可读，已重查共享结果；异常记录仍保留诊断，不反复自动重试。"
+  void reload()
 }
 async function editFromBook(id: string): Promise<void> {
   const port = readPort.value, version = revision.value
@@ -459,6 +476,7 @@ onMounted(async () => {
   try {
     const scope = await captureNotebookScope()
     if (disposed) return
+    listScopeKey = JSON.stringify(scope)
     const saved = takeNotebookLogin(scope) ?? takeNotebookReturn(scope)
     if (saved) {
       keyword.value = saved.keyword; order.value = saved.order; tagIds.value = saved.tagIds

@@ -4,6 +4,7 @@ import type { NotebookReadPort } from "@/repo"
 import type { Entry } from "@/shared/types"
 import NotebookPaper from "./NotebookPaper.vue"
 const props = defineProps<{ port: NotebookReadPort; entryIds: readonly string[]; tagNames?: Record<string, string> }>()
+const emit = defineEmits<{ unavailable: [] }>()
 const entries = shallowRef<Entry[]>([]), message = ref(""), loading = ref(false)
 let seq = 0, stop: (() => void) | undefined, disposed = false
 function clear(): number { entries.value = []; return ++seq }
@@ -16,7 +17,7 @@ async function reload(): Promise<void> {
     await port.assertCurrent()
     if (mine !== seq || disposed) return
     entries.value = result.filter((entry): entry is Entry => Boolean(entry))
-    if (entries.value.length !== ids.length) message.value = "部分日记已删除或不再可读，请重新核对当前结果。"
+    if (entries.value.length !== ids.length) { message.value = "部分日记已删除或不再可读，请重新核对当前结果。"; emit("unavailable") }
     else if (!ids.length) message.value = "当前没有可读之简。"
   } catch { if (mine === seq && !disposed) message.value = "读取失败或阅读上下文已失效，请返回列表重新核验。" }
   finally { if (mine === seq && !disposed) loading.value = false }

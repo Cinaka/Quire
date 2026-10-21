@@ -7,7 +7,7 @@ const props = defineProps<{
   port: NotebookReadPort; ids: readonly string[]; anchor: string; width: number
   total: number; busy: boolean; hasMore: boolean; tagNames: Record<string, string>
 }>()
-const emit = defineEmits<{ move: [direction: -1 | 1]; edit: [id: string] }>()
+const emit = defineEmits<{ move: [direction: -1 | 1]; edit: [id: string]; refresh: [] }>()
 const visible = computed(() => notebookVisibleIds(props.ids, props.anchor, props.width))
 const index = computed(() => Math.max(0, props.ids.indexOf(props.anchor)))
 const host = ref<HTMLElement | null>(null)
@@ -30,7 +30,7 @@ onBeforeUnmount(() => host.value?.removeEventListener("keydown", keydown))
       <button type="button" :disabled="busy || (!hasMore && index + visible.length >= ids.length)" @click="emit('move', 1)">{{ busy ? '检简中…' : '下一篇' }}</button>
     </nav>
     <Transition name="book-turn" mode="out-in">
-      <NotebookReadingPane :key="visible.join(':')" :port="port" :entry-ids="visible" :tag-names="tagNames" />
+      <NotebookReadingPane :key="visible.join(':')" :port="port" :entry-ids="visible" :tag-names="tagNames" @unavailable="emit('refresh')" />
     </Transition>
     <nav class="book-nav" aria-label="明确进入编辑">
       <button v-for="(id, position) in visible" :key="id" type="button" :disabled="busy" @click="emit('edit', id)">编辑{{ visible.length > 1 ? (position ? '右页' : '左页') : '此简' }}</button>
