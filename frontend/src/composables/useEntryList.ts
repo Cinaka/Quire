@@ -19,6 +19,8 @@ export function useEntryList(options: UseEntryListOptions = {}) {
   const dateTo = ref("")
   const hasImage = ref<boolean | undefined>(undefined)
   const filterError = ref("")
+  const queryError = ref("")
+  const revision = ref(0)
   const items = ref<EntryListItem[]>([])
   const total = ref(0)
   const page = ref(1)
@@ -29,6 +31,7 @@ export function useEntryList(options: UseEntryListOptions = {}) {
   const hasMore = computed(() => items.value.length < total.value)
 
   async function fetchPage(target: number, append: boolean): Promise<void> {
+    if (debounce !== null) { window.clearTimeout(debounce); debounce = null }
     const mine = ++seq
     const from = dateFrom.value || undefined
     const to = dateTo.value || undefined
@@ -43,6 +46,7 @@ export function useEntryList(options: UseEntryListOptions = {}) {
     }
 
     filterError.value = ""
+    queryError.value = ""
     loading.value = true
 
     try {
@@ -70,6 +74,11 @@ export function useEntryList(options: UseEntryListOptions = {}) {
 
       total.value = res.total
       page.value = res.page
+    } catch (error) {
+      if (mine === seq) {
+        queryError.value = error instanceof Error ? error.message : "检简失败，请重试"
+        if (!append) { items.value = []; total.value = 0; page.value = 1 }
+      }
     } finally {
       if (mine === seq) loading.value = false
     }
@@ -84,25 +93,19 @@ export function useEntryList(options: UseEntryListOptions = {}) {
     return fetchPage(page.value + 1, true)
   }
 
+  function invalidate(): void {
+    seq += 1
+    revision.value += 1
+    items.value = []; total.value = 0; page.value = 1
+    queryError.value = ""; filterError.value = ""; loading.value = true
+    if (debounce !== null) { window.clearTimeout(debounce); debounce = null }
+  }
   watch(keyword, () => {
-    if (debounce !== null) window.clearTimeout(debounce)
-    debounce = window.setTimeout(() => {
-      debounce = null
-      void reload()
-    }, DEBOUNCE_MS)
-  })
-
-  watch([order, dateFrom, dateTo, hasImage], () => {
-    void reload()
-  })
-
-  watch(
-    tagIds,
-    () => {
-      void reload()
-    },
-    { deep: true },
-  )
+    invalidate()
+    debounce = window.setTimeout(() => { debounce = null; void reload() }, DEBOUNCE_MS)
+  }, { flush: "sync" })
+  watch([order, dateFrom, dateTo, hasImage], () => { invalidate(); void reload() }, { flush: "sync" })
+  watch(tagIds, () => { invalidate(); void reload() }, { deep: true, flush: "sync" })
 
   onScopeDispose(() => {
     seq += 1
@@ -117,6 +120,8 @@ export function useEntryList(options: UseEntryListOptions = {}) {
     dateTo,
     hasImage,
     filterError,
+    queryError,
+    revision,
     items,
     total,
     page,

@@ -24,6 +24,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router"
 
+import { hasNotebookEditReturn } from "@/shared/notebookReturn"
+
 import DiaryEditor from "@/components/DiaryEditor.vue"
 import EntryMetaFields from "@/components/EntryMetaFields.vue"
 import { draftRepo, entryRepo, mediaRepo, type EditorDraft } from "@/repo"
@@ -100,8 +102,8 @@ async function load(id: string): Promise<void> {
   if (id !== "new") {
     const entry = await entryRepo.get(id)
     if (revision !== loadRevision) return
-    if (!entry) {
-      void router.replace("/")
+    if (!entry || entry.isDeleted !== 0 || entry.deletedAt !== null) {
+      void router.replace(hasNotebookEditReturn(routeId.value) ? "/list" : "/")
       return
     }
     entryId.value = entry.id
@@ -277,12 +279,13 @@ async function discard(): Promise<void> {
   await flush()
   await entryRepo.remove(entryId.value)
   await clearDraft()
-  void router.replace("/")
+  void router.replace(hasNotebookEditReturn(routeId.value) ? "/list" : "/")
 }
 
 async function back(): Promise<void> {
   await flush()
-  void router.back()
+  if (hasNotebookEditReturn(routeId.value)) await router.push("/list")
+  else router.back()
 }
 
 onBeforeRouteUpdate(async () => {

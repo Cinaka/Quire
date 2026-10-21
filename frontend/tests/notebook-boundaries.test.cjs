@@ -17,10 +17,11 @@ test('components use public type boundary, no db/editor/upload or arbitrary HTML
     assert(!source.includes('v-bind="node'),name);assert(!source.includes('DiaryEditor'),name)
   }
 })
-test('only types are exposed now; no unverified identity factory in public repo',()=>{
+test('public factory is verified only; no raw lease constructor in public repo',()=>{
   const source=read('src/repo/index.ts')
   assert(source.includes('export type { NotebookReadPort'))
   assert(!source.includes('createLocalNotebookReadPort'))
+  assert(source.includes('createVerifiedNotebookReadPort'))
 })
 test('font declarations remain local to notebook lazy component, not global import',()=>{
   const paper=read('src/components/notebook/NotebookPaper.vue')

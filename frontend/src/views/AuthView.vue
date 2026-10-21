@@ -43,12 +43,14 @@
       >
         {{ registering ? "已有账号？去登录" : "没有账号？去注册" }}
       </button>
+      <button v-if="returningToList" type="button" class="secondary" :disabled="busy" @click="cancelToList">取消，返回原列表</button>
     </form>
   </main>
 </template>
 
 <script setup lang="ts">
 import { ref } from "vue"
+import { hasNotebookLogin, cancelNotebookLogin } from "@/shared/notebookReturn"
 import { useRouter } from "vue-router"
 
 import { claimLocalData, resetLocalForNewOwner } from "@/api/claim"
@@ -56,6 +58,11 @@ import { login, register } from "@/api/session"
 import { runSync } from "@/api/sync"
 
 const router = useRouter()
+const returningToList = hasNotebookLogin()
+function cancelToList(): void {
+  cancelNotebookLogin()
+  void router.replace("/list")
+}
 const email = ref("")
 const password = ref("")
 const confirmPassword = ref("")
@@ -89,7 +96,7 @@ async function submit(): Promise<void> {
     // 空的新设备第一轮已直接 pull，第二轮只是一次无变更的轻量检查。
     await runSync()
     await runSync()
-    await router.push("/")
+    await router.push(returningToList ? "/list" : "/")
   } catch (err) {
     error.value = (err as Error).message || "操作失败，请稍后重试。"
   } finally {

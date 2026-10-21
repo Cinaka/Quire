@@ -2,6 +2,7 @@
   <div
     class="list-page mx-auto w-full max-w-2xl px-4 py-4"
     :style="pullStyle"
+    :class="{ 'book-page': book }"
     @touchstart="onTouchStart"
     @touchmove="onTouchMove"
     @touchend="onTouchEnd"
@@ -18,10 +19,18 @@
     </header>
 
     <div class="view-switch" aria-label="简册视图">
-      <button type="button" class="view-button active" aria-pressed="true">列表视图</button>
-      <button type="button" class="view-button" disabled title="后续版本开放">日记本视图</button>
+      <button type="button" class="view-button" :class="{ active: !book }" :aria-pressed="!book" :disabled="restoring" @click="switchView(false)">列表视图</button>
+      <button type="button" class="view-button" :class="{ active: book }" :aria-pressed="book" :disabled="verifying || restoring" @click="switchView(true)">{{ verifying ? "核验中…" : "日记本视图" }}</button>
     </div>
 
+    <p v-if="notice" class="reader-notice" role="status">{{ notice }}</p>
+    <div v-if="gateError" class="reader-notice" role="alert">
+      <p>{{ gateError }}</p>
+      <button type="button" class="plain accent" @click="loginForBook">登录…</button>
+      <button type="button" class="plain accent" :disabled="verifying" @click="switchView(true)">联网重新核验</button>
+    </div>
+    <p v-if="queryError || filterError" class="reader-notice" role="alert">{{ queryError || filterError }} <button type="button" class="plain accent" @click="reload">重试检简</button></p>
+    <p v-if="protectedTarget" class="reader-notice">此简由预简转成，请在既有受保护入口核对并编辑。<button type="button" class="plain accent" @click="router.push('/schedules')">前往预简 / 待刻</button></p>
     <input
       v-model="keyword"
       class="search"
@@ -96,14 +105,17 @@
       <span class="count">共 {{ total }} 简</span>
     </div>
 
-    <div v-if="loading && !items.length && !filterError" class="skeleton-list" aria-label="检简中">
+    <NotebookBook v-if="book && readPort && !restoring && !queryError && !filterError && items.length"
+      :port="readPort" :ids="entryIds" :anchor="anchor" :width="width" :total="total"
+      :busy="loading || moving" :has-more="hasMore" :tag-names="tagNameById" @move="move" @edit="editFromBook" />
+    <div v-else-if="(loading || restoring) && !items.length && !filterError && !queryError" class="skeleton-list" aria-label="检简中">
       <div v-for="index in 5" :key="index" class="skeleton-row">
         <span class="skeleton-thumb" />
         <span class="skeleton-copy"><i /><i /></span>
       </div>
     </div>
 
-    <template v-else-if="items.length">
+    <template v-else-if="!book && items.length">
       <section v-for="group in groups" :key="group.key" class="group">
         <h2 class="group-title" :class="{ static: order === 'updatedAtDesc' }">{{ group.label }}</h2>
         <ul class="list">
@@ -162,20 +174,24 @@
       <p v-else-if="page > 1" class="end">已至卷末</p>
     </template>
 
-    <p v-else class="empty">
+    <p v-else-if="!queryError && !filterError && !restoring" class="empty">
       {{ hasFilters ? "筛选之下，未见合意之简。" : "简册尚空，今日宜落笔。" }}
     </p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue"
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, shallowRef, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 
 import EntryThumbnail from "@/components/EntryThumbnail.vue"
 import { useEntryList } from "@/composables/useEntryList"
 import { usePullToRefresh } from "@/composables/usePullToRefresh"
-import { mediaRepo, tagRepo } from "@/repo"
+import { mediaRepo, tagRepo, entryRepo, captureNotebookScope, createVerifiedNotebookReadPort, type NotebookReadPort } from "@/repo"
+import { notebookTargetIndex } from "@/shared/notebookNavigation"
+import { canOpenScheduleDiaryContent } from "@/shared/scheduleEditorContent"
+import { rememberNotebookReturn, takeNotebookReturn, rememberNotebookLogin, takeNotebookLogin, type NotebookListState } from "@/shared/notebookReturn"
+const NotebookBook = defineAsyncComponent(() => import("@/components/notebook/NotebookBook.vue"))
 import { entryExcerpt } from "@/shared/entryMeta"
 import { highlightParts, type TextPart } from "@/shared/text"
 import type { EntryListItem, EntryOrder, Tag } from "@/shared/types"
@@ -197,6 +213,8 @@ const {
   dateTo,
   hasImage,
   filterError,
+  queryError,
+  revision,
   items,
   total,
   page,
@@ -205,6 +223,100 @@ const {
   reload,
   loadMore,
 } = useEntryList()
+
+const book = ref(false), verifying = ref(false), gateError = ref(""), notice = ref("")
+const readPort = shallowRef<NotebookReadPort | null>(null)
+const anchor = ref(""), width = ref(window.innerWidth), moving = ref(false), protectedTarget = ref(false)
+const restoring = ref(true)
+const entryIds = computed(() => items.value.map(entry => entry.id))
+let gateSeq = 0, disposed = false, initialized = false
+function resize(): void { width.value = window.innerWidth }
+function state(id = anchor.value): NotebookListState {
+  return { keyword: keyword.value, order: order.value, tagIds: [...tagIds.value], dateFrom: dateFrom.value, dateTo: dateTo.value, hasImage: hasImage.value, filterOpen: filterOpen.value, anchor: id, book: book.value }
+}
+function fallback(message: string): void {
+  gateSeq += 1; readPort.value?.close(); readPort.value = null
+  book.value = false; verifying.value = false; anchor.value = ""; gateError.value = message
+}
+async function switchView(reading: boolean): Promise<void> {
+  if (!reading) {
+    gateSeq += 1; readPort.value?.close(); readPort.value = null; book.value = false; verifying.value = false
+    const query = { ...route.query }; delete query.view; void router.replace({ query }); return
+  }
+  if (book.value && readPort.value) return
+  const mine = ++gateSeq
+  verifying.value = true; gateError.value = ""
+  let candidate: NotebookReadPort | undefined
+  try {
+    candidate = await createVerifiedNotebookReadPort(() => {
+      if (!disposed && mine === gateSeq) fallback("登录、归属或恢复上下文已失效，已清除阅读正文；请重新核验。")
+    })
+    if (disposed || mine !== gateSeq) { candidate.close(); return }
+    await candidate.assertCurrent()
+    if (disposed || mine !== gateSeq) { candidate.close(); return }
+    readPort.value?.close(); readPort.value = candidate; book.value = true
+    if (!entryIds.value.includes(anchor.value)) anchor.value = entryIds.value[0] ?? ""
+    void router.replace({ query: { ...route.query, view: "book" } })
+  } catch (error) {
+    candidate?.close()
+    if (!disposed && mine === gateSeq) fallback(error instanceof Error ? error.message : "联网核验登录后可进入简册；普通列表仍可使用。")
+  } finally { if (mine === gateSeq) verifying.value = false }
+}
+async function loginForBook(): Promise<void> {
+  try {
+    const scope = await captureNotebookScope()
+    if (disposed) return
+    rememberNotebookLogin({ ...state(), book: true }, scope)
+    await router.push("/auth")
+  } catch { notice.value = "归属核对失败，未保存跨页面阅读上下文。" }
+}
+watch(revision, () => {
+  // flush:sync + v-if clears the old paper before the 250ms search debounce.
+  protectedTarget.value = false
+}, { flush: "sync" })
+watch(items, list => {
+  if (restoring.value || !list.length) return
+  if (!list.some(entry => entry.id === anchor.value)) {
+    if (anchor.value) notice.value = "原简已不在当前筛选中，已转到首篇。"
+    anchor.value = list[0]?.id ?? ""
+  }
+}, { flush: "sync" })
+// Fill a newly widened spread without moving or even-aligning its ID anchor.
+watch([book, anchor, width, items, loading], () => {
+  if (!book.value || restoring.value || loading.value || queryError.value || width.value < 1200 || !hasMore.value) return
+  const index = entryIds.value.indexOf(anchor.value)
+  if (index >= 0 && index + 2 > items.value.length) void loadMore()
+})
+async function move(direction: -1 | 1): Promise<void> {
+  if (moving.value || loading.value || !readPort.value) return
+  const version = revision.value, origin = anchor.value, port = readPort.value
+  const target = notebookTargetIndex(entryIds.value, origin, direction, width.value)
+  if (target < 0) return
+  moving.value = true; protectedTarget.value = false
+  try {
+    await port.assertCurrent()
+    // Crossing the 20-row boundary fetches just the next batch (also fills a double spread).
+    const desired = target + (width.value >= 1200 ? 2 : 1)
+    if (desired > entryIds.value.length && hasMore.value) await loadMore()
+    if (disposed || version !== revision.value || anchor.value !== origin || port !== readPort.value || queryError.value) return
+    await port.assertCurrent()
+    if (entryIds.value[target]) anchor.value = entryIds.value[target]!
+  } catch { if (!disposed && port === readPort.value) fallback("阅读上下文已失效，请重新核验。") }
+  finally { moving.value = false }
+}
+async function editFromBook(id: string): Promise<void> {
+  const port = readPort.value, version = revision.value
+  if (!port || loading.value) return
+  try {
+    const entry = await port.readEntry(id)
+    await port.assertCurrent()
+    if (disposed || port !== readPort.value || version !== revision.value) return
+    if (!entry) { notice.value = "此简已删除，已重查列表。"; await reload(); return }
+    if (!canOpenScheduleDiaryContent(entry.content)) { notice.value = "此简含当前编辑器不支持的版本或结构，已保留为只读，未进入编辑。"; return }
+    if (entry.fromScheduleId !== null) { protectedTarget.value = true; return }
+    await open(id, port)
+  } catch { if (!disposed && port === readPort.value) fallback("此简或登录上下文已变化，未进入编辑。") }
+}
 
 const tags = ref<Tag[]>([])
 const tagError = ref("")
@@ -278,8 +390,23 @@ function clearFilters(): void {
   hasImage.value = undefined
 }
 
-function open(id: string): void {
-  void router.push(`/entry/${id}`)
+async function open(id: string, expectedPort?: NotebookReadPort): Promise<void> {
+  try {
+    const scope = await captureNotebookScope()
+    const entry = await entryRepo.get(id)
+    if (!entry || entry.isDeleted !== 0 || entry.deletedAt !== null) { notice.value = "此简已删除或不再可读。"; await reload(); return }
+    // Recheck scope after the entry read; do not capture a stale source ID for another account.
+    const current = await captureNotebookScope()
+    if (JSON.stringify(scope) !== JSON.stringify(current)) throw new Error("账号或本机归属已变化，请重试。")
+    if (expectedPort) {
+      await expectedPort.assertCurrent()
+      if (expectedPort !== readPort.value || !book.value || !entryIds.value.includes(id)) return
+      if (!canOpenScheduleDiaryContent(entry.content)) { notice.value = "此简含当前编辑器不支持的版本或结构，已保留为只读，未进入编辑。"; return }
+      if (entry.fromScheduleId !== null) { protectedTarget.value = true; return }
+    }
+    rememberNotebookReturn(state(id), scope, true)
+    await router.push(`/entry/${id}`)
+  } catch (error) { notice.value = error instanceof Error ? error.message : "未能进入编辑" }
 }
 
 /** 是否有真正写下的文字。L2 之后图片不再进 contentText，所以这就是可靠判据。 */
@@ -301,37 +428,69 @@ function dayLabel(entryDate: string): string {
   return `${Number(month)}月${Number(day)}日`
 }
 
-// 封面与张数一次批量取。两个方法都只读 Entry JSON 与 media 主键，不载入 Blob。
-watch(items, async (list) => {
+// This metadata path is used only by ordinary rows; no thumbnail component is mounted in book mode.
+watch([items, book], async ([list, reading]) => {
   const mine = ++coverSeq
-  const ids = list.map((e) => e.id)
-  const [covers, counts] = await Promise.all([
-    mediaRepo.firstByEntries(ids),
-    mediaRepo.countByEntries(ids),
-  ])
-  if (mine !== coverSeq) return
-  coverByEntry.value = covers
-  imageCountByEntry.value = counts
+  coverByEntry.value = {}; imageCountByEntry.value = {}
+  if (reading) return
+  try {
+    const ids = list.map(entry => entry.id)
+    const [covers, counts] = await Promise.all([mediaRepo.firstByEntries(ids), mediaRepo.countByEntries(ids)])
+    if (mine !== coverSeq || disposed) return
+    coverByEntry.value = covers; imageCountByEntry.value = counts
+  } catch { if (mine === coverSeq) tagError.value = "列表图片信息读取失败，可重试检简。" }
 })
-
-watch(keyword, (value) => {
-  const query = value.trim()
-  void router.replace({ query: query ? { q: query } : {} })
+watch(keyword, value => {
+  const query = { ...route.query }
+  if (value.trim()) query.q = value.trim(); else delete query.q
+  void router.replace({ query })
 })
-
-onMounted(() => {
-  const query = route.query.q
-  if (typeof query === "string" && query) keyword.value = query
-  void loadTags()
-  void reload()
+watch(() => route.query.q, value => {
+  const next = typeof value === "string" ? value : ""
+  if (next !== keyword.value.trim()) keyword.value = next
 })
-
+watch(() => route.query.view, value => {
+  if (!initialized || disposed) return
+  if (value !== "book" && book.value) void switchView(false)
+  else if (value === "book" && !book.value && !verifying.value) void switchView(true)
+})
+onMounted(async () => {
+  window.addEventListener("resize", resize)
+  try {
+    const scope = await captureNotebookScope()
+    if (disposed) return
+    const saved = takeNotebookLogin(scope) ?? takeNotebookReturn(scope)
+    if (saved) {
+      keyword.value = saved.keyword; order.value = saved.order; tagIds.value = saved.tagIds
+      dateFrom.value = saved.dateFrom; dateTo.value = saved.dateTo; hasImage.value = saved.hasImage
+      filterOpen.value = saved.filterOpen; anchor.value = saved.anchor
+    } else if (typeof route.query.q === "string") keyword.value = route.query.q
+    await reload()
+    const version = revision.value
+    // Only list metadata, at most five additional 20-row batches. No full-library bodies/Blobs.
+    if (saved?.anchor) {
+      for (let count = 0; count < 5 && !entryIds.value.includes(saved.anchor) && hasMore.value && !queryError.value && version === revision.value && !disposed; count += 1) await loadMore()
+      if (version === revision.value && !entryIds.value.includes(saved.anchor)) notice.value = "原简已变化或不在本次有限结果中，已返回当前首篇。"
+    }
+    if (disposed) return
+    if (!entryIds.value.includes(anchor.value)) anchor.value = entryIds.value[0] ?? ""
+    restoring.value = false
+    void loadTags()
+    if (saved?.book || route.query.view === "book") await switchView(true)
+  } catch { if (!disposed) { notice.value = "归属核对失败，保留普通列表。"; await reload() } }
+  finally { if (!disposed) { restoring.value = false; initialized = true } }
+})
 onUnmounted(() => {
-  coverSeq += 1
+  disposed = true; gateSeq += 1; coverSeq += 1
+  window.removeEventListener("resize", resize)
+  readPort.value?.close(); readPort.value = null
 })
 </script>
 
 <style scoped>
+.list-page.book-page { max-width: 1232px; }
+.reader-notice { margin: 12px 0; color: var(--color-ink-soft); overflow-wrap: anywhere; }
+
 .list-page {
   position: relative;
   transition: transform 160ms ease-out;
