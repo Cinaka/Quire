@@ -1,0 +1,7 @@
+/* P5-1 source groundwork. No broad handwriting coverage is claimed yet.
+   build_notebook_fonts.py replaces this stylesheet only after source hash verification
+   and successful generation of every WOFF2 shard. Until then: readable system fallback.
+   Import only from the lazy notebook component, never from global index.css. */
+.notebook-body {
+  font-family: "Quire Notebook WenKai", "Kaiti SC", "STKaiti", KaiTi, "Songti SC", "SimSun", serif;
+}

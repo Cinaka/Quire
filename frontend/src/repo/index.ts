@@ -34,3 +34,6 @@ export const entryNewDestination = { read: readEntryNewDestination }
 
 // 显式核对入口：构造惰性会话，不启动自动同步。
 export { listScheduleConflictSources, createScheduleConflictSession } from "@/db/scheduleConflictCenterRepo"
+
+// P5-1: types only; the verified-identity factory is deliberately not public yet.
+export type { NotebookReadPort, NotebookMediaResult } from "@/db/notebookReadCore"
