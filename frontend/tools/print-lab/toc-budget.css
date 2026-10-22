@@ -1,0 +1,16 @@
+nav { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+nav a, button { min-height: 44px; display: inline-flex; align-items: center; }
+button { padding: 8px 16px; border: 1px solid #6d6a64; border-radius: 8px; background: #fff; color: #2e2c28; font: inherit; cursor: pointer; }
+a:focus-visible, button:focus-visible { outline: 2px solid #426455; outline-offset: 3px; }
+.toc-row { align-items: start; padding-bottom: 4mm; margin-bottom: 4mm; border-bottom: 1px solid #dedbd5; }
+.toc-row .toc-title { flex: 1 1 auto; min-width: 0; }
+.toc-row .toc-page { flex: 0 0 10mm; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.body .toc-date { display: block; font: 9pt/1.6 system-ui, sans-serif; color: #68645f; margin-bottom: 1mm; }
+.body .long-title { font-size: 15pt; line-height: 1.65; }
+.body .end { margin-top: 8mm; font: 10pt/1.7 monospace; }
+@media screen and (max-width: 620px) {
+ /* Preserve print dimensions; scroll only the paper region, not the document. */
+ #output { max-width: 100%; }
+ .lab-ui { padding: 16px; }
+}
+@media print { #cancel { display: none; } }
