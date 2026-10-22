@@ -1,4 +1,4 @@
-import { preflightImages, SerialImageDecoder, inspectDocuments, RESOURCE_LIMITS } from './resource-budget.mjs'
+import { preflightImages, SerialImageDecoder, inspectDocuments, probeDecodeOutcome, RESOURCE_LIMITS } from './resource-budget.mjs'
 import { fixtureBlob } from './resource-fixtures.mjs'
 const start = document.querySelector('#start'), cancel = document.querySelector('#cancel'), status = document.querySelector('#status'), checks = document.querySelector('#checks'), result = document.querySelector('#result'), canvas = document.querySelector('#preview'), ctx = canvas.getContext('2d')
 const queue = new SerialImageDecoder(), pause = ms => new Promise(r => setTimeout(r, ms))
@@ -25,7 +25,7 @@ async function run() {
   const scenario = async (name, test) => {
     check(); status.textContent = `验证中：${name}`; await pause(0); check()
     const li = document.createElement('li'); li.textContent = name; checks.append(li)
-    try { await test(); check(); li.textContent += '：通过'; li.dataset.state = 'passed'; results.push({ name, passed: true }) }
+    try { const detail = await test(); check(); li.textContent += `：通过${detail ? '（' + detail + '）' : ''}`; li.dataset.state = 'passed'; results.push({ name, passed: true, ...(detail ? { detail } : {}) }) }
     catch (e) { li.textContent += `：停止 / ${e.code || e.message}`; li.dataset.state = 'failed'; results.push({ name, passed: false, code: e.code || e.message }); throw e }
   }
   let complete = false, error
@@ -67,9 +67,24 @@ async function run() {
       for (const name of ['apng', 'animatedWebp']) await expect(() => preflightImages([{ id: name, blob: fixtureBlob(name) }], { signal }), 'ANIMATED_IMAGE_UNSUPPORTED')
       for (const type of ['image/gif', 'image/svg+xml']) await expect(() => preflightImages([{ id: type, blob: new Blob(['public'], { type }) }], { signal }), 'UNSUPPORTED_IMAGE_TYPE')
     })
-    await scenario('头部可读但压缩流损坏，原生解码失败后释放队列', async () => {
+    await scenario('损坏材料原生行为观察；注入失败与队列复用验证', async () => {
       const p = await preflightImages([{ id: 'corrupt', blob: fixtureBlob('corrupt') }], { signal })
-      await expect(() => queue.run(p, { signal, decode: nativeDecode }), 'IMAGE_DECODE_FAILED'); await pause(0); assert(!queue.busy, '失败未释放队列')
+      // Safari may return a bitmap instead of rejecting this malformed stream.
+      // Record that fact, close it normally, and never call it integrity validation.
+      const observation = await probeDecodeOutcome(queue, p, { signal, decode: nativeDecode })
+      input.corruptProbe = { ...observation, injectedFailureVerified: false, queueReusable: false }
+      await pause(0); assert(!queue.busy && metrics.live === 0 && metrics.active === 0, '原生观察未释放资源')
+      // A separate controlled failure checks the error path on every browser.
+      await expect(() => queue.run(p, { signal, decode: async () => { throw Error('固定注入的解码失败，非原生拒绝证据') } }), 'IMAGE_DECODE_FAILED')
+      await pause(0); assert(!queue.busy, '注入失败未释放队列')
+      input.corruptProbe.injectedFailureVerified = true
+      const fresh = await preflightImages([{ id: 'recovery', blob: fixtureBlob('png') }], { signal })
+      const recovered = await queue.run(fresh, { signal, decode: nativeDecode })
+      assert(recovered.completed === 1 && !queue.busy && metrics.live === 0, '失败后队列不能复用')
+      input.corruptProbe.queueReusable = true
+      return observation.nativeOutcome === 'accepted'
+        ? '原生接受损坏材料，未证明完整性；注入失败清理及后续原生解码通过'
+        : '原生拒绝损坏材料；另行注入失败清理及后续原生解码通过'
     })
     await scenario('真实4MiB正文JSON边界与多1字节拒绝', async () => {
       const overhead = JSON.stringify(bodyDoc(0)).length, d = bodyDoc(4 * 1024 ** 2 - overhead)
@@ -100,11 +115,11 @@ async function run() {
       while (queue.busy) { check(); await pause(10) }; assert(metrics.live === 0, '超时迟到图未关闭')
     })
     assert(metrics.active === 0 && metrics.live === 0 && metrics.closed === metrics.bitmaps && metrics.doubleClose === 0 && metrics.peak === 1, '最终资源/并发不守恒')
-    complete = true; status.textContent = `固定材料验证完成：${results.length}项通过；解码峰值并发1，位图全部关闭。`
+    complete = true; status.textContent = `固定材料验证完成：${results.length}项通过；解码峰值并发1，位图全部关闭。${input.corruptProbe?.nativeOutcome === 'accepted' ? '注意：本浏览器接受损坏材料，未证明图片完整性。' : ''}`
   } catch (e) { error = e.code || e.message; status.textContent = `停止：${error}。未将半份结果判为通过。`; ctx.clearRect(0, 0, 512, 256) }
   finally {
     cancel.disabled = true
-    const report = { complete, scope: '真实浏览器Blob/头部/原生ImageBitmap与固定大正文；非生产DB/完整打印', results, metrics, input, limits: RESOURCE_LIMITS, queueBusy: queue.busy, cleanupComplete: metrics.active === 0 && metrics.live === 0, error, limitations: ['迟到取消与超时用真实解码+固定延迟模拟，未验证原生永久挂起', '未测真实手机/百页排版/PDF图片累计解码峰值内存', 'GIF/动画/SVG为本原型显式阻塞，P6产品降级策略须冻结；P5支持不变', '这里只计已经加载的固定正文，不证明数据库快照加载有界'] }
+    const report = { complete, scope: '真实浏览器Blob/头部/原生ImageBitmap与固定大正文；非生产DB/完整打印', results, metrics, input, limits: RESOURCE_LIMITS, queueBusy: queue.busy, cleanupComplete: metrics.active === 0 && metrics.live === 0, error, limitations: ['原生解码器可能容错接受损坏材料；头部与解码成功不等于完整性验证，注入失败不是原生拒绝证据', '迟到取消与超时用真实解码+固定延迟模拟，未验证原生永久挂起', '未测真实手机/百页排版/PDF图片累计解码峰值内存', 'GIF/动画/SVG为本原型显式阻塞，P6产品降级策略须冻结；P5支持不变', '这里只计已经加载的固定正文，不证明数据库快照加载有界'] }
     result.textContent = JSON.stringify(report, null, 2); document.documentElement.dataset.complete = String(complete); running = false
     if (!queue.busy) start.disabled = false
     else { const began = performance.now(), timer = setInterval(() => { if (!queue.busy || performance.now() - began > 30000) { clearInterval(timer); start.disabled = queue.busy; report.queueBusy = queue.busy; report.cleanupComplete = metrics.active === 0 && metrics.live === 0; result.textContent = JSON.stringify(report, null, 2); if (!queue.busy) status.textContent = `已停止：${error}；迟到位图已回收，未发布成功结果。` } }, 100) }

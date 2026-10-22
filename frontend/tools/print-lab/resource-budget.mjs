@@ -148,6 +148,18 @@ export class SerialImageDecoder {
     } finally { if (!detached) this.#busy = false }
   }
 }
+// Lab observation, NOT an integrity validator or production fallback. Native decoders
+// may tolerate this malformed fixture. Only native decode failure is observational;
+// cancellation, limits and mismatched dimensions must still stop the experiment.
+export async function probeDecodeOutcome(queue, plan, options) {
+  try {
+    const result = await queue.run(plan, options)
+    return { nativeOutcome: 'accepted', completed: result.completed, integrityVerified: false }
+  } catch (error) {
+    if (error.code !== 'IMAGE_DECODE_FAILED') throw error
+    return { nativeOutcome: 'rejected', code: error.code, integrityVerified: false }
+  }
+}
 // Count bounded JSON UTF-8 without stringify/full-string encoding copies. This measures
 // already-loaded data; it does not make loading an unbounded DB row itself safe.
 export async function inspectDocuments(documents, { signal, now = () => performance.now(), yieldTask = () => new Promise(resolve => setTimeout(resolve, 0)) } = {}) {

@@ -161,3 +161,29 @@ test('new resource route remains allowlisted; no private API or object URL use',
   }
   assert(!allowed('/frontend/src/db/schema.ts')); assert(!allowed('/api/media'))
 })
+
+test('native probe reports tolerated malformed fixture, closes bitmap and does not assert integrity', async () => {
+  const { preflightImages, SerialImageDecoder, probeDecodeOutcome } = await modulePromise, { fixtureBlob } = await fixtures
+  const plan = await preflightImages([{ id: 'bad', blob: fixtureBlob('corrupt') }]), q = new SerialImageDecoder(), b = bitmap(16, 16)
+  assert.deepEqual(await probeDecodeOutcome(q, plan, { decode: async () => b }), { nativeOutcome: 'accepted', completed: 1, integrityVerified: false })
+  assert.equal(b.closed, 1); assert(!q.busy)
+})
+test('native probe records rejection separately from controlled failure and queue recovery', async () => {
+  const { SerialImageDecoder, probeDecodeOutcome } = await modulePromise, q = new SerialImageDecoder(), plan = await smallPlan()
+  assert.deepEqual(await probeDecodeOutcome(q, plan, { decode: async () => { throw Error('controlled failure') } }), { nativeOutcome: 'rejected', code: 'IMAGE_DECODE_FAILED', integrityVerified: false })
+  await new Promise(r => setImmediate(r)); assert(!q.busy)
+  const b = bitmap(); assert.equal((await q.run(plan, { decode: async () => b })).completed, 1); assert.equal(b.closed, 1)
+})
+test('native probe never swallows cancellation, busy queue or mismatched bitmap', async () => {
+  const { SerialImageDecoder, probeDecodeOutcome } = await modulePromise, q = new SerialImageDecoder(), plan = await smallPlan(), c = new AbortController()
+  c.abort(); await rejection(probeDecodeOutcome(q, plan, { signal: c.signal }), 'CANCELLED')
+  const b = bitmap(1, 1); await rejection(probeDecodeOutcome(q, plan, { decode: async () => b }), 'DECODE_DIMENSION_MISMATCH'); assert.equal(b.closed, 1)
+  let release; const pending = q.run(plan, { decode: () => new Promise(r => { release = r }) })
+  await new Promise(r => setImmediate(r)); await rejection(probeDecodeOutcome(q, plan, {}), 'DECODER_BUSY'); release(bitmap()); await pending
+})
+test('browser probe labels native observation separately from injected failure', () => {
+  const fs = require('node:fs'), path = require('node:path'), s = fs.readFileSync(path.join(__dirname, '../tools/print-lab/resource-lab.mjs'), 'utf8')
+  assert(s.includes('await probeDecodeOutcome(queue, p'))
+  assert(s.includes('injectedFailureVerified: false')); assert(s.includes('queueReusable: false'))
+  assert(s.includes('原生接受损坏材料，未证明完整性')); assert(!s.includes('未���'))
+})
