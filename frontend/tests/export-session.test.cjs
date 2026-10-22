@@ -1,0 +1,16 @@
+// Actual shared identity gate; injected auth/owner/transport and feature ports, not JWT or HTTP.
+const {test}=require('node:test'),assert=require('node:assert/strict')
+const {createNotebookIdentityGate}=require('../src/capabilities/notebookIdentityGate.ts')
+function fixture(){
+ let auth={subject:'A',generation:1,expiresAt:3000},owner={ownerUserId:'A',generation:'e1'},verifies=0,now=1000,verify=async id=>({id}),closes=[]
+ const mk=name=>lease=>({lease:{...lease},name,close(){closes.push(name)}})
+ const gate=createNotebookIdentityGate({auth:()=>auth,owner:async()=>({...owner}),verify:async id=>{verifies++;return verify(id)},open:mk('P5'),now:()=>now})
+ return{gate,mk,closes,auth:v=>auth={...auth,...v},owner:v=>owner={...owner,...v},verify:v=>verify=v,now:v=>now=v,get verifies(){return verifies}}
+}
+test('P5 proof reused by P6 offline; same captured lease and only one verification',async()=>{const f=fixture();await f.gate.open(()=>{});f.verify(async()=>{throw Error('offline')});const p=await f.gate.openCapability(f.mk('P6'),()=>{});assert.deepEqual(p.lease,{ownerUserId:'A',generation:'e1',authGeneration:1});assert.equal(f.verifies,1)})
+test('cold P6 token-only offline never invokes feature factory',async()=>{const f=fixture();let opens=0;f.verify(async()=>{throw Error('offline')});await assert.rejects(f.gate.openCapability(()=>{opens++;return{close(){}}},()=>{}),/offline/);assert.equal(opens,0)})
+test('logout closes P5 and P6 before failed callbacks; one callback exception isolated',async()=>{const f=fixture();let failed=0;await f.gate.open(()=>{assert(f.closes.includes('P5'));throw Error('consumer')});await f.gate.openCapability(f.mk('P6'),()=>{assert(f.closes.includes('P6'));failed++});f.auth({generation:2});f.gate.authChanged();assert.deepEqual(f.closes,['P5','P6']);assert.equal(failed,1)})
+test('failed renewal revokes both feature ports and cannot revive old proof',async()=>{const f=fixture();await f.gate.open(()=>{});await f.gate.openCapability(f.mk('P6'),()=>{});f.now(4000);f.verify(async()=>{throw Error('offline')});await assert.rejects(f.gate.openCapability(f.mk('new'),()=>{}),/offline/);assert.deepEqual(f.closes,['P5','P6']);f.now(1000);await assert.rejects(f.gate.openCapability(f.mk('new'),()=>{}),/offline/)})
+test('close deregisters P6, does not close unrelated P5',async()=>{const f=fixture();await f.gate.open(()=>{});const p=await f.gate.openCapability(f.mk('P6'),()=>{throw Error('should be removed')});p.close();assert.deepEqual(f.closes,['P6']);f.gate.invalidate();assert.deepEqual(f.closes,['P6','P5'])})
+test('restore epoch revokes all features through same proof revalidation',async()=>{const f=fixture();await f.gate.open(()=>{});await f.gate.openCapability(f.mk('P6'),()=>{});f.owner({generation:'restored'});await f.gate.revalidate();assert.deepEqual(f.closes,['P5','P6'])})
+test('late P6 verification after newer P5 verification cannot publish or revoke newer P5',async()=>{const f=fixture();let resume;f.verify(()=>new Promise(r=>resume=r));const old=f.gate.openCapability(f.mk('oldP6'),()=>{});await new Promise(setImmediate);f.verify(async id=>({id}));const latest=await f.gate.open(()=>{});resume({id:'A'});await assert.rejects(old,/上下文已变化/);assert.equal(latest.name,'P5');assert.deepEqual(f.closes,[])})

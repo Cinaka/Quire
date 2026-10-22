@@ -63,3 +63,14 @@ export async function createVerifiedNotebookReadPort(failed: () => void) {
   try { const port = await gate.open(failed); scheduleExpiry(); return port }
   catch (error) { throw new Error(`联网核验登录后可进入简册；普通列表仍可使用。${error instanceof Error ? ` ${error.message}` : ""}`) }
 }
+
+/** Internal cross-feature capability: shares the same memory-only verified proof.
+ * Not exported by @/repo; a view can never provide or receive the lease. */
+export async function createVerifiedNotebookCapability<Port extends import("@/capabilities/notebookIdentityGate").IdentityScopedPort>(
+  factory: (lease: import("./notebookReadCore").NotebookReadLease) => Port, failed: () => void,
+): Promise<Port> {
+  start()
+  const port = await gate.openCapability(factory, failed)
+  scheduleExpiry()
+  return port
+}

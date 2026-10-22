@@ -1,4 +1,5 @@
 import type { NotebookReadLease, NotebookReadPort } from "@/db/notebookReadCore"
+export interface IdentityScopedPort { close(): void }
 export interface NotebookAuth { subject: string; generation: number; expiresAt: number }
 export interface NotebookOwner { ownerUserId: string; generation: string }
 export interface NotebookGateIO {
@@ -11,7 +12,7 @@ export interface NotebookGateIO {
 /** Memory-only proof. UI cannot supply a lease to the public production factory. */
 export function createNotebookIdentityGate(io: NotebookGateIO) {
   let proof: NotebookReadLease | null = null, epoch = 0
-  const ports = new Map<NotebookReadPort, () => void>()
+  const ports = new Map<IdentityScopedPort, () => void>()
   const validAuth = (lease: NotebookReadLease): boolean => {
     const auth = io.auth()
     return auth.subject === lease.ownerUserId && auth.generation === lease.authGeneration && auth.expiresAt > io.now()
@@ -36,7 +37,7 @@ export function createNotebookIdentityGate(io: NotebookGateIO) {
   function authChanged(): void {
     if (proof && !validAuth(proof)) invalidate()
   }
-  async function open(failed: () => void): Promise<NotebookReadPort> {
+  async function openCapability<Port extends IdentityScopedPort>(factory: (lease: NotebookReadLease) => Port, failed: () => void): Promise<Port> {
     let version = epoch
     const auth = io.auth()
     if (!auth.subject) throw new Error("登录并联网核验后可进入简册；普通列表仍可使用。")
@@ -58,10 +59,11 @@ export function createNotebookIdentityGate(io: NotebookGateIO) {
     const stillCurrent = await current(lease)
     if (version !== epoch || !stillCurrent) throw new Error("登录、归属或恢复上下文已变化，未打开简册。")
     proof = lease
-    const inner = io.open(lease)
-    const port: NotebookReadPort = { ...inner, close() { ports.delete(port); inner.close() } }
+    const inner = factory(lease)
+    const port: Port = { ...inner, close() { ports.delete(port); inner.close() } }
     ports.set(port, failed)
     return port
   }
-  return { open, invalidate, revalidate, authChanged }
+  const open = (failed: () => void): Promise<NotebookReadPort> => openCapability(io.open, failed)
+  return { open, openCapability, invalidate, revalidate, authChanged }
 }
