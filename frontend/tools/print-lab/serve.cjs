@@ -1,7 +1,7 @@
 // Loopback-only static lab: explicitly whitelists sample code + existing P5 font assets.
 const http = require('node:http'), fs = require('node:fs'), path = require('node:path')
 const root = path.resolve(__dirname, '../..')
-const allowed = url => /^\/frontend\/tools\/print-lab\/(?:index\.html|lab\.(?:css|mjs)|toc-budget\.(?:html|css|mjs)|(?:fixtures|image|imposition|print-guards)\.mjs)$/.test(url)
+const allowed = url => /^\/frontend\/tools\/print-lab\/(?:index\.html|lab\.(?:css|mjs)|(?:toc-budget|resource-lab)\.(?:html|css|mjs)|(?:fixtures|image|imposition|print-guards|resource-fixtures|resource-budget)\.mjs)$/.test(url)
   || url === '/frontend/src/styles/notebook-fonts.css'
   || /^\/frontend\/src\/assets\/fonts\/notebook\/wenkai-[0-9a-f]{4}\.woff2$/.test(url)
 function start() {

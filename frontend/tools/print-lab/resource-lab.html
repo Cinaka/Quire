@@ -1,0 +1,13 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'none'; font-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>P6-0 图片与大输入预算验证</title><link rel="stylesheet" href="./resource-lab.css"></head>
+<body><main><p class="eyebrow">QUIRE / RESOURCE LAB · P6-0</p><h1>有界读取，逐张解码</h1>
+<p class="intro">只使用内置公开校准图与固定正文。不读取账号、日记、本机文件或 IndexedDB，不联网补图，也不生成正式导出文件。</p>
+<section class="limits" aria-label="实验保护上限"><p>单图 <strong>800万像素</strong> · 总计 <strong>2400万像素</strong> · 最长边 <strong>8192px</strong></p><p>解码并发 <strong>1</strong> · 单文件 <strong>12MiB</strong> · 去重媒体 <strong>64MiB / 100张</strong></p><p>正文JSON <strong>4MiB / 100篇 / 20000节点 / 深度64</strong></p><p class="note">保护阈值不等于实测容量；原生解码取消后，迟到图片释放前仍占用唯一解码槽。</p></section>
+<div class="actions"><button id="start" type="button">开始固定材料验证</button><button id="cancel" type="button" disabled>停止本次验证</button></div>
+<p id="status" role="status">待开始。无需提供私人材料，也不用重复此前PDF检查。</p>
+<section class="results" aria-label="逐项结果"><h2>验证记录</h2><ol id="checks"></ol></section>
+<section class="preview"><h2>校准图缩览</h2><p class="note">仅保留缩小的画布；原始 ImageBitmap 在使用后关闭。</p><canvas id="preview" width="512" height="256" aria-label="固定公开校准图缩览"></canvas></section>
+<details><summary>原始验证报告</summary><pre id="result">尚未运行</pre></details>
+<p class="note">这不是正式日记读取器、手机性能承诺或PDF验收。不能从64MiB字节阈值推断浏览器峰值内存。</p>
+</main><script type="module" src="./resource-lab.mjs"></script></body></html>
