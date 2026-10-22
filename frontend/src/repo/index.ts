@@ -34,3 +34,8 @@ export const entryNewDestination = { read: readEntryNewDestination }
 
 // 显式核对入口：构造惰性会话，不启动自动同步。
 export { listScheduleConflictSources, createScheduleConflictSession } from "@/db/scheduleConflictCenterRepo"
+
+// P5-2: only the verified, memory-scoped factory is public.
+export type { NotebookReadPort, NotebookMediaResult } from "@/db/notebookReadCore"
+
+export { createVerifiedNotebookReadPort, captureNotebookScope } from "@/db/notebookSessionRepo"

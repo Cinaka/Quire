@@ -9,7 +9,16 @@ export const ACCESS_TOKEN_KEY = "quire_access_token"
 let cached: string | null = null
 let generation = 0
 export function tokenGeneration(): number { return generation }
-export function invalidateTokenContext(): void { generation += 1 }
+const contextListeners = new Set<() => void>()
+/** Same-tab logout begins before its HTTP request; consumers must clear immediately. */
+export function subscribeTokenContext(listener: () => void): () => void {
+  contextListeners.add(listener)
+  return () => { contextListeners.delete(listener) }
+}
+function notifyContext(): void {
+  for (const listener of [...contextListeners]) { try { listener() } catch { /* isolate observers */ } }
+}
+export function invalidateTokenContext(): void { generation += 1; notifyContext() }
 
 export function getAccessToken(): string {
   if (cached !== null) return cached
@@ -35,6 +44,7 @@ export function setAccessToken(token: string): void {
   cached = token
   if (token) localStorage.setItem(ACCESS_TOKEN_KEY, token)
   else localStorage.removeItem(ACCESS_TOKEN_KEY)
+  notifyContext()
 }
 
 export function clearAccessToken(): void {
@@ -46,6 +56,7 @@ window.addEventListener("storage", (event) => {
     const next = event.newValue ?? ""
     if (!next || accessTokenSubject(next) !== accessTokenSubject(getAccessToken())) generation += 1
     cached = next
+    notifyContext()
   }
 })
 

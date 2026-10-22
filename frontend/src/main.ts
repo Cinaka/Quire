@@ -16,11 +16,13 @@ app.use(router)
 app.mount("#app")
 
 setUnauthorizedHandler(() => {
-  if (router.currentRoute.value.name !== "auth") void router.push({ name: "auth" })
+  // List remains a guest-readable fallback; the notebook token observer clears its port.
+  if (router.currentRoute.value.name !== "auth" && router.currentRoute.value.name !== "list") void router.push({ name: "auth" })
 })
 
 onRemoteLogout(() => {
-  if (router.currentRoute.value.name !== "auth") void router.push({ name: "auth" })
+  // List remains a guest-readable fallback; the notebook token observer clears its port.
+  if (router.currentRoute.value.name !== "auth" && router.currentRoute.value.name !== "list") void router.push({ name: "auth" })
 })
 
 const MEDIA_MAINTENANCE_INTERVAL = 6 * 60 * 60_000

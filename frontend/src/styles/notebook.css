@@ -1,0 +1,26 @@
+.notebook-spread { display: grid; gap: 16px; width: 100%; max-width: 1200px; margin-inline: auto; align-items: start; }
+.notebook-paper {
+  min-width: 0; padding: 24px 16px 32px 24px; border: 1px solid var(--color-paper-deep);
+  border-radius: var(--radius-card); color: var(--color-ink); background-color: var(--color-paper);
+  background-image: linear-gradient(90deg, transparent 14px, color-mix(in srgb, var(--color-bamboo) 18%, transparent) 14px, color-mix(in srgb, var(--color-bamboo) 18%, transparent) 15px, transparent 15px), repeating-linear-gradient(0deg, transparent, transparent 33px, color-mix(in srgb, var(--color-ink) 5%, transparent) 33px, color-mix(in srgb, var(--color-ink) 5%, transparent) 34px);
+}
+.notebook-title { margin: 12px 0; font-family: var(--font-cn-serif); font-size: var(--text-title); line-height: var(--leading-title); overflow-wrap: anywhere; }
+.notebook-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--color-ink-soft); font-size: var(--text-body); line-height: var(--leading-body); }
+.notebook-body { margin-top: 24px; font-size: var(--text-section); line-height: var(--leading-body); overflow-wrap: anywhere; }
+.notebook-body p { margin: 0 0 1em; min-height: 1.7em; white-space: pre-wrap; }
+.notebook-body h1, .notebook-body h2, .notebook-body h3 { font-family: var(--font-cn-serif); overflow-wrap: anywhere; }
+.notebook-body h1 { font-size: var(--text-title); line-height: var(--leading-title); }
+.notebook-body h2, .notebook-body h3 { font-size: var(--text-section); line-height: var(--leading-section); }
+.notebook-body ul, .notebook-body ol { padding-inline-start: 1.5em; }
+.notebook-body ul { list-style-type: disc; }
+.notebook-body ol { list-style-type: decimal; }
+.notebook-body blockquote { margin: 16px 0; padding-inline-start: 16px; border-inline-start: 2px solid var(--color-bamboo-soft); }
+.notebook-body pre { max-width: 100%; overflow-x: auto; padding: 16px; background: var(--color-paper-deep); white-space: pre; overflow-wrap: normal; }
+.notebook-body pre, .notebook-body code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: var(--text-body); line-height: var(--leading-body); }
+.notebook-image { min-height: 100px; margin: 16px 0; }
+.notebook-image img { display: block; width: auto; max-width: 100%; height: auto; margin-inline: auto; }
+.notebook-notice, .notebook-image figcaption { color: var(--color-ink-soft); font-family: var(--font-cn-sans); font-size: var(--text-body); line-height: var(--leading-body); }
+.notebook-warning { padding: 12px; border-inline-start: 3px solid var(--color-ji); background: var(--color-paper-deep); }
+.notebook-paper button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--color-bamboo); border-radius: var(--radius-card); color: var(--color-ink); background: var(--color-paper); font: inherit; cursor: pointer; }
+.notebook-paper :focus-visible { outline: 2px solid var(--color-bamboo); outline-offset: 3px; }
+@media (min-width: 1200px) { .notebook-spread { grid-template-columns: repeat(2, minmax(0, 1fr)); } .notebook-paper { padding: 32px 32px 48px; } }
