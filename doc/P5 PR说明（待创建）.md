@@ -1,6 +1,6 @@
-# P5 PR说明（待创建）
+# P5 PR说明与创建记录
 
-**仅为PR草稿材料，尚未创建PR；无合并或部署授权。**
+**用户已授权并创建[PR #5](https://github.com/Cinaka/Quire/pull/5)供审阅；未合并、未部署，无合并/部署授权。文件名保留历史命名以维持已有链接。**
 
 - 建议标题：`feat: P5 简册只读视图、按需文楷与安全翻篇`
 - 目标分支：`main`
@@ -36,6 +36,11 @@ npm run check:p5:integration
 ## 授权状态
 
 - [x] 开发与限定本机验收完成，记录准备完毕。
-- [ ] 用户确认创建PR，填写实际PR号/链接。
+- [x] 用户确认继续创建审阅PR，已创建[PR #5](https://github.com/Cinaka/Quire/pull/5)。
 - [ ] 用户另行授权合并。
 - [ ] 用户另行授权部署。
+
+
+## PR创建登记
+
+GitHub工具已实际返回PR #5：https://github.com/Cinaka/Quire/pull/5。base=main，head=p5/notebook-view，普通开放审阅PR（非草稿）。创建前确认同来源/目标无开放PR，避免重复。创建前分支HEAD为89ce2c8e740f5ce9d12f9a3e46da47a373da1146；后续本次登记只修改文档，PR会包含登记提交，不冒充用户精确执行HEAD。无合并/部署/自动合并或删分支操作。未声称GitHub CI或审阅已通过。
