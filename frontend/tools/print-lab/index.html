@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>P6-0 杀青 · 隔离排版样张</title>
+<link rel="stylesheet" href="/frontend/src/styles/notebook-fonts.css"><link rel="stylesheet" href="./lab.css"></head>
+<body><header class="lab-ui"><p class="eyebrow">QUIRE / PRINT LAB · P6-0</p><h1>杀青 · 隔离排版样张</h1><p>固定公开材料 · 不读取账号、日记或 IndexedDB · 非正式入口</p>
+<p><a href="?mode=a5">A5 顺序页</a>　<a href="?mode=spread">A4 顺序双页</a>　<a href="?mode=booklet">A4 折叠拼版</a>　<a href="?numbered=1&mode=booklet">8 页编号折叠样张</a>　<a href="?font=fallback">系统回退样张</a></p>
+<p id="status" role="status">准备固定字体和图片……</p><p>系统打印请使用浏览器菜单；本页不自动调起打印。默认 A5；A4 以 URL mode 为准。</p></header>
+<main id="output" aria-label="印刷页"></main><div id="measure" aria-hidden="true"></div><pre id="result" class="lab-ui" aria-label="验证结果"></pre>
+<script type="module" src="./lab.mjs"></script></body></html>
