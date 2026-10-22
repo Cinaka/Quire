@@ -299,18 +299,23 @@ watch([book, anchor, width, items, loading], () => {
 })
 async function move(direction: -1 | 1): Promise<void> {
   if (moving.value || loading.value || !readPort.value) return
-  const version = revision.value, origin = anchor.value, port = readPort.value
-  const target = notebookTargetIndex(entryIds.value, origin, direction, width.value)
+  const version = revision.value, origin = anchor.value, port = readPort.value, viewport = width.value
+  const cancelled = () => disposed || version !== revision.value || anchor.value !== origin || port !== readPort.value || width.value !== viewport || Boolean(queryError.value)
+  const target = notebookTargetIndex(entryIds.value, origin, direction, viewport)
   if (target < 0) return
   moving.value = true; protectedTarget.value = false
   try {
     await port.assertCurrent()
     // Crossing the 20-row boundary fetches just the next batch (also fills a double spread).
-    const desired = target + (width.value >= 1200 ? 2 : 1)
+    const desired = target + (viewport >= 1200 ? 2 : 1)
     if (desired > entryIds.value.length && hasMore.value) await loadMore()
-    if (disposed || version !== revision.value || anchor.value !== origin || port !== readPort.value || queryError.value) return
+    if (cancelled()) return
+    const targetId = entryIds.value[target]
+    if (!targetId) return
     await port.assertCurrent()
-    if (entryIds.value[target]) anchor.value = entryIds.value[target]!
+    // Final async guard may outlive a filter, port, viewport or result change.
+    if (cancelled() || entryIds.value[target] !== targetId) return
+    anchor.value = targetId
   } catch { if (!disposed && port === readPort.value) fallback("阅读上下文已失效，请重新核验。") }
   finally { moving.value = false }
 }
