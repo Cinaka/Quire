@@ -16,7 +16,8 @@
     "test:p5": "node scripts/test-notebook.cjs",
     "check:p5": "npm run test:p5 && npm run build",
     "check:p5:browser": "vue-tsc --noEmit -p tsconfig.notebook-browser.json && npm run check:p5",
-    "verify:p5:browser": "vite --config vite.notebook-browser.config.ts"
+    "verify:p5:browser": "vite --config vite.notebook-browser.config.ts",
+    "check:p5:integration": "npm run test:p3 && npm run test:p4 && npm run check:p5:browser"
   },
   "dependencies": {
     "@tiptap/extension-image": "^2.27.2",
