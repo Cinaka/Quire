@@ -1,0 +1,94 @@
+{
+  "stage": "P6-4 integration preparation; not full acceptance",
+  "baseline": "586ffd4474cda11b56aff9ad502a5882df6c25c2",
+  "userFeedback": {
+    "head": "586ffd4474cda11b56aff9ad502a5882df6c25c2",
+    "build": "User reports normal build without errors",
+    "browsers": "User reports browser retest without issues; exact versions and itemized logs not supplied",
+    "scope": "P6-3 local feedback, not P6-4 full integration, device, performance or physical acceptance"
+  },
+  "changes": "Only package scripts, test runner and manifest, runner tests, docs and evidence. No runtime/dependency/lock/schema/backup/sync/backend changes; no PR/merge/deploy.",
+  "toolChecks": {
+    "runnerTests": {
+      "command": "node --test tests/print-test-runner.test.cjs",
+      "passed": 9,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "duration_ms": 438.399867,
+      "boundary": "Orchestration tests use isolated temp files and injected subprocess results; one real child exit9 test. Not P3/P4/P5/P6 business suites."
+    },
+    "syntax": "node --check passes for both new CJS files",
+    "packageInvariant": "All baseline package fields other than scripts unchanged; all previous scripts unchanged; exactly three scripts added",
+    "sparseWorkspacePreflight": {
+      "p6Exit": 1,
+      "integrationExit": 1,
+      "expected": true,
+      "reason": "Required current-revision tests not present in sparse tool workspace. Commands stop before running partial suites or build.",
+      "isApplicationRegressionFailure": false,
+      "isFullSuitePass": false
+    }
+  },
+  "integrationContract": {
+    "groups": [
+      "P3 all",
+      "P4 all (not sync subset)",
+      "P5 all",
+      "P6 export/print + notebook-session + runner tests"
+    ],
+    "requiredFileCounts": {
+      "p3": 5,
+      "p4": 54,
+      "p5": 9,
+      "p6": 25
+    },
+    "additionalNewMatchingFiles": "Included dynamically",
+    "sharedSessionOverlap": "P6 also includes notebook-session already in P5; do not add counts as unique tests",
+    "followedBy": [
+      "Existing P5 browser-tool typecheck",
+      "Exactly one existing formal build"
+    ],
+    "failClosed": [
+      "missing files",
+      "missing tools",
+      "unknown arguments",
+      "changed build contract",
+      "spawn failure",
+      "nonzero exit",
+      "signal",
+      "missing exit status"
+    ],
+    "doesNot": [
+      "install or upgrade dependencies",
+      "start servers",
+      "create app fixtures",
+      "operate app DB",
+      "cleanup acceptance directories",
+      "claim OS PDF success"
+    ]
+  },
+  "notExecutedThisRound": [
+    "Full business integration chain in latest complete checkout",
+    "Full project Vue/Vite build in tool workspace",
+    "New real browser/device/OS print dialog/physical/performance acceptance"
+  ],
+  "priorEvidence": "evidence/p6-3-formal-tool-results.json (historical results, not rerun)",
+  "outstanding": [
+    "local latest integration command",
+    "read-only compatibility/network smoke",
+    "explicit system PDF size/text checks",
+    "real phone and 375/768 layouts",
+    "Firefox current-stage report",
+    "real device cold/warm timing and peak memory",
+    "8-page physical folded output or explicit user acceptance of unverified limitation"
+  ],
+  "sourceSha256": {
+    "frontend/package.json": "48d4bb4b98d9fefb2f4ea88fdd7b80bc45778b48c2785736f43d496c88bf9733",
+    "frontend/scripts/test-print.cjs": "ed878b0c85b9d28ea8c0f4771f35b8e48dd9f6ee14d766399cecd1dcdea258ce",
+    "frontend/scripts/print-test-manifest.json": "e6b303e58bd273642f9a361e0338ae83a5689cca22073e15b79c44c22ae79178",
+    "frontend/tests/print-test-runner.test.cjs": "dfd5a561784aa4ce1943847c7b0d398bd36cad0d4fb2cfe955c02467d495295f",
+    "doc/P6-4 集成验收与收尾记录.md": "5a870c00a97a1c424c867a70de2fb608bd6c6f974c21e9aaa1bc900744a62e2f",
+    "doc/P6 打印与导出（杀青）真相来源.md": "9ec8f2d19d1b8c425458bc518e4fccfd75a4fa6d7e1f77b187e16930a6d444be",
+    "doc/青简 Quire 项目状态索引（真相来源） eb64c86897b44b3ca979c923e3984bd9.md": "ff20d0d3305df7c4305413c87c816feb20df2c974cb86c2ba620cf3604b090b1"
+  }
+}
