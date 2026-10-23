@@ -115,6 +115,14 @@ export async function preflightImages(records: readonly ExportImageRecord[], { s
   const result: ExportImagePlan = Object.freeze({ items: Object.freeze(items), bytes, pixels })
   approvedPlans.add(result); return result
 }
+/** Derived single-item view of a fully budgeted branded plan; cannot forge approval. */
+export function selectExportImagePlan(plan: ExportImagePlan, id: string): ExportImagePlan {
+  if (!approvedPlans.has(plan)) fail("UNVERIFIED_IMAGE_PLAN")
+  const item = plan.items.find(item => item.id === id)
+  if (!item) throw new ExportSnapshotError("EXPORT_LAYOUT_IMAGE_MISSING")
+  const selected = Object.freeze({ items: Object.freeze([item]), bytes: item.blob.size, pixels: item.pixels })
+  approvedPlans.add(selected); return selected
+}
 export interface ExportBitmap { readonly width: number; readonly height: number; close(): void }
 export type ExportDecode = (blob: Blob) => Promise<ExportBitmap>
 async function decodeExportBitmap(blob: Blob): Promise<ExportBitmap> {
@@ -126,6 +134,41 @@ async function decodeExportBitmap(blob: Blob): Promise<ExportBitmap> {
 export class SerialImageDecoder {
   #busy = false
   get busy(): boolean { return this.#busy }
+  /** Explicit HTML-image preparation shares the native slot with ImageBitmap.
+   * DOM/URL ownership stays with the layout lease, NOT a pretend bitmap.close().
+   * Browser painting/caches are not measurable or hard-cancellable through this API. */
+  async verifyDomImage(plan: ExportImagePlan, options: { signal?: AbortSignal; load: () => Promise<{ width: number; height: number }>; discard: () => void; assertCurrent: () => Promise<void>; timeoutMs?: number }): Promise<{ width: number; height: number }> {
+    if (this.#busy) fail("DECODER_BUSY")
+    if (!approvedPlans.has(plan) || plan.items.length !== 1) fail("UNVERIFIED_IMAGE_PLAN")
+    const timeout = options.timeoutMs ?? RESOURCE_LIMITS.stageMs
+    if (!valid(timeout) || timeout > RESOURCE_LIMITS.stageMs) fail("INVALID_DECODE_TIMEOUT")
+    checkSignal(options.signal); this.#busy = true
+    const deadline = performance.now() + timeout
+    let detached = false, settled = false, timer: ReturnType<typeof setTimeout> | undefined, abort: (() => void) | undefined
+    const raw = Promise.resolve().then(async () => { await options.assertCurrent(); checkSignal(options.signal); return options.load() })
+    void raw.then(() => { settled = true }, () => { settled = true })
+    const stopped = new Promise<never>((_, reject) => {
+      abort = () => reject(new ExportSnapshotError("CANCELLED"))
+      options.signal?.addEventListener("abort", abort, { once: true }); if (options.signal?.aborted) abort()
+      timer = setTimeout(() => reject(new ExportSnapshotError("DECODE_TIMEOUT")), timeout)
+    })
+    try {
+      const size = await Promise.race([raw, stopped]); checkSignal(options.signal)
+      assertPixels(size.width, size.height)
+      const item = plan.items[0]!, same = size.width === item.width && size.height === item.height
+      if (!same && !(item.mime === "image/jpeg" && size.width === item.height && size.height === item.width)) fail("DECODE_DIMENSION_MISMATCH")
+      await options.assertCurrent(); checkSignal(options.signal)
+      if (performance.now() > deadline) fail("DECODE_TIMEOUT")
+      return Object.freeze({ width: size.width, height: size.height })
+    } catch (error) {
+      try { options.discard() } catch { /* still release slot */ }
+      if (!settled) {
+        detached = true
+        void raw.then(() => { try { options.discard() } finally { this.#busy = false } }, () => { this.#busy = false }).catch(() => {})
+      }
+      throw error instanceof ExportSnapshotError ? error : new ExportSnapshotError("IMAGE_DECODE_FAILED")
+    } finally { clearTimeout(timer); if (abort) options.signal?.removeEventListener("abort", abort); if (!detached) this.#busy = false }
+  }
   async run(plan: ExportImagePlan, { signal, decode = decodeExportBitmap, assertCurrent = async () => {}, timeoutMs = RESOURCE_LIMITS.stageMs }:
     { signal?: AbortSignal; decode?: ExportDecode; assertCurrent?: () => Promise<void>; timeoutMs?: number } = {}): Promise<{ completed: number; concurrency: 1 }> {
     if (this.#busy) fail("DECODER_BUSY")

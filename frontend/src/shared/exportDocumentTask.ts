@@ -17,11 +17,13 @@ export interface ExportPreparedDocument {
  * No formal view imports this yet. Read rechecks policy/identity; stale consumers
  * cannot use a model as permission. Cancellation cannot erase retained copies. */
 export function createExportDocumentTask(preflight: Preflight, prepareFonts: ExportFontPrepare) {
+  const releases = new Set<() => void>()
   let closed = false, version = 0
   let active: { controller: AbortController; review: ExportReview; mode: ExportContentMode; font?: ExportFontLease; value?: ExportPreparedDocument; stopAbort?: () => void } | undefined
   const cancel = () => {
     version++; const old = active; active = undefined
     old?.stopAbort?.(); old?.controller.abort(); old?.font?.release()
+    if (old) for (const listener of [...releases]) { try { listener() } catch { /* isolate consumers */ } }
   }
   const stop = preflight.subscribe(status => {
     const job = active
@@ -29,7 +31,11 @@ export function createExportDocumentTask(preflight: Preflight, prepareFonts: Exp
   })
   return {
     cancel,
-    close() { if (closed) return; closed = true; cancel(); stop() },
+    subscribeReleased(listener: () => void) {
+      if (!active?.value || closed) { listener(); return () => {} }
+      releases.add(listener); return () => { releases.delete(listener) }
+    },
+    close() { if (closed) return; closed = true; cancel(); stop(); releases.clear() },
     async prepare(mode: ExportContentMode, review: ExportReview, fontMode: ExportFontMode, signal?: AbortSignal): Promise<void> {
       if (closed) throw new ExportSnapshotError("EXPORT_DOCUMENT_CLOSED")
       cancel(); const task = version
@@ -47,6 +53,16 @@ export function createExportDocumentTask(preflight: Preflight, prepareFonts: Exp
         job.font = font
         const final = await current(); check()
         job.value = Object.freeze({ document, font: Object.freeze({ mode: font.mode, family: font.family, shardCount: font.shardCount, uncoveredScalars: font.uncoveredScalars }), changed: final.changed, completeOutputReady: false })
+      } catch (error) { if (active === job) cancel(); throw error }
+    },
+    /** Same fixed snapshot resources, no new scan or thumbnail/remote fallback. */
+    async readImages() {
+      const job = active, task = version
+      if (!job?.value) throw new ExportSnapshotError("EXPORT_DOCUMENT_NOT_PREPARED")
+      try {
+        const current = await preflight.readForLayout(job.mode, job.review)
+        if (closed || version !== task || active !== job || !job.value) throw new ExportSnapshotError("EXPORT_DOCUMENT_RELEASED")
+        return current.images.items
       } catch (error) { if (active === job) cancel(); throw error }
     },
     async read(): Promise<ExportPreparedDocument> {

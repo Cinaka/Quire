@@ -1,0 +1,28 @@
+/* Scoped independent print document. No global body/heading rules or swap CSS. */
+.quire-print-root { color:#2e2c28; background:white; font-synthesis:weight; }
+.quire-print-root *, .quire-print-root *::before { box-sizing:border-box; }
+.quire-print-root .p6-sheet { position:relative; width:148mm; height:210mm; padding:12mm; background:white; margin:0 auto 24px; }
+.quire-print-root .p6-body { width:124mm; height:179mm; font-size:12pt; line-height:1.7; overflow-wrap:anywhere; white-space:pre-wrap; }
+.quire-print-root .p6-body :where(div,p,h1,h2,h3,ul,ol,li,blockquote,pre) { margin:0 0 3mm; }
+.quire-print-root .p6-body :where(p,span,strong,em,s,code) { overflow-wrap:anywhere; }
+.quire-print-root .p6-body :where(h1,h2,h3) { font-weight:400; font-size:18pt; line-height:1.4; }
+.quire-print-root .p6-body h3 { font-size:15pt; }
+.quire-print-root .p6-body :where(ul,ol) { padding-left:7mm; }
+.quire-print-root .p6-body li { padding-left:1mm; }
+.quire-print-root .p6-body li[data-continued="true"] { list-style-type:none; }
+.quire-print-root .p6-body blockquote { margin-left:0; padding-left:3mm; border-left:1px solid #5a7a6b; }
+.quire-print-root .p6-body pre { font:9pt/1.7 ui-monospace,monospace; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; padding-left:2mm; border-left:1px solid #bcb7ad; }
+.quire-print-root .p6-body code { font:inherit; font-family:ui-monospace,monospace; }
+.quire-print-root .p6-body [data-role="date"], .quire-print-root .p6-body [data-role="meta"] { font-size:9pt; line-height:1.6; color:#68645f; }
+.quire-print-root .p6-body [data-role="diagnostic"], .quire-print-root .p6-body [data-role="placeholder"], .quire-print-root .p6-body [data-role="notice"] { display:block; padding-left:2mm; border-left:1px solid #9b563b; font-size:10pt; }
+.quire-print-root .p6-body [data-role="figure"] { display:block; text-align:center; }
+.quire-print-root .p6-body [data-role="caption"] { display:block; text-align:center; font-size:9pt; line-height:1.5; margin:2mm 0 3mm; }
+.quire-print-root .p6-image-box { display:block; margin:0 auto; }
+.quire-print-root .p6-image-box img { width:100%; height:100%; display:block; object-fit:contain; }
+.quire-print-root .p6-folio { position:absolute; bottom:7mm; left:12mm; right:12mm; text-align:center; font:9pt/1 system-ui,sans-serif; color:#68645f; }
+@page quire-a5 { size:148mm 210mm; margin:0; }
+@media print {
+ .quire-print-root { background:white; }
+ .quire-print-root .p6-sheet { page:quire-a5; margin:0; break-after:page; break-inside:avoid; }
+ .quire-print-root .p6-sheet:last-child { break-after:auto; }
+}

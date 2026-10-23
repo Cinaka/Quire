@@ -63,7 +63,7 @@ export function collectExportFontText(document: ExportDocument): string {
     if (units > 6 * 1024 ** 2) throw new ExportSnapshotError("EXPORT_FONT_TEXT_LIMIT")
     for (const char of text) chars.add(char)
   }
-  add("青简 杀青 目录 目录·续 第 页 缩略图 图片占位 正文诊断 0123456789—：")
+  add("青简 杀青 目录 目录·续 第 页 缩略图 图片占位 正文诊断 无题【】；#　 0123456789—：")
   for (const entry of document.entries) {
     add(entry.entryDate); add(entry.title); add(entry.mood ?? ""); add(entry.weather ?? "")
     for (const tag of entry.tags) add(tag)

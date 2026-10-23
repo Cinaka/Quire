@@ -62,3 +62,7 @@ test('cancel in read final await gap denies stale document copy',async()=>{
  f.pre.readForLayout=async(...args)=>{const value=await original(...args);queueMicrotask(()=>f.doc.cancel());return value}
  await assert.rejects(f.doc.read(),code('EXPORT_DOCUMENT_RELEASED'));assert.equal(f.added.size,0);f.close()
 })
+test('document resources share the fixed snapshot and release subscribers detach on cancel',async()=>{
+ const f=fixture(),r=await start(f);await f.doc.prepare('full',r,'system');assert.deepEqual(await f.doc.readImages(),[]);let released=0
+ const stop=f.doc.subscribeReleased(()=>released++);f.pre.cancel();assert.equal(released,1);stop();await assert.rejects(f.doc.readImages(),code('EXPORT_DOCUMENT_NOT_PREPARED'));f.close()
+})
