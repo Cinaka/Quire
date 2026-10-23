@@ -1,3 +1,4 @@
+import { clearExportHandoff, validateExportHandoffScope } from "@/shared/exportHandoff"
 import { liveQuery } from "dexie"
 import { get } from "@/api/request"
 import { accessTokenSubject, getAccessToken, subscribeTokenContext, tokenGeneration } from "@/api/tokenStore"
@@ -29,7 +30,7 @@ let started = false, expiryTimer: ReturnType<typeof setTimeout> | undefined
 function scheduleExpiry(): void {
   clearTimeout(expiryTimer)
   const remaining = auth().expiresAt - Date.now()
-  if (remaining > 0) expiryTimer = setTimeout(() => { gate.authChanged(); clearNotebookReturn() }, Math.min(remaining + 1, 2_147_483_647))
+  if (remaining > 0) expiryTimer = setTimeout(() => { gate.authChanged(); clearNotebookReturn(); clearExportHandoff() }, Math.min(remaining + 1, 2_147_483_647))
 }
 function start(): void {
   if (started) return
@@ -37,12 +38,12 @@ function start(): void {
   let generation = tokenGeneration()
   subscribeTokenContext(() => {
     if (generation !== tokenGeneration()) { generation = tokenGeneration(); clearNotebookReturn() }
-    gate.authChanged(); scheduleExpiry()
+    gate.authChanged(); clearExportHandoff(); scheduleExpiry()
   })
   // Kept across the edit route only as an in-memory identity proof, never a persisted preference.
   liveQuery(readNotebookOwner).subscribe({
     next: () => { void gate.revalidate(); void validateNotebookReturn() },
-    error: () => { gate.invalidate(); clearNotebookReturn() },
+    error: () => { gate.invalidate(); clearNotebookReturn(); clearExportHandoff() },
   })
   scheduleExpiry()
 }
@@ -55,8 +56,8 @@ export async function captureNotebookScope(): Promise<NotebookScope> {
 }
 // Return capsule validation is read-only; absent/changed scopes discard IDs rather than retarget them.
 async function validateNotebookReturn(): Promise<void> {
-  try { const { validateNotebookReturnScope } = await import("@/shared/notebookReturn"); validateNotebookReturnScope(await captureNotebookScope()) }
-  catch { clearNotebookReturn() }
+  try { const { validateNotebookReturnScope } = await import("@/shared/notebookReturn"); const scope = await captureNotebookScope(); validateNotebookReturnScope(scope); validateExportHandoffScope(scope) }
+  catch { clearNotebookReturn(); clearExportHandoff() }
 }
 export async function createVerifiedNotebookReadPort(failed: () => void) {
   start()

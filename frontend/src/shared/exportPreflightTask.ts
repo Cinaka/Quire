@@ -23,7 +23,7 @@ export interface ExportCheckedSnapshot {
   /** Diagnostics, fonts, pagination and platform print checks still gate output. */
   readonly completeOutputReady: false
 }
-/** Internal lifecycle only; never exported via @/repo or mounted in a formal view.
+/** Fixed-snapshot preflight, exposed by the verified task factory only.
  * Capture fully commits before Blob reads/native decode. Retains no bitmap/URL.
  * Caller must explicitly rerun to update content; ordinary changes only notify. */
 export function createExportPreflightTask(port: ExportSnapshotPort,

@@ -17,6 +17,8 @@
       <h1 class="page-title">成编</h1>
       <button type="button" class="plain accent" @click="router.push('/entry/new')">刻一简</button>
     </header>
+    <button type="button" class="plain accent" style="min-height:44px" :disabled="printEntryBusy" @click="openPrint">杀青 · 按当前筛选编排</button>
+    <p v-if="printEntryError" role="alert">{{ printEntryError }}</p>
 
     <div class="view-switch" aria-label="简册视图">
       <button type="button" class="view-button" :class="{ active: !book }" :aria-pressed="!book" :disabled="restoring" @click="switchView(false)">列表视图</button>
@@ -188,6 +190,7 @@ import EntryThumbnail from "@/components/EntryThumbnail.vue"
 import { useEntryList } from "@/composables/useEntryList"
 import { usePullToRefresh } from "@/composables/usePullToRefresh"
 import { mediaRepo, tagRepo, entryRepo, captureNotebookScope, createVerifiedNotebookReadPort, type NotebookReadPort } from "@/repo"
+import { rememberExportHandoff, clearExportHandoff } from "@/shared/exportHandoff"
 import { notebookTargetIndex } from "@/shared/notebookNavigation"
 import { canOpenScheduleDiaryContent } from "@/shared/scheduleEditorContent"
 import { rememberNotebookReturn, takeNotebookReturn, rememberNotebookLogin, takeNotebookLogin, type NotebookListState } from "@/shared/notebookReturn"
@@ -198,6 +201,24 @@ import type { EntryListItem, EntryOrder, Tag } from "@/shared/types"
 
 const route = useRoute()
 const router = useRouter()
+const printEntryError = ref(""), printEntryBusy = ref(false)
+async function openPrint() {
+  if (printEntryBusy.value) return
+  printEntryBusy.value = true
+  printEntryError.value = ""
+  try {
+    const request = {scope:{kind:"all" as const}, filters: {
+      keyword: keyword.value.trim(), tagIds: [...new Set(tagIds.value)],
+      ...(dateFrom.value ? {dateFrom:dateFrom.value} : {}), ...(dateTo.value ? {dateTo:dateTo.value} : {}),
+      ...(hasImage.value !== undefined ? {hasImage:hasImage.value} : {}),
+    }}
+    const scope = await captureNotebookScope()
+    rememberExportHandoff(request, scope)
+    const failure = await router.push({path:"/print",query:{from:"list"}})
+    if (failure) clearExportHandoff()
+  } catch { clearExportHandoff(); printEntryError.value = "无法带入当前筛选，请检查日期范围与登录后重试。" }
+  finally { printEntryBusy.value = false }
+}
 
 const ORDERS: Array<{ value: EntryOrder; label: string }> = [
   { value: "entryDateDesc", label: "新在前" },

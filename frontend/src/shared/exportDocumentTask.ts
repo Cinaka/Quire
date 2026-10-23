@@ -14,7 +14,7 @@ export interface ExportPreparedDocument {
   readonly completeOutputReady: false
 }
 /** Owns font leases, NOT the supplied preflight port. A print view must close both.
- * No formal view imports this yet. Read rechecks policy/identity; stale consumers
+ * Read rechecks policy/identity; stale consumers
  * cannot use a model as permission. Cancellation cannot erase retained copies. */
 export function createExportDocumentTask(preflight: Preflight, prepareFonts: ExportFontPrepare) {
   const releases = new Set<() => void>()

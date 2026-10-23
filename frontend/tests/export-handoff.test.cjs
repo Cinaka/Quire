@@ -1,0 +1,9 @@
+const {test}=require('node:test'),assert=require('node:assert/strict')
+const {rememberExportHandoff,takeExportHandoff,clearExportHandoff,validateExportHandoffScope}=require('../src/shared/exportHandoff.ts')
+const s={ownerUserId:'A',generation:'e',subject:'A',authGeneration:1}
+test('handoff clones and freezes filters, one use and no storage',()=>{const request={scope:{kind:'all'},filters:{keyword:'私密搜索',tagIds:['t']}};rememberExportHandoff(request,s);request.filters.keyword='new';request.filters.tagIds.push('other');const got=takeExportHandoff(s);assert.equal(got.filters.keyword,'私密搜索');assert.deepEqual(got.filters.tagIds,['t']);assert(Object.isFrozen(got));assert.equal(takeExportHandoff(s),undefined)})
+test('every account/host generation component rejects and consumes old capsule',()=>{for(const key of Object.keys(s)){rememberExportHandoff({scope:{kind:'all'}},s);assert.equal(takeExportHandoff({...s,[key]:key==='authGeneration'?2:'B'}),undefined);assert.equal(takeExportHandoff(s),undefined)}})
+test('expiry and explicit clear discard selection',()=>{const now=Date.now;try{let n=100;Date.now=()=>n;rememberExportHandoff({scope:{kind:'entry',id:'entry'}},s);n+=60001;assert.equal(takeExportHandoff(s),undefined);rememberExportHandoff({scope:{kind:'all'}},s);clearExportHandoff();assert.equal(takeExportHandoff(s),undefined)}finally{Date.now=now}})
+test('invalid selection never enters a capsule',()=>{clearExportHandoff();assert.throws(()=>rememberExportHandoff({scope:{kind:'range',from:'bad',to:'bad'}},s));assert.equal(takeExportHandoff(s),undefined)})
+
+test('owner validation discards a pending old context without consuming valid same context',()=>{rememberExportHandoff({scope:{kind:'all'}},s);validateExportHandoffScope(s);assert(takeExportHandoff(s));rememberExportHandoff({scope:{kind:'all'}},s);validateExportHandoffScope({...s,generation:'restored'});assert.equal(takeExportHandoff(s),undefined)})
