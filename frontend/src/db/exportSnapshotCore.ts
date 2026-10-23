@@ -172,11 +172,14 @@ export function createExportSnapshotCore(io: ExportSnapshotIO, source: NotebookR
         // A task signal remains attached for the handle lifetime, not just capture().
         check()
         return {
-          async read() {
+          async read(): Promise<ExportSnapshot> {
             if (released) fail("EXPORT_SNAPSHOT_RELEASED")
             auth(); if (task !== version) { release(); fail("EXPORT_TASK_REPLACED") }
             await assertCurrent()
-            auth(); if (signal?.aborted || task !== version || released || !current) { release(); fail("EXPORT_SNAPSHOT_RELEASED") }
+            auth(); if (signal?.aborted || task !== version || released || !current) {
+              release()
+              throw new ExportSnapshotError("EXPORT_SNAPSHOT_RELEASED")
+            }
             return current
           },
           release,
