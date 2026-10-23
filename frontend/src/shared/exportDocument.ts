@@ -3,6 +3,8 @@ import type { ExportCheckedSnapshot } from "./exportPreflightTask"
 import { assertExportContentMode, type ExportContentMode, type ExportReviewIssue } from "./exportReviewPolicy"
 import { ExportSnapshotError, freezeExportValue } from "./exportSnapshot"
 
+import { normalizeExportBookTitle } from "./exportBookRules"
+
 const ELEMENTS = new Set<string>(["div", "p", "h1", "h2", "h3", "ul", "ol", "li", "blockquote", "pre", "code", "br", "strong", "em", "s"])
 
 export interface ExportSource { readonly entryId: string; readonly path: readonly number[] }
@@ -13,6 +15,7 @@ export type ExportDocumentNode =
   | { readonly kind: "image"; readonly mediaId: string; readonly width: number; readonly height: number; readonly alt: string; readonly title: string; readonly thumbnailOnly: boolean; readonly source: ExportSource }
   | { readonly kind: "placeholder"; readonly mediaId: string; readonly alt: string; readonly title: string; readonly reasons: readonly string[]; readonly source: ExportSource }
 export interface ExportDocument {
+  readonly bookTitle: string
   readonly entries: readonly {
     readonly id: string; readonly entryDate: string; readonly title: string; readonly mood: string | null; readonly weather: string | null
     readonly tags: readonly string[]; readonly issues: readonly ExportReviewIssue[]; readonly warnings: readonly string[]; readonly nodes: readonly ExportDocumentNode[]
@@ -23,7 +26,7 @@ export interface ExportDocument {
 /** Pure presentation copy, not authorization. Only the current preflight task can
  * supply a live handoff; downstream must recheck after every asynchronous stage.
  * No DOM, arbitrary HTML/URL, raw Entry, owner, timestamps or Blob in this model. */
-export function createExportDocument(value: ExportCheckedSnapshot & { readonly contentMode: ExportContentMode }): ExportDocument {
+export function createExportDocument(value: ExportCheckedSnapshot & { readonly contentMode: ExportContentMode }, options: { title?: string } = {}): ExportDocument {
   assertExportContentMode(value.review, value.contentMode, value.degradedConfirmed)
   const images = new Map(value.images.items.map(item => [item.id, item]))
   const media = new Map(value.snapshot.media.map(item => [item.id, item]))
@@ -52,7 +55,7 @@ export function createExportDocument(value: ExportCheckedSnapshot & { readonly c
       tags: entry.tags.map(tag => tag.name), issues: issues.map(issue => ({ ...issue })), warnings: [...entry.content.warnings],
       nodes: entry.content.nodes.map((node, i) => copy(node, [i], 0)) }
   })
-  return freezeExportValue({ entries, contentMode: value.contentMode, completeOutputReady: false as const })
+  return freezeExportValue({ bookTitle: normalizeExportBookTitle(options.title), entries, contentMode: value.contentMode, completeOutputReady: false as const })
 }
 /** Bounded unique scalar text for font selection, including generated diagnostics.
  * Never logged, persisted, sent to a server or stored in the public catalog. */
@@ -63,7 +66,8 @@ export function collectExportFontText(document: ExportDocument): string {
     if (units > 6 * 1024 ** 2) throw new ExportSnapshotError("EXPORT_FONT_TEXT_LIMIT")
     for (const char of text) chars.add(char)
   }
-  add("青简 杀青 目录 目录·续 第 页 缩略图 图片占位 正文诊断 无题【】；#　 0123456789—：")
+  add(document.bookTitle ?? "青简")
+  add("QUIRE PRINT 本机已保存内容的编排快照 篇 日期范围 部分图片以占位呈现 一编青简，半生浮沉。 续 青简 杀青 目录 目录·续 第 页 缩略图 图片占位 正文诊断 无题【】；#　 0123456789—：")
   for (const entry of document.entries) {
     add(entry.entryDate); add(entry.title); add(entry.mood ?? ""); add(entry.weather ?? "")
     for (const tag of entry.tags) add(tag)

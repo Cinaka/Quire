@@ -8,7 +8,7 @@ p { line-height:1.65; }
 .hint { font-size:14px; color:#625d54; }
 .controls { display:flex; flex-wrap:wrap; gap:12px; }
 button { font:inherit; min-height:44px; border:1px solid #a69e90; border-radius:8px; background:#faf8f3; color:inherit; padding:10px 16px; cursor:pointer; }
-button:first-child { background:#426455; color:white; border-color:#426455; }
+#start, button[aria-pressed="true"] { background:#426455; color:white; border-color:#426455; }
 button:disabled { opacity:.55; cursor:default; }
 button:focus-visible,summary:focus-visible { outline:3px solid #2774b4; outline-offset:3px; }
 #viewport { padding:16px; overflow-x:auto; }
@@ -23,3 +23,8 @@ pre#report { white-space:pre-wrap; overflow-wrap:anywhere; font:13px/1.6 monospa
  #output { zoom:1 !important; }
  body:not([data-ready="true"]) #output { display:none; }
 }
+.modes { margin-top:12px; }
+button[aria-pressed="true"] { outline:2px solid #426455; outline-offset:2px; }
+select,input { font:inherit; color:inherit; background:#faf8f3; border:1px solid #a69e90; border-radius:6px; padding:8px; min-height:44px; max-width:100%; box-sizing:border-box; }
+input { width:240px; }
+select:focus-visible,input:focus-visible { outline:3px solid #2774b4; outline-offset:3px; }

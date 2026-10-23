@@ -26,3 +26,26 @@
  .quire-print-root .p6-sheet { page:quire-a5; margin:0; break-after:page; break-inside:avoid; }
  .quire-print-root .p6-sheet:last-child { break-after:auto; }
 }
+/* Book assembly keeps the already measured A5 boxes unchanged. */
+.quire-print-root .p6-cover .p6-body { display:flex; flex-direction:column; justify-content:center; gap:3mm; }
+.quire-print-root .p6-cover h1 { font-size:32pt; line-height:1.4; margin:8mm 0; overflow-wrap:anywhere; }
+.quire-print-root .p6-cover p { font-size:11pt; }
+.quire-print-root .p6-cover .p6-brand { font:9pt/1.5 system-ui,sans-serif; letter-spacing:.22em; color:#426455; margin-bottom:5mm; }
+.quire-print-root .p6-cover .p6-cover-note { font-size:9pt; color:#68645f; }
+.quire-print-root .p6-toc-row { display:grid; grid-template-columns:minmax(0,1fr) 12mm; gap:4mm; border-bottom:1px solid #d9d4cb; padding:3mm 0; font-size:11pt; line-height:1.7; }
+.quire-print-root .p6-toc-row p { margin:0 0 1mm; }
+.quire-print-root .p6-toc-date { font-size:9pt; color:#68645f; }
+.quire-print-root .p6-toc-number { text-align:right; white-space:nowrap; font:10pt/1.7 system-ui,sans-serif; }
+.quire-print-root.p6-book-output .p6-sheet { margin:0; flex:0 0 148mm; }
+.quire-print-root .p6-paper-face { height:210mm; display:flex; margin:0 auto 24px; gap:1mm; background:white; }
+.quire-print-root .p6-face-a5 { width:148mm; }
+.quire-print-root .p6-face-a4 { width:297mm; }
+.quire-print-root .p6-panel-blank { width:148mm; height:210mm; flex:0 0 148mm; background:white; }
+@page quire-a4 { size:297mm 210mm; margin:0; }
+@media print {
+ .quire-print-root.p6-book-output .p6-sheet { page:auto; break-after:auto; break-inside:auto; }
+ .quire-print-root .p6-paper-face { margin:0; break-after:page; break-inside:avoid; }
+ .quire-print-root .p6-paper-face:last-child { break-after:auto; }
+ .quire-print-root .p6-face-a5 { page:quire-a5; }
+ .quire-print-root .p6-face-a4 { page:quire-a4; }
+}

@@ -52,3 +52,6 @@ test('structural depth/fanout guard refuses entire document rather than truncati
  let node={kind:'text',text:'end'};for(let i=0;i<130;i++)node={kind:'element',tag:'p',children:[node]};assert.throws(()=>createExportDocument(value([node])),code('EXPORT_DOCUMENT_LIMIT'))
  const wide={kind:'element',tag:'p',children:Array.from({length:200001},()=>({kind:'text',text:'a'}))};assert.throws(()=>createExportDocument(value([wide])),code('EXPORT_DOCUMENT_LIMIT'))
 })
+test('custom sanitized cover title and all generated cover characters join final font text before loading',()=>{
+ const d=createExportDocument(value([]),{title:' /篆\n青\\简 '});assert.equal(d.bookTitle,'篆 青 简');const chars=collectExportFontText(d);for(const x of '篆本机已保存内容的编排快照部分图片以占位呈现篇续')assert(chars.includes(x));assert(Object.isFrozen(d));assert.throws(()=>createExportDocument(value([]),{title:'字'.repeat(121)}),code('EXPORT_BOOK_TITLE_LIMIT'))
+})

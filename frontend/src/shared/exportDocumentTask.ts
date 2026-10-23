@@ -36,8 +36,9 @@ export function createExportDocumentTask(preflight: Preflight, prepareFonts: Exp
       releases.add(listener); return () => { releases.delete(listener) }
     },
     close() { if (closed) return; closed = true; cancel(); stop(); releases.clear() },
-    async prepare(mode: ExportContentMode, review: ExportReview, fontMode: ExportFontMode, signal?: AbortSignal): Promise<void> {
+    async prepare(mode: ExportContentMode, review: ExportReview, fontMode: ExportFontMode, signal?: AbortSignal, options: { title?: string } = {}): Promise<void> {
       if (closed) throw new ExportSnapshotError("EXPORT_DOCUMENT_CLOSED")
+      const bookOptions = { title: options.title }
       cancel(); const task = version
       const job = { controller: new AbortController(), review, mode, font: undefined as ExportFontLease | undefined, value: undefined as ExportPreparedDocument | undefined, stopAbort: undefined as (() => void) | undefined }
       active = job
@@ -47,7 +48,7 @@ export function createExportDocumentTask(preflight: Preflight, prepareFonts: Exp
       const current = async () => { check(); const value = await preflight.readForLayout(mode, review); check(); return value }
       try {
         const value = await current(); check()
-        const document = createExportDocument(value), text = collectExportFontText(document)
+        const document = createExportDocument(value, bookOptions), text = collectExportFontText(document)
         const font = await prepareFonts(text, fontMode, { signal: job.controller.signal, assertCurrent: async () => { await current(); check() } })
         if (active !== job || task !== version || closed || signal?.aborted) { font.release(); throw new ExportSnapshotError("CANCELLED") }
         job.font = font
