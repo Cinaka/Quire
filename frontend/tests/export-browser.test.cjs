@@ -22,3 +22,30 @@ test('Vite dedicated port, no proxy/public assets/output, only targeted producti
 test('HTML contains no inline handler, private fields, network image/font/worker or print API',()=>{const s=source('index.html');for(const part of ["img-src 'none'","font-src 'none'","worker-src 'none'","form-action 'none'",'id="cancel"','id="report"','aria-live="polite"'])assert(s.includes(part));assert(!/onclick=|window\.print|<iframe|<img|<form/.test(s));assert(!/fetch|\/auth\/me/.test(s))})
 test('runner resolves existing Vite, never installs dependencies or touches existing build folders',()=>{const s=fs.readFileSync(path.join(root,'scripts/export-snapshot-browser.cjs'),'utf8');assert(s.includes("require.resolve('vite'"));assert(s.includes('vite.export-browser.config.mjs'));assert(!/npm install|npx|rm -|dist-p4|writeFile|unlink/.test(s))})
 test('all added JS entrypoints/config/fixtures parse with actual Node parser',()=>{for(const file of [...fs.readdirSync(folder).filter(f=>f.endsWith('.mjs')).map(f=>path.join(folder,f)),path.join(root,'vite.export-browser.config.mjs'),path.join(root,'scripts/export-snapshot-browser.cjs')]){const r=spawnSync(process.execPath,['--check',file],{encoding:'utf8'});assert.equal(r.status,0,`${file}: ${r.stderr}`)}})
+// Native ESM evaluation of the actual probe module, with only its unavailable Dexie
+// dependency replaced. This is NOT real Dexie/IndexedDB or browser evidence.
+let probeRun = 0
+async function evaluatedProbe(text = source('dexie-probe.mjs')) {
+  const stub = `export const audit={liveStops:0,events:new Set()};
+    export default class Dexie {
+      static get currentTransaction(){return 'injected-transaction'}
+      static on(name,fn){if(fn)audit.events.add(fn);return{unsubscribe(f){audit.events.delete(f)}}}
+    }
+    export function liveQuery(query){return{subscribe(observer){observer.next(query());return{unsubscribe(){audit.liveStops++}}}}}`
+  const url='data:text/javascript;base64,'+Buffer.from(stub+`\n// run ${++probeRun}`).toString('base64')
+  const actual=text.replace("from 'dexie'",`from '${url}'`)
+  return {module:await import('data:text/javascript;base64,'+Buffer.from(actual).toString('base64')),dependency:await import(url)}
+}
+test('probe actually evaluates as ESM before its default export is consumed; catches former TDZ',async()=>{
+  const {module:m}=await evaluatedProbe();assert.equal(m.default.currentTransaction,'injected-transaction')
+  const previous=source('dexie-probe.mjs').replace('export default observedDexie','')
+  await assert.rejects(evaluatedProbe('export default observedDexie\n'+previous),{name:'ReferenceError',message:/before initialization/})
+})
+test('evaluated probe forwards liveQuery and mutation subscribe/unsubscribe with counters returning to zero',async()=>{
+  const {module:m,dependency:d}=await evaluatedProbe();let value,events=0
+  const sub=m.liveQuery(()=>37).subscribe({next:n=>value=n});assert.equal(value,37);assert.equal(m.subscriptions.active,1)
+  sub.unsubscribe();sub.unsubscribe();assert.equal(m.subscriptions.active,0);assert.equal(d.audit.liveStops,1)
+  const listener=()=>events++;m.default.on('storagemutated',listener);assert.equal(m.subscriptions.contentActive,1)
+  for(const callback of d.audit.events)callback({});assert.equal(events,1)
+  m.default.on('storagemutated').unsubscribe(listener);assert.equal(m.subscriptions.contentActive,0);assert.equal(d.audit.events.size,0)
+})

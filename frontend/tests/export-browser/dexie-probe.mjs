@@ -1,6 +1,5 @@
 // Real installed Dexie, not a fake implementation. Only adapter subscriptions are counted.
 import Dexie, { liveQuery as actualLiveQuery } from 'dexie'
-export default observedDexie
 export const subscriptions = { active: 0, created: 0 }
 export function liveQuery(query) {
   return { subscribe(observer) {
@@ -28,3 +27,6 @@ const observedDexie = new Proxy(Dexie, { get(target, key, receiver) {
     return { unsubscribe(fn) { Dexie.on(name).unsubscribe(fn); contentListeners.delete(fn); subscriptions.contentActive = contentListeners.size } }
   }
 } })
+
+// Default export expressions evaluate immediately: initialize the proxy first.
+export default observedDexie
