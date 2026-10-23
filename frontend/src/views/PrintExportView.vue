@@ -159,18 +159,22 @@ async function print() { const n = generation, active = printer; if (!active || 
 function acknowledgePrint() { if (window.confirm('请确认系统打印对话框已经关闭。应用无法判断是否保存或打印。')) printer?.acknowledgeClosed() }
 onMounted(async () => {
   guard = installExportPrintGuard()
+  const n = generation
   if (route.query.from === 'list' || route.query.from === 'entry') {
-    const n = generation
     try {
-      const capsule = takeExportHandoff(await captureNotebookScope()); if (!isCurrent(n)) return
+      const scope = await captureNotebookScope()
+      // Check before consuming the one-use capsule: this mount may have left
+      // while the owner read was pending, and another entry may now own it.
+      if (!isCurrent(n)) return
+      const capsule = takeExportHandoff(scope)
       if (capsule) { inheritedFilters.value = capsule.filters; if (capsule.scope.kind === 'entry') { kind.value = 'entry'; entryScope.value = capsule.scope.id }; handoffNotice.value = capsule.scope.kind === 'entry' ? '从单篇进入：只读取这一简的本机已保存版本。' : '已带入列表进入时的筛选；下方范围与其取交集。' }
       else { handoffNeedsConfirmation.value = true; handoffNotice.value = '原入口的范围交接已过期或账号已变化。未读取任何简，请返回原入口重选，或明确重新选择下方范围。' }
-    } catch { handoffNeedsConfirmation.value = true; handoffNotice.value = '无法恢复原入口范围。未读取任何简，请核验登录后重新选择。' }
+    } catch { if (isCurrent(n)) { handoffNeedsConfirmation.value = true; handoffNotice.value = '无法恢复原入口范围。未读取任何简，请核验登录后重新选择。' } }
   }
-  initializing.value = false
+  if (isCurrent(n)) initializing.value = false
 })
 onBeforeRouteLeave(() => { if (printing.value && !window.confirm('打印对话框可能仍在使用本次内容。离开将清除应用预览，但不能撤回系统已取得的内容。仍要离开？')) return false; dispose() })
-function pageHidden() { dispose(); inheritedFilters.value = undefined; title.value = '青简'; entryScope.value = ''; kind.value = 'all'; handoffNotice.value = ''; handoffNeedsConfirmation.value = true; replacementConfirmed.value = false; phase.value = 'select'; progress.value = '页面已离开，本次内容已释放。需要时请重新读取。' }
+function pageHidden() { dispose(); initializing.value = false; inheritedFilters.value = undefined; title.value = '青简'; entryScope.value = ''; kind.value = 'all'; handoffNotice.value = ''; handoffNeedsConfirmation.value = true; replacementConfirmed.value = false; phase.value = 'select'; progress.value = '页面已离开，本次内容已释放。需要时请重新读取。' }
 window.addEventListener('pagehide', pageHidden)
 onBeforeUnmount(() => { unmounted = true; window.removeEventListener('pagehide', pageHidden); dispose(); guard?.close(); guard = undefined })
 </script>
