@@ -11,7 +11,7 @@
 <p class="intro">真实 Dexie / IndexedDB 与生产快照适配器；身份为模拟，材料为固定公开样例。不读取日常库、账号或私人文件，不同步、不打印。</p>
 <section class="boundary"><h2>运行边界</h2>
 <p>点击后，仅创建本次随机测试库。另一个真实数据库连接会写入固定材料，用来核对并发一致性；生产快照路径必须保持只读。</p>
-<p>通过不代表真实登录、图片解码、字体、分页、系统 PDF 或手机内存验收。停止后清空页面内快照，不删除测试库。</p></section>
+<p>本轮含固定2×2 PNG的事务外解码与变化提示核验；通过不代表真实登录、大图容量、字体、分页、系统 PDF 或手机内存验收。停止后清空页面内快照，不删除测试库。</p></section>
 <div class="actions"><button id="start" disabled>检查运行环境……</button><button id="cancel" disabled>停止并释放快照</button></div>
 <p id="status" role="status" aria-live="polite">尚未运行，不代表通过。</p>
 <section><h2>逐项核验</h2><ol id="checks"><li class="muted" id="empty">等待明确启动。</li></ol></section>

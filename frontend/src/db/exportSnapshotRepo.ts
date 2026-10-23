@@ -3,6 +3,7 @@ import { accessTokenSubject, getAccessToken, tokenGeneration } from "@/api/token
 import { db } from "./schema"
 import { readHostOwner } from "./scheduleHostContext"
 import { createExportSnapshotCore } from "./exportSnapshotCore"
+import { touchesExportContent } from "@/shared/exportContentMutation"
 import type { NotebookReadLease } from "./notebookReadCore"
 
 function validAccess(): boolean {
@@ -34,6 +35,13 @@ export function createLocalExportSnapshotPort(lease: NotebookReadLease) {
     observeIdentity(changed, failed) {
       const sub = liveQuery(readHostOwner).subscribe({ next: changed, error: failed })
       return () => sub.unsubscribe()
+    },
+    observeContent(changed, failed) {
+      const mutated = (parts: Parameters<typeof touchesExportContent>[1]) => {
+        try { if (touchesExportContent(db.name, parts)) changed() } catch { failed() }
+      }
+      Dexie.on("storagemutated", mutated)
+      return () => Dexie.on("storagemutated").unsubscribe(mutated)
     },
     now: Date.now, monotonic: () => performance.now(),
   }, lease)

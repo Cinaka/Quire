@@ -6,9 +6,9 @@ const source=fs.readFileSync(require.resolve('../src/db/exportSnapshotRepo.ts'),
 function fixture(){
  const calls=[],Dexie={currentTransaction:null},meta={},tags={get:async id=>{calls.push(['tag',id]);return{id}}},media={get:async id=>{calls.push(['media',id]);return{id}}}
  const entries={get:async id=>{calls.push(['entry',id]);return{id}},where:index=>{calls.push(['where',index]);return{between:(...args)=>{calls.push(['between',...args]);return{each:async visit=>visit({id:'indexed'})}}}}}
- const db={meta,entries,tags,media,transaction:async(...args)=>{calls.push(['transaction',...args.slice(0,-1)]);const old=Dexie.currentTransaction;Dexie.currentTransaction={db,mode:"readonly",storeNames:["meta","entries","tags","media"]};try{return await args.at(-1)()}finally{Dexie.currentTransaction=old}}}
+ const db={name:"testdb",meta,entries,tags,media,transaction:async(...args)=>{calls.push(['transaction',...args.slice(0,-1)]);const old=Dexie.currentTransaction;Dexie.currentTransaction={db,mode:"readonly",storeNames:["meta","entries","tags","media"]};try{return await args.at(-1)()}finally{Dexie.currentTransaction=old}}}
  let token='header.'+Buffer.from(JSON.stringify({exp:Date.now()/1000+1000})).toString('base64url')+'.sig',observer,unsub=0
- const context={Dexie,db,liveQuery:fn=>({subscribe:o=>{observer=o;calls.push(['observe',fn]);return{unsubscribe(){unsub++}}}}),readHostOwner:async()=>{calls.push(['owner']);return{ownerUserId:'A',generation:'e1'}},getAccessToken:()=>token,tokenGeneration:()=>7,accessTokenSubject:()=>'A',Date,JSON,atob,performance,createExportSnapshotCore:(io,lease)=>({io,lease})}
+ const context={touchesExportContent:require('../src/shared/exportContentMutation.ts').touchesExportContent,Dexie,db,liveQuery:fn=>({subscribe:o=>{observer=o;calls.push(['observe',fn]);return{unsubscribe(){unsub++}}}}),readHostOwner:async()=>{calls.push(['owner']);return{ownerUserId:'A',generation:'e1'}},getAccessToken:()=>token,tokenGeneration:()=>7,accessTokenSubject:()=>'A',Date,JSON,atob,performance,createExportSnapshotCore:(io,lease)=>({io,lease})}
  let js=stripTypeScriptTypes(source).replace(/^import .*$/gm,'').replace('export function createLocalExportSnapshotPort','function createLocalExportSnapshotPort');js+='\nresult=createLocalExportSnapshotPort({ownerUserId:"A",generation:"e1",authGeneration:7})'
  vm.createContext(context);vm.runInContext(js,context)
  return{...context.result,calls,db,Dexie,setToken:t=>token=t,emit:()=>observer.next(),get unsub(){return unsub}}
@@ -19,3 +19,11 @@ test('indexed inclusive active/date cursor; no default20, toArray or listRepo',a
 test('empty intersection skips scan; single ID uses exact get',async()=>{const f=fixture(),visited=[];await f.io.scan({emptyIntersection:true},()=>assert.fail());assert.equal(f.calls.length,0);await f.io.scan({scope:{kind:'entry',id:'e1'}},r=>visited.push(r.id));assert.deepEqual(f.calls,[['entry','e1']]);assert.deepEqual(visited,['e1'])})
 test('adapter JWT exp gate rejects malformed/expired token',()=>{const f=fixture();assert.equal(f.io.auth().valid,true);assert.equal(f.io.auth().generation,7);for(const t of ['', 'x.invalid.x','x.'+Buffer.from('{"exp":1}').toString('base64url')+'.x']){f.setToken(t);assert.equal(f.io.auth().valid,false)}})
 test('identity watcher delegates unsubscribe; session module shares singleton gate; not public repo API',()=>{const f=fixture();let events=0;const stop=f.io.observeIdentity(()=>events++,()=>{});f.emit();assert.equal(events,1);stop();assert.equal(f.unsub,1);const session=fs.readFileSync(require.resolve('../src/db/exportSessionRepo.ts'),'utf8');assert.match(session,/createVerifiedNotebookCapability\(createLocalExportSnapshotPort, failed\)/);const repo=fs.readFileSync(require.resolve('../src/repo/index.ts'),'utf8');assert(!/ExportSnapshot|exportSession/.test(repo))})
+test('committed content watcher routes exact tables and unsubscribes same listener',()=>{
+ const f=fixture();let on,off,changed=0,failed=0
+ f.Dexie.on=(name,callback)=>{assert.equal(name,'storagemutated');if(callback)on=callback;return{unsubscribe(fn){off=fn}}}
+ // Real source function is injected for wiring; not a real Dexie event test.
+ // fixture's VM resolves this helper through context on the next construction.
+ const stop=f.io.observeContent(()=>changed++,()=>failed++)
+ on({['idb://other/entries/']: {}});on({['idb://testdb/meta/']: {}});assert.equal(changed,0);on({['idb://testdb/entries/']: {}});assert.equal(changed,1);assert.equal(failed,0);stop();assert.equal(off,on)
+})

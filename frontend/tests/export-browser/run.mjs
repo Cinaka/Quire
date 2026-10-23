@@ -1,4 +1,6 @@
 import Dexie from 'dexie'
+import { createExportPreflightTask } from '../../src/shared/exportPreflightTask.ts'
+import { SerialImageDecoder, exportImageDecoder } from '../../src/shared/exportImageResources.ts'
 import { createLocalExportSnapshotPort } from '../../src/db/exportSnapshotRepo.ts'
 import { db, writer, OWNER, EPOCH, changeAuth, resetAuth } from './store.mjs'
 import { subscriptions } from './dexie-probe.mjs'
@@ -39,13 +41,15 @@ export async function run({ signal, opened, networkAttempts }) {
     scope: '真实Dexie/IndexedDB与未修改的生产快照适配器；模拟身份/owner读取与固定材料；非正式入口',
     database: db.name, browser: navigator.userAgent, complete: false, results: [],
     opened, networkAttempts, productionWriteAttempts: [], fixtureWriteOperations: [],
+    imageDecodeCalls: 0, imageDecodePeak: 0, bitmapsCreated: 0, bitmapsClosed: 0, contentSubscriptionsRemaining: null,
     dataTransactions: [], readonlyWriteProbeDenials: 0, subscriptionsRemaining: null, objectUrlAttempts: 0,
     limitations: ['没有调用/auth/me、验证JWT签名或正式账号生命周期；lease只在隔离测试中固定供应',
       '生产适配器的DB/token/owner依赖被定向替换；Dexie、实际schema、只读事务及liveQuery是真实的',
       '并发写入由原生游标调用点调度另一连接；任务替换/取消也由受控读调用点触发，非真实用户竞态',
-      '没有验证图片解码/像素、字体、正式变化提示、分页、系统打印或手机内存'],
+      '新增真实2x2 PNG快照到事务外原生解码和变化提示核验；失败/迟到由受控注入，不是原生损坏必拒承诺',
+      '没有验证正式账号变化提示界面、全尺寸图片组合、字体、分页、系统打印或手机内存'],
   }
-  const ports = [], audit = { enabled: false, transactions: [], reads: [], hook: null }
+  const ports = [], tasks = [], audit = { enabled: false, transactions: [], reads: [], hook: null }
   let task = 0, currentView, unexpectedError, runningCase = 'initialization'
   const pendingWriters = []
   const renderReport = () => { output.textContent = JSON.stringify(report, null, 2) }
@@ -56,7 +60,7 @@ export async function run({ signal, opened, networkAttempts }) {
     throw Error(`超时：${message}；请保持页面前台，排除后台节流后再核对`)
   }
   function clearView(text = '当前快照已释放。') { task++; currentView = undefined; preview.textContent = text }
-  function closeAll() { clearView(); for (const port of ports) port.close() }
+  function closeAll() { clearView(); for (const task of tasks) task.close(); for (const port of ports) port.close() }
   const onAbort = () => { audit.hook = null; closeAll() }
   signal.addEventListener('abort', onAbort, { once: true })
   const createURL = URL.createObjectURL
@@ -180,7 +184,7 @@ export async function run({ signal, opened, networkAttempts }) {
     })
     await check('快照后显式并发修改：旧正文/标签/Blob冻结，不悄悄换书', async () => {
       const p = port(), h = await p.capture(one), old = await h.read()
-      await writeVersion('new'); await verifyVersion(await h.read(), 'old')
+      await writeVersion('new'); await until(() => h.hasChanges(), '真实提交触发保守变化提示'); await verifyVersion(await h.read(), 'old')
       assert(Object.isFrozen(old.entries[0].content.nodes), '正文呈现值未冻结')
       const next = await p.capture(one); await verifyVersion(await next.read(), 'new'); await expectCode(() => h.read(), 'EXPORT_SNAPSHOT_RELEASED')
       next.release(); p.close()
@@ -239,9 +243,67 @@ export async function run({ signal, opened, networkAttempts }) {
       }
       resetAuth()
     })
+    let decoding = 0
+    async function trackedDecode(blob) {
+      assert(!Dexie.currentTransaction, '原生解码进入了数据库事务')
+      report.imageDecodeCalls++; decoding++; report.imageDecodePeak = Math.max(report.imageDecodePeak, decoding)
+      let native
+      try { native = await createImageBitmap(blob) } catch (error) { decoding--; throw error }
+      report.bitmapsCreated++; let disposed = false
+      return { width: native.width, height: native.height, close() {
+        assert(!disposed, '位图重复关闭'); disposed = true; native.close(); report.bitmapsClosed++; decoding--
+      } }
+    }
+    await check('真实快照到事务外图片预检：原生解码关闭，变化仅提示，重新捕获才更新', async () => {
+      const p = port(), task = createExportPreflightTask(p, { decode: trackedDecode }); tasks.push(task)
+      await task.run(one, signal); const old = await task.read()
+      assert(old.images.pixels === 4 && old.images.items.length === 1 && !old.completeOutputReady, '固定PNG资源或完整就绪状态错误')
+      assert(old.snapshot.entries[0].title === 'version-new', '初始快照不是当前固定版本')
+      await writeVersion('old'); await until(() => task.status().changed, '真实提交驱动任务变化提示')
+      assert((await task.read()).snapshot === old.snapshot && (await task.read()).changed, '提示时悄悄替换了冻结内容')
+      preview.textContent = '固定材料已有变化；保留旧快照，仅明确重新捕获才更新。'
+      await task.run(one, signal); const next = await task.read()
+      assert(next.snapshot.entries[0].title === 'version-old', '明确重捕获未取得新版本')
+      // A delayed committed notice may conservatively remain true; never auto-clear based on content equality.
+      task.cancel(); await expectCode(() => task.read(), 'EXPORT_PREFLIGHT_NOT_CHECKED')
+      task.close(); p.close(); clearView()
+      assert(!exportImageDecoder.busy, '正常任务结束后解码槽未释放')
+    })
+    await check('注入解码失败与真实代际失效：失败不保留结果，可重试，meta变化清理任务', async () => {
+      const p = port(), task = createExportPreflightTask(p, { decode: async () => { throw Error('明确注入的解码失败，不是原生损坏结论') } }); tasks.push(task)
+      await expectCode(() => task.run(one, signal), 'IMAGE_DECODE_FAILED')
+      assert(task.status().state === 'failed', '注入失败未明确停止'); await expectCode(() => task.read(), 'EXPORT_PREFLIGHT_NOT_CHECKED')
+      await until(() => !exportImageDecoder.busy, '失败后解码槽释放'); task.close(); p.close()
+      const currentPort = port(), current = createExportPreflightTask(currentPort, { decode: trackedDecode }); tasks.push(current)
+      await current.run(one, signal); await current.read()
+      await writer.meta.put({ key: 'ownerGeneration', value: 'fixture-preflight-epoch' })
+      await until(() => current.status().state === 'closed', '真实代际变化关闭预检任务')
+      await expectCode(() => current.read(), 'EXPORT_PREFLIGHT_NOT_CHECKED')
+      await writer.meta.put({ key: 'ownerGeneration', value: EPOCH })
+    })
+    await check('真实解码后模拟迟到：取消不提前释放唯一槽，迟到位图关闭后才重试', async () => {
+      const p = port(), queue = new SerialImageDecoder(); let lateReady = false, releaseLate, holdLate = true
+      const task = createExportPreflightTask(p, { decoder: queue, decode: async blob => {
+        const bitmap = await trackedDecode(blob)
+        if (!holdLate || signal.aborted) return bitmap
+        lateReady = true
+        return new Promise(resolve => { releaseLate = () => { releaseLate = undefined; resolve(bitmap) } })
+      } }); tasks.push(task)
+      const pending = task.run(one, signal); void pending.catch(() => {})
+      try {
+        await until(() => lateReady, '真实原生解码完成并进入受控迟到'); task.cancel()
+        await expectCode(() => pending, 'CANCELLED'); assert(queue.busy, '取消提前释放了迟到位图的唯一槽')
+        await expectCode(() => task.run(one, signal), 'DECODER_BUSY')
+        releaseLate(); await until(() => !queue.busy, '迟到位图关闭释放槽')
+        task.close(); p.close()
+        const retryPort = port(), retry = createExportPreflightTask(retryPort, { decoder: queue, decode: trackedDecode }); tasks.push(retry)
+        await retry.run(one, signal); await retry.read(); retry.close(); retryPort.close()
+      } finally { holdLate = false; releaseLate?.(); task.close(); p.close() }
+      assert(report.bitmapsCreated === report.bitmapsClosed && decoding === 0, '位图没有全部关闭')
+    })
     await check('最终只读与资源清理：无API/云媒体、Object URL或剩余订阅', async () => {
       const state = await fingerprint(), p = port(), h = await p.capture(all); await display(p, h)
-      closeAll(); await until(() => subscriptions.active === 0, '真实liveQuery订阅归零'); await expectCode(() => h.read(), 'EXPORT_SNAPSHOT_RELEASED')
+      closeAll(); await until(() => subscriptions.active === 0 && subscriptions.contentActive === 0, '真实liveQuery与内容监听归零'); await expectCode(() => h.read(), 'EXPORT_SNAPSHOT_RELEASED')
       await assertNoWrites(state)
       assert(report.objectUrlAttempts === 0 && networkAttempts.length === 0, '出现非预期URL或请求')
       const bad = performance.getEntriesByType('resource').filter(row => { const url = new URL(row.name, location.href); return url.origin !== location.origin || /^\/(?:api|media|uploads)(?:\/|$)/.test(url.pathname) })
@@ -249,7 +311,7 @@ export async function run({ signal, opened, networkAttempts }) {
       assert(opened.length > 0 && opened.every(name => name === db.name), '触及非测试库')
       const mutations = report.fixtureWriteOperations.map(row => `${row.table}:${row.type}:${row.records}`).sort()
       const expected = ['entries:add:40', 'tags:add:1', 'media:add:3', 'meta:add:3', 'schedules:add:1',
-        ...Array(4).fill('entries:put:1'), ...Array(3).fill('tags:put:1'), ...Array(3).fill('media:put:1'), ...Array(2).fill('meta:put:1')].sort()
+        ...Array(5).fill('entries:put:1'), ...Array(4).fill('tags:put:1'), ...Array(4).fill('media:put:1'), ...Array(4).fill('meta:put:1')].sort()
       assert(JSON.stringify(mutations) === JSON.stringify(expected), '夹具写入操作不符合明确白名单，不忽略额外写入')
       assert(report.readonlyWriteProbeDenials === 1, '原生拒写探针次数异常')
     })
@@ -260,13 +322,14 @@ export async function run({ signal, opened, networkAttempts }) {
     await Promise.allSettled(pendingWriters)
     signal.removeEventListener('abort', onAbort)
     report.subscriptionsRemaining = subscriptions.active
+    report.contentSubscriptionsRemaining = subscriptions.contentActive
     report.subscriptionsCreated = subscriptions.created
     URL.createObjectURL = createURL
     db.close(); writer.close()
     report.databaseConnectionsClosed = !db.isOpen() && !writer.isOpen()
-    report.complete = !unexpectedError && !signal.aborted && report.results.length === 11 && report.results.every(row => row.passed) && report.subscriptionsRemaining === 0 && report.productionWriteAttempts.length === 0 && report.databaseConnectionsClosed
+    report.complete = !unexpectedError && !signal.aborted && report.results.length === 14 && report.results.every(row => row.passed) && report.subscriptionsRemaining === 0 && report.contentSubscriptionsRemaining === 0 && report.bitmapsCreated === report.bitmapsClosed && report.imageDecodePeak === 1 && report.productionWriteAttempts.length === 0 && report.databaseConnectionsClosed
     status.textContent = report.complete
-      ? '固定材料核验完成：11项通过。随机库连接已关闭，生产写入0，订阅0。不是正式导出验收。'
+      ? '固定材料核验完成：14项通过。随机库连接已关闭，生产写入0，订阅0。不是正式导出验收。'
       : `未完成：${signal.aborted ? 'CANCELLED；不计通过' : (unexpectedError?.message ?? '清理条件不满足')}。`
     renderReport()
   }

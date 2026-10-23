@@ -6,6 +6,10 @@ import type { NotebookReadLease } from "./notebookReadCore"
 
 export interface ExportSnapshotHandle {
   read(): Promise<ExportSnapshot>
+  /** Sticky conservative notice; never retargets the captured model. */
+  hasChanges(): boolean
+  subscribeChanged(listener: () => void): () => void
+  subscribeReleased(listener: () => void): () => void
   /** Releases application references, not OS output or a consumer's retained copy. */
   release(): void
 }
@@ -25,6 +29,8 @@ export interface ExportSnapshotIO {
   tag(id: string): Promise<Tag | undefined>
   media(id: string): Promise<MediaItem | undefined>
   observeIdentity(changed: () => void, failed: () => void): () => void
+  /** Table-level committed mutation notice, no DB reads or async work in transaction. */
+  observeContent?(changed: () => void, failed: () => void): () => void
   now(): number
   monotonic(): number
 }
@@ -82,8 +88,15 @@ export function createExportSnapshotCore(io: ExportSnapshotIO, source: NotebookR
       // Clone criteria synchronously, so later mutation cannot retarget this task.
       const selection = compileExportSelection(request)
       auth(); const task = ++version; releaseHandles()
-      let handleRelease: (() => void) | undefined
+      let handleRelease: (() => void) | undefined, stopContent: (() => void) | undefined
+      let contentChanged = false
+      const changedListeners = new Set<() => void>(), releaseListeners = new Set<() => void>()
+      const notify = (listeners: Set<() => void>) => { for (const listener of [...listeners]) { try { listener() } catch { /* notify other consumers */ } } }
+      const contentNotice = () => { if (!contentChanged) { contentChanged = true; notify(changedListeners) } }
+      const cleanupContent = () => { const stop = stopContent; stopContent = undefined; try { stop?.() } catch { /* release still completes */ } }
+      const releasePending = () => { cleanupContent(); handles.delete(releasePending); signal?.removeEventListener("abort", abort) }
       const abort = () => { if (task === version) { version++; handleRelease?.() } }
+      handleRelease = releasePending; handles.add(releasePending)
       signal?.addEventListener("abort", abort, { once: true })
       const deadline = io.monotonic() + limits.stageMs
       const check = () => {
@@ -93,6 +106,10 @@ export function createExportSnapshotCore(io: ExportSnapshotIO, source: NotebookR
         if (io.monotonic() > deadline) fail("EXPORT_SNAPSHOT_TIMEOUT")
       }
       try {
+        check()
+        // Arm before snapshot acquisition: an intervening commit may cause a safe
+        // false-positive notice, never a silently missed capture/publication gap.
+        stopContent = io.observeContent?.(contentNotice, close)
         check(); await assertCurrent(); check()
         const model = await io.read(async () => {
           check(); await assertCurrent(); check()
@@ -167,8 +184,9 @@ export function createExportSnapshotCore(io: ExportSnapshotIO, source: NotebookR
         const release = () => {
           if (released) return
           released = true; current = undefined; handles.delete(release); signal?.removeEventListener("abort", abort)
+          cleanupContent(); changedListeners.clear(); notify(releaseListeners); releaseListeners.clear()
         }
-        handleRelease = release; handles.add(release)
+        handles.delete(releasePending); handleRelease = release; handles.add(release)
         // A task signal remains attached for the handle lifetime, not just capture().
         check()
         return {
@@ -182,10 +200,20 @@ export function createExportSnapshotCore(io: ExportSnapshotIO, source: NotebookR
             }
             return current
           },
+          hasChanges: () => contentChanged,
+          subscribeChanged(listener) {
+            if (released) return () => {}
+            if (contentChanged) { try { listener() } catch { /* isolated consumer */ }; return () => {} }
+            changedListeners.add(listener); return () => { changedListeners.delete(listener) }
+          },
+          subscribeReleased(listener) {
+            if (released) { try { listener() } catch { /* isolated consumer */ }; return () => {} }
+            releaseListeners.add(listener); return () => { releaseListeners.delete(listener) }
+          },
           release,
         }
       } catch (error) {
-        handleRelease?.(); signal?.removeEventListener("abort", abort)
+        handleRelease?.(); cleanupContent(); changedListeners.clear(); releaseListeners.clear(); signal?.removeEventListener("abort", abort)
         throw error
       }
     },
