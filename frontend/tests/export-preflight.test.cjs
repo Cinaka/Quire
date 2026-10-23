@@ -59,9 +59,13 @@ test('cancel pending decode and reject replacement DECODER_BUSY; retry only afte
  const pending=f.task.run(all);await immediate();f.task.cancel();await assert.rejects(pending,code('CANCELLED'));assert(f.q.busy);await assert.rejects(f.task.run(all),code('DECODER_BUSY'))
  assert.equal(f.task.status().state,'failed');release();await immediate();assert.equal(f.bitmaps[0].closed,1);f.hooks.decode=null;await f.task.run(all);assert.equal(f.task.status().state,'checked');f.task.close();f.port.close()
 })
-test('invalid header and native failure release snapshot without complete result; retry allowed',async()=>{
- const f=fixture(new Blob(['not PNG'],{type:'image/png'}));await assert.rejects(f.task.run(all),code('INVALID_IMAGE_HEADER'));assert.equal(f.watchers,0);await assert.rejects(f.task.read());f.task.close();f.port.close()
- const {fixtureBlob}=await fixtures,g=fixture(fixtureBlob('png'));g.hooks.decode=()=>{throw Error('injected native failure')};await assert.rejects(g.task.run(all),code('IMAGE_DECODE_FAILED'));await immediate();assert.equal(g.watchers,0);g.hooks.decode=null;await g.task.run(all);g.task.close();g.port.close()
+test('individual broken image becomes explicit review blocker, never full content; explicit retry recaptures',async()=>{
+ const f=fixture(new Blob(['not PNG'],{type:'image/png'}));await f.task.run(all);const bad=await f.task.read();
+ assert.equal(bad.review.state,'requires-degraded-confirmation');assert.equal(bad.availableImagesChecked,false);assert.equal(bad.images.items.length,0)
+ await assert.rejects(f.task.readForLayout('full',bad.review),code('EXPORT_FULL_CONTENT_BLOCKED'));await assert.rejects(f.task.readForLayout('degraded',bad.review),code('EXPORT_DEGRADED_CONFIRMATION_REQUIRED'))
+ await f.task.confirmDegraded(bad.review);assert.equal((await f.task.readForLayout('degraded',bad.review)).completeOutputReady,false);f.task.close();assert.equal(f.watchers,0);f.port.close()
+ const {fixtureBlob}=await fixtures,g=fixture(fixtureBlob('png'));g.hooks.decode=()=>{throw Error('injected native failure')};await g.task.run(all);const old=(await g.task.read()).review;
+ assert.equal(old.issues[0].code,'IMAGE_DECODE_FAILED');g.hooks.decode=null;await g.task.run(all);const current=await g.task.read();assert.equal(current.review.state,'full-content-available');await assert.rejects(g.task.confirmDegraded(old),code('EXPORT_STALE_REVIEW'));g.task.close();g.port.close()
 })
 test('old late capture cannot clear newer task; old external abort cannot cancel replacement',async()=>{
  const f=fixture();let release,n=0;f.hooks.scan=()=>{if(++n===1)return new Promise(r=>release=r)}
@@ -79,4 +83,44 @@ test('content watch removed after failed acquisition and repeated release; bad l
 test('close during pending ownership await removes content watch immediately, not when IO finally resolves',async()=>{
  const f=fixture();let resume;const original=f.io.owner;f.io.owner=async()=>{await new Promise(r=>resume=r);return original()}
  const pending=f.port.capture(all);await immediate();assert.equal(f.watchers,1);f.port.close();assert.equal(f.watchers,0);resume();await assert.rejects(pending);assert.equal(f.watchers,0);f.task.close()
+})
+
+test('degraded confirmation is exact-object, current-task scoped, revocable and not a print capability',async()=>{
+ const f=fixture();f.row.content={schemaVersion:999,doc:{type:'doc',content:[]}};await f.task.run(all);const first=await f.task.read();
+ await assert.rejects(f.task.confirmDegraded({...first.review}),code('EXPORT_STALE_REVIEW'))
+ await f.task.confirmDegraded(first.review);assert.equal((await f.task.read()).degradedConfirmed,true);assert.equal(f.task.status().contentPolicy,'degraded-confirmed')
+ assert.equal((await f.task.readForLayout('degraded',first.review)).completeOutputReady,false)
+ await assert.rejects(f.task.readForLayout('full',first.review),code('EXPORT_FULL_CONTENT_BLOCKED'))
+ f.task.revokeDegraded();await assert.rejects(f.task.readForLayout('degraded',first.review),code('EXPORT_DEGRADED_CONFIRMATION_REQUIRED'))
+ await f.task.confirmDegraded(first.review);f.changed();assert.equal((await f.task.read()).degradedConfirmed,true);assert.equal((await f.task.read()).snapshot,first.snapshot)
+ await f.task.run(all);assert.equal((await f.task.read()).degradedConfirmed,false);await assert.rejects(f.task.confirmDegraded(first.review),code('EXPORT_STALE_REVIEW'));f.task.close();f.port.close()
+})
+test('equal diagnostics from another task cannot confirm this task, cancellation or identity clears confirmation',async()=>{
+ const a=fixture(),b=fixture();for(const f of[a,b]){f.row.content={schemaVersion:999,doc:{type:'doc',content:[]}};await f.task.run(all)}
+ const ar=(await a.task.read()).review,br=(await b.task.read()).review;assert.deepEqual(ar,br);await assert.rejects(a.task.confirmDegraded(br),code('EXPORT_STALE_REVIEW'))
+ await a.task.confirmDegraded(ar);a.expire();await assert.rejects(a.task.readForLayout('degraded',ar));await assert.rejects(a.task.confirmDegraded(ar));assert.equal(a.watchers,0)
+ await b.task.confirmDegraded(br);b.task.cancel();await assert.rejects(b.task.readForLayout('degraded',br));a.task.close();b.task.close();a.port.close();b.port.close()
+})
+test('full content handoff still never ready; empty selection cannot become an empty printed book',async()=>{
+ const f=fixture();await f.task.run(all);const value=await f.task.read();assert.equal((await f.task.readForLayout('full',value.review)).completeOutputReady,false)
+ await assert.rejects(f.task.confirmDegraded(value.review),code('EXPORT_DEGRADED_NOT_NEEDED'));f.task.close();f.port.close()
+ const g=fixture();g.row.isDeleted=1;await g.task.run(all);const empty=await g.task.read();assert.equal(empty.review.state,'empty-selection');await assert.rejects(g.task.readForLayout('full',empty.review),code('EXPORT_EMPTY_SELECTION'));g.task.close();g.port.close()
+})
+test('identity is rechecked while acknowledging, old pending confirmation cannot bless a replacement',async()=>{
+ const f=fixture();f.row.content={schemaVersion:999,doc:{type:'doc',content:[]}};await f.task.run(all);const review=(await f.task.read()).review
+ const owner=f.io.owner;let resume,once=true;f.io.owner=async()=>{if(once){once=false;await new Promise(r=>resume=r)}return owner()}
+ const pending=f.task.confirmDegraded(review);await immediate();await f.task.run(all);resume();await assert.rejects(pending);assert.equal((await f.task.read()).degradedConfirmed,false);f.task.close();f.port.close()
+})
+test('cancel or revoke between nested read completion and layout publication cannot return stale permission',async()=>{
+ for(const action of ['cancel','revokeDegraded']){
+  const f=fixture(),capture=f.port.capture;let intervene=false
+  f.port.capture=async(...args)=>{const h=await capture(...args),read=h.read;return{...h,async read(){const model=await read();if(intervene){intervene=false;queueMicrotask(()=>queueMicrotask(()=>f.task[action]()))}return model}}}
+  f.row.content={schemaVersion:999,doc:{type:'doc',content:[]}};await f.task.run(all);const review=(await f.task.read()).review;await f.task.confirmDegraded(review);intervene=true
+  await assert.rejects(f.task.readForLayout('degraded',review),e=>['EXPORT_STALE_REVIEW','EXPORT_DEGRADED_CONFIRMATION_REQUIRED','EXPORT_PREFLIGHT_RELEASED'].includes(e.code));f.task.close();f.port.close()
+ }
+})
+test('revoking while confirmation awaits identity prevents late acknowledgement from restoring consent',async()=>{
+ const f=fixture();f.row.content={schemaVersion:999,doc:{type:'doc',content:[]}};await f.task.run(all);const review=(await f.task.read()).review
+ const owner=f.io.owner;let resume,once=true;f.io.owner=async()=>{if(once){once=false;await new Promise(r=>resume=r)}return owner()}
+ const pending=f.task.confirmDegraded(review);await immediate();f.task.revokeDegraded();resume();await assert.rejects(pending,code('EXPORT_STALE_REVIEW'));assert.equal((await f.task.read()).degradedConfirmed,false);f.task.close();f.port.close()
 })

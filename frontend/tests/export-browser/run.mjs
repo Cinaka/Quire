@@ -47,6 +47,7 @@ export async function run({ signal, opened, networkAttempts }) {
       '生产适配器的DB/token/owner依赖被定向替换；Dexie、实际schema、只读事务及liveQuery是真实的',
       '并发写入由原生游标调用点调度另一连接；任务替换/取消也由受控读调用点触发，非真实用户竞态',
       '新增真实2x2 PNG快照到事务外原生解码和变化提示核验；失败/迟到由受控注入，不是原生损坏必拒承诺',
+      '降级选择是固定材料下的程序显式调用，不是实际点击正式界面，不验证私人内容确认',
       '没有验证正式账号变化提示界面、全尺寸图片组合、字体、分页、系统打印或手机内存'],
   }
   const ports = [], tasks = [], audit = { enabled: false, transactions: [], reads: [], hook: null }
@@ -269,10 +270,12 @@ export async function run({ signal, opened, networkAttempts }) {
       task.close(); p.close(); clearView()
       assert(!exportImageDecoder.busy, '正常任务结束后解码槽未释放')
     })
-    await check('注入解码失败与真实代际失效：失败不保留结果，可重试，meta变化清理任务', async () => {
+    await check('注入单图解码失败诊断默认阻断完整版，重捕获及真实meta失效', async () => {
       const p = port(), task = createExportPreflightTask(p, { decode: async () => { throw Error('明确注入的解码失败，不是原生损坏结论') } }); tasks.push(task)
-      await expectCode(() => task.run(one, signal), 'IMAGE_DECODE_FAILED')
-      assert(task.status().state === 'failed', '注入失败未明确停止'); await expectCode(() => task.read(), 'EXPORT_PREFLIGHT_NOT_CHECKED')
+      await task.run(one, signal); const failedImage = await task.read()
+      assert(failedImage.review.issues.some(issue => issue.code === 'IMAGE_DECODE_FAILED') && failedImage.images.items.length === 0, '注入单图失败未形成明确诊断')
+      await expectCode(() => task.readForLayout('full', failedImage.review), 'EXPORT_FULL_CONTENT_BLOCKED')
+      await expectCode(() => task.readForLayout('degraded', failedImage.review), 'EXPORT_DEGRADED_CONFIRMATION_REQUIRED')
       await until(() => !exportImageDecoder.busy, '失败后解码槽释放'); task.close(); p.close()
       const currentPort = port(), current = createExportPreflightTask(currentPort, { decode: trackedDecode }); tasks.push(current)
       await current.run(one, signal); await current.read()
@@ -301,6 +304,39 @@ export async function run({ signal, opened, networkAttempts }) {
       } finally { holdLate = false; releaseLate?.(); task.close(); p.close() }
       assert(report.bitmapsCreated === report.bitmapsClosed && decoding === 0, '位图没有全部关闭')
     })
+    await check('真实快照诊断汇总：缺图/缩略/缺标签，默认阻断与内部显式降级选择', async () => {
+      const p = port(), task = createExportPreflightTask(p, { decode: trackedDecode }); tasks.push(task)
+      await task.run({ scope: { kind: 'entry', id: 'fixed-02' } }, signal)
+      const value = await task.read(), review = value.review
+      assert(review.issueCount === 3 && review.affectedEntryCount === 1 && review.affectedImageCount === 2, '篇目/问题/去重图片计数错误')
+      assert(review.state === 'requires-degraded-confirmation' && !value.degradedConfirmed && !value.completeOutputReady, '默认策略错误')
+      await expectCode(() => task.readForLayout('full', review), 'EXPORT_FULL_CONTENT_BLOCKED')
+      await expectCode(() => task.readForLayout('degraded', review), 'EXPORT_DEGRADED_CONFIRMATION_REQUIRED')
+      await expectCode(() => task.confirmDegraded({ ...review }), 'EXPORT_STALE_REVIEW')
+      // Programmatic action in isolated fixture, NOT a human confirmation of private content.
+      await task.confirmDegraded(review)
+      const selected = await task.readForLayout('degraded', review)
+      assert(selected.contentMode === 'degraded' && !selected.completeOutputReady, '诊断确认误称完整打印就绪')
+      task.revokeDegraded(); await expectCode(() => task.readForLayout('degraded', review), 'EXPORT_DEGRADED_CONFIRMATION_REQUIRED')
+      task.close(); p.close()
+    })
+    await check('相同诊断跨任务不复用确认，取消/重捕获后旧确认不可复活', async () => {
+      const a = port(), b = port(), first = createExportPreflightTask(a, { decode: trackedDecode }), second = createExportPreflightTask(b, { decode: trackedDecode }); tasks.push(first, second)
+      const request = { scope: { kind: 'entry', id: 'fixed-02' } }
+      await first.run(request, signal); await second.run(request, signal)
+      const ar = (await first.read()).review, br = (await second.read()).review
+      assert(JSON.stringify(ar) === JSON.stringify(br), '固定相同诊断材料不一致')
+      await expectCode(() => first.confirmDegraded(br), 'EXPORT_STALE_REVIEW')
+      await first.confirmDegraded(ar); first.cancel()
+      await expectCode(() => first.readForLayout('degraded', ar), 'EXPORT_PREFLIGHT_NOT_CHECKED')
+      await expectCode(() => second.readForLayout('degraded', br), 'EXPORT_DEGRADED_CONFIRMATION_REQUIRED')
+      await second.confirmDegraded(br); await second.run(one, signal)
+      const current = await second.read()
+      assert(!current.degradedConfirmed && current.review.state === 'full-content-available', '新快照保留旧确认')
+      await expectCode(() => second.confirmDegraded(br), 'EXPORT_STALE_REVIEW')
+      assert(!(await second.readForLayout('full', current.review)).completeOutputReady, '内容可用不等于字体/分页/打印就绪')
+      first.close(); second.close(); a.close(); b.close()
+    })
     await check('最终只读与资源清理：无API/云媒体、Object URL或剩余订阅', async () => {
       const state = await fingerprint(), p = port(), h = await p.capture(all); await display(p, h)
       closeAll(); await until(() => subscriptions.active === 0 && subscriptions.contentActive === 0, '真实liveQuery与内容监听归零'); await expectCode(() => h.read(), 'EXPORT_SNAPSHOT_RELEASED')
@@ -327,9 +363,9 @@ export async function run({ signal, opened, networkAttempts }) {
     URL.createObjectURL = createURL
     db.close(); writer.close()
     report.databaseConnectionsClosed = !db.isOpen() && !writer.isOpen()
-    report.complete = !unexpectedError && !signal.aborted && report.results.length === 14 && report.results.every(row => row.passed) && report.subscriptionsRemaining === 0 && report.contentSubscriptionsRemaining === 0 && report.bitmapsCreated === report.bitmapsClosed && report.imageDecodePeak === 1 && report.productionWriteAttempts.length === 0 && report.databaseConnectionsClosed
+    report.complete = !unexpectedError && !signal.aborted && report.results.length === 16 && report.results.every(row => row.passed) && report.subscriptionsRemaining === 0 && report.contentSubscriptionsRemaining === 0 && report.bitmapsCreated === report.bitmapsClosed && report.imageDecodePeak === 1 && report.productionWriteAttempts.length === 0 && report.databaseConnectionsClosed
     status.textContent = report.complete
-      ? '固定材料核验完成：14项通过。随机库连接已关闭，生产写入0，订阅0。不是正式导出验收。'
+      ? '固定材料核验完成：16项通过。随机库连接已关闭，生产写入0，订阅0。不是正式导出验收。'
       : `未完成：${signal.aborted ? 'CANCELLED；不计通过' : (unexpectedError?.message ?? '清理条件不满足')}。`
     renderReport()
   }
