@@ -45,3 +45,14 @@ test('new layout tools are isolated, click-gated, no auto printing/DB/private fi
 test('pathological single grapheme rejected before giant atomic DOM layout',async()=>{
  await assert.rejects(compileExportFlows(documentOf([t('A'+'\u0301'.repeat(8192))]),options),code('EXPORT_GRAPHEME_LIMIT'))
 })
+
+test('every sliced descendant has its own interval, without retaining raw flow children',async()=>{
+ const nodes=[{kind:'element',tag:'blockquote',source,children:[{kind:'element',tag:'strong',source,children:[t('一二三四')]},{kind:'element',tag:'br',source,children:[]}]}, {kind:'image',mediaId:'m',width:200,height:1000,alt:'图',title:'注',thumbnailOnly:false,source}]
+ const f=(await compileExportFlows(documentOf(nodes),options))[0], raw=[]
+ function originals(ns){for(const n of ns){raw.push(n);originals(n.children??[])}}originals(f.nodes)
+ const before=JSON.stringify(f)
+ function verify(ns){for(const n of ns){assert(!raw.includes(n));assert(Object.isFrozen(n));assert(Number.isSafeInteger(n.from));assert(Number.isSafeInteger(n.to));assert(n.to>n.from);assert.equal(n.continued,n.from>n.start);if(n.children){assert(Object.isFrozen(n.children));verify(n.children)}}}
+ verify(sliceExportFlow(f,0,f.units))
+ for(let i=0;i<f.units;i++)verify(sliceExportFlow(f,i,i+1))
+ assert.equal(JSON.stringify(f),before)
+})

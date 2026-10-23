@@ -51,7 +51,7 @@ export async function paginateExportA5(source: ExportA5Source, host: HTMLElement
       if (node.kind === "text") { item = el("span"); item.textContent = node.text ?? ""; item.dataset.utf16From = String(node.utf16From); item.dataset.utf16To = String(node.utf16To) }
       else if (node.kind === "image") {
         const image = node.image!, size = sizes.get(image.mediaId)
-        if (!size) fail("EXPORT_LAYOUT_IMAGE_MISSING")
+        if (!size) throw new ExportSnapshotError("EXPORT_LAYOUT_IMAGE_MISSING")
         item = el("span", "p6-image-box")
         item.style.width = `min(100%, ${size.width}px, ${153 * size.width / size.height}mm)`
         item.style.aspectRatio = `${size.width} / ${size.height}`
@@ -75,7 +75,7 @@ export async function paginateExportA5(source: ExportA5Source, host: HTMLElement
   }
   async function loadImage(img: HTMLImageElement, id: string) {
     const plan = plans.get(id), url = urls.get(id)
-    if (!plan || !url) fail("EXPORT_LAYOUT_IMAGE_MISSING")
+    if (!plan || !url) throw new ExportSnapshotError("EXPORT_LAYOUT_IMAGE_MISSING")
     await exportImageDecoder.verifyDomImage(plan, { signal: controller.signal, assertCurrent: async () => { await current(); check() },
       load: async () => { check(); img.src = url; await img.decode(); check(); return { width: img.naturalWidth, height: img.naturalHeight } }, discard: () => img.removeAttribute("src") })
     check()

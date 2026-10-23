@@ -1,0 +1,159 @@
+{
+  "base": "39f4d05e2c4aae8956638c7b7425ad95bd80bdeb",
+  "scope": "P6 strict TypeScript error fix; no schema/dependency/printing UI changes",
+  "userBuildReport": {
+    "errors": 9,
+    "files": [
+      "frontend/src/print/exportA5.ts",
+      "frontend/src/shared/exportFragments.ts"
+    ]
+  },
+  "fixes": [
+    "Direct typed throw preserves existing IMAGE_MISSING runtime code and proves size/plan/url are defined",
+    "Destructure original children out before spreading node metadata; only recursively sliced children enter ExportFlowSlice",
+    "Regression checks every descendant has own frozen interval and does not retain raw FlowNode children"
+  ],
+  "tests": {
+    "passed": 349,
+    "failed": 0
+  },
+  "nativeRegression": {
+    "mapped": {
+      "samePages": true,
+      "sameImages": true,
+      "pressed": [
+        "booklet"
+      ],
+      "colors": [
+        "rgb(250, 248, 243)",
+        "rgb(250, 248, 243)",
+        "rgb(66, 100, 85)"
+      ],
+      "report": {
+        "complete": true,
+        "scope": "固定公开材料；程序确认缺图降级；非正式账号/快照入口",
+        "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+        "font": {
+          "mode": "wenkai",
+          "shards": 52,
+          "uncoveredScalars": 1
+        },
+        "logicalPages": 14,
+        "tocPages": 1,
+        "titlePages": [
+          3,
+          6,
+          12
+        ],
+        "trace": [
+          {
+            "guess": 1,
+            "measured": 1
+          }
+        ],
+        "sourceTextCoverage": true,
+        "mapping": {
+          "mode": "booklet",
+          "logicalPages": 14,
+          "blankPanels": 2,
+          "paperFaces": 8,
+          "singleSidedSheets": 8,
+          "duplexSheets": 4,
+          "faces": [
+            {
+              "panels": [
+                null,
+                1
+              ],
+              "sheet": 1,
+              "side": "front"
+            },
+            {
+              "panels": [
+                2,
+                null
+              ],
+              "sheet": 1,
+              "side": "back"
+            },
+            {
+              "panels": [
+                14,
+                3
+              ],
+              "sheet": 2,
+              "side": "front"
+            },
+            {
+              "panels": [
+                4,
+                13
+              ],
+              "sheet": 2,
+              "side": "back"
+            },
+            {
+              "panels": [
+                12,
+                5
+              ],
+              "sheet": 3,
+              "side": "front"
+            },
+            {
+              "panels": [
+                6,
+                11
+              ],
+              "sheet": 3,
+              "side": "back"
+            },
+            {
+              "panels": [
+                10,
+                7
+              ],
+              "sheet": 4,
+              "side": "front"
+            },
+            {
+              "panels": [
+                8,
+                9
+              ],
+              "sheet": 4,
+              "side": "back"
+            }
+          ]
+        },
+        "urlsCreated": 1,
+        "urlsRevoked": 0,
+        "completeOutputReady": false,
+        "limitations": [
+          "固定材料，非真实身份/正式快照入口",
+          "仅PDF与屏幕可核验；实物折叠/手机内存未验",
+          "系统回退必须明确选择并重新编排"
+        ]
+      }
+    },
+    "cleared": {
+      "pages": 0,
+      "fonts": 0,
+      "retainedPagesEmpty": true,
+      "pressed": 0,
+      "report": {
+        "complete": false,
+        "code": "CANCELLED",
+        "urlsCreated": 1,
+        "urlsRevoked": 1
+      }
+    },
+    "events": []
+  },
+  "fullTypeScriptViteBuild": "Not rerun: tool environment lacks vue-tsc; no dependencies installed. User local npm run build required.",
+  "limitations": [
+    "Native harness erases TypeScript and resolves font assets, not a compiler or Vite build",
+    "Fixed public fixtures, not real account/DB/phone/printer acceptance",
+    "No merge/deploy/P6-3 advancement"
+  ]
+}

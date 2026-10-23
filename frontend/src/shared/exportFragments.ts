@@ -82,12 +82,15 @@ export function sliceExportFlow(flow: ExportEntryFlow, from: number, to: number)
   function slice(node: ExportFlowNode): ExportFlowSlice | undefined {
     if (node.end <= from || node.start >= to) return undefined
     const begin = Math.max(from, node.start), finish = Math.min(to, node.end)
+    // Do not spread raw FlowNode children into a FlowSlice: every child needs
+    // its own sliced interval, including leaves and empty structures.
+    const { children: originalChildren, ...base } = node
     if (node.kind === "text") {
       const offsets = boundaries.get(node)!, a = offsets[begin - node.start] ?? 0, b = offsets[finish - node.start] ?? node.text!.length
-      return Object.freeze({ ...node, text: node.text!.slice(a, b), from: begin, to: finish, utf16From: a, utf16To: b, continued: begin > node.start })
+      return Object.freeze({ ...base, text: node.text!.slice(a, b), from: begin, to: finish, utf16From: a, utf16To: b, continued: begin > node.start })
     }
-    const children = node.children?.flatMap(child => { const value = slice(child); return value ? [value] : [] })
-    return Object.freeze({ ...node, ...(children ? { children: Object.freeze(children) } : {}), from: begin, to: finish, continued: begin > node.start })
+    const children = originalChildren?.flatMap(child => { const value = slice(child); return value ? [value] : [] })
+    return Object.freeze({ ...base, ...(children ? { children: Object.freeze(children) } : {}), from: begin, to: finish, continued: begin > node.start })
   }
   return Object.freeze(flow.nodes.flatMap(node => { const value = slice(node); return value ? [value] : [] }))
 }
