@@ -1,0 +1,11 @@
+:root { color-scheme: light; background: #ebe3d5; color: #2e2c28; font: 16px/1.65 system-ui,sans-serif; }
+* { box-sizing: border-box; } body { margin: 0; } main { max-width: 920px; margin: auto; padding: 32px 24px 48px; }
+.eyebrow { letter-spacing: .16em; color: #426455; font-size: 12px; } h1 { font-size: 30px; font-weight: 500; line-height: 1.4; margin: 16px 0; } h2 { font-size: 20px; font-weight: 500; margin: 0 0 16px; }
+.intro { max-width: 720px; } .limits, .results, .preview { background: #f8f5ee; padding: 24px; margin: 24px 0; border: 1px solid #d4cdbf; border-radius: 8px; }
+.limits p { margin: 8px 0; } strong { font-weight: 600; } .note { font-size: 14px; color: #625e57; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; } button { min-height: 44px; padding: 10px 16px; border: 1px solid #426455; border-radius: 8px; background: #426455; color: white; font: inherit; cursor: pointer; }
+button + button { background: transparent; color: #2e2c28; border-color: #827b70; } button:disabled { opacity: .55; cursor: default; } button:focus-visible, summary:focus-visible { outline: 2px solid #426455; outline-offset: 4px; }
+#status { min-height: 28px; } ol { padding-left: 24px; margin: 0; } li { padding: 8px 0; border-bottom: 1px solid #ded8cd; overflow-wrap: anywhere; } li:last-child { border: 0; }
+li[data-state="passed"]::marker { color: #426455; } li[data-state="failed"] { color: #8b3025; }
+canvas { display: block; max-width: 100%; height: auto; background: #f5f0e6; } summary { min-height: 44px; cursor: pointer; padding: 8px 0; } pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.65 monospace; background: #f8f5ee; padding: 16px; }
+@media (max-width: 600px) { main { padding: 24px 16px; } h1 { font-size: 26px; } .limits, .results, .preview { padding: 16px; } }

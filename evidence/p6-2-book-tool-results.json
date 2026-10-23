@@ -1,0 +1,1452 @@
+{
+  "base": "fa1a6b046c4918b4b67e9ec98af6f06a6f7d26cb",
+  "branch": "p6/print-export",
+  "scope": "Fixed public fixtures; no private DB; native Chromium TS erasure/asset pre-resolution, not Vite/full TS build or user browser acceptance",
+  "tests": {
+    "passed": 348,
+    "failed": 0
+  },
+  "fullBuild": {
+    "exit": 127,
+    "reason": "vue-tsc: command not found; no dependency installation"
+  },
+  "pdfAudits": [
+    {
+      "name": "normal-a5",
+      "faces": 14,
+      "sizeMm": [
+        148.17,
+        209.89
+      ],
+      "countAndPaperMatch": true
+    },
+    {
+      "name": "normal-spread",
+      "faces": 7,
+      "sizeMm": [
+        297.01,
+        209.89
+      ],
+      "countAndPaperMatch": true
+    },
+    {
+      "name": "normal-booklet",
+      "faces": 8,
+      "sizeMm": [
+        297.01,
+        209.89
+      ],
+      "countAndPaperMatch": true
+    },
+    {
+      "name": "toc-a5",
+      "faces": 13,
+      "sizeMm": [
+        148.17,
+        209.89
+      ],
+      "countAndPaperMatch": true
+    },
+    {
+      "name": "toc-spread",
+      "faces": 7,
+      "sizeMm": [
+        297.01,
+        209.89
+      ],
+      "countAndPaperMatch": true
+    },
+    {
+      "name": "toc-booklet",
+      "faces": 8,
+      "sizeMm": [
+        297.01,
+        209.89
+      ],
+      "countAndPaperMatch": true
+    },
+    {
+      "name": "eight-a5",
+      "faces": 8,
+      "sizeMm": [
+        148.17,
+        209.89
+      ],
+      "countAndPaperMatch": true
+    },
+    {
+      "name": "eight-spread",
+      "faces": 4,
+      "sizeMm": [
+        297.01,
+        209.89
+      ],
+      "countAndPaperMatch": true
+    },
+    {
+      "name": "eight-booklet",
+      "faces": 4,
+      "sizeMm": [
+        297.01,
+        209.89
+      ],
+      "countAndPaperMatch": true
+    }
+  ],
+  "a4PanelAudits": [
+    {
+      "name": "normal-spread",
+      "everyPanelTextMatchesA5": true,
+      "blankPanelsReallyEmpty": true
+    },
+    {
+      "name": "normal-booklet",
+      "everyPanelTextMatchesA5": true,
+      "blankPanelsReallyEmpty": true
+    },
+    {
+      "name": "toc-spread",
+      "everyPanelTextMatchesA5": true,
+      "blankPanelsReallyEmpty": true
+    },
+    {
+      "name": "toc-booklet",
+      "everyPanelTextMatchesA5": true,
+      "blankPanelsReallyEmpty": true
+    },
+    {
+      "name": "eight-spread",
+      "everyPanelTextMatchesA5": true,
+      "blankPanelsReallyEmpty": true
+    },
+    {
+      "name": "eight-booklet",
+      "everyPanelTextMatchesA5": true,
+      "blankPanelsReallyEmpty": true
+    }
+  ],
+  "extraNative": [
+    {
+      "name": "actual 98-entry book crosses three-digit title pages",
+      "pass": true,
+      "logicalPages": 116,
+      "tocPages": 17,
+      "lastTitlePage": 116
+    },
+    {
+      "name": "one long TOC title continues without loss; cover text is not HTML",
+      "pass": true,
+      "tocPages": 3,
+      "titleUnits": 1309
+    },
+    {
+      "name": "source invalidation clears own cover, TOC and detached references",
+      "pass": true
+    },
+    {
+      "name": "wrong A4 panel dimensions refuse and clear",
+      "pass": true
+    },
+    {
+      "name": "cancel large assembly does not publish half a book",
+      "pass": true
+    }
+  ],
+  "nativeReports": [
+    {
+      "name": "normal-a5",
+      "complete": true,
+      "scope": "固定公开材料；程序确认缺图降级；非正式账号/快照入口",
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "font": {
+        "mode": "wenkai",
+        "shards": 52,
+        "uncoveredScalars": 1
+      },
+      "logicalPages": 14,
+      "tocPages": 1,
+      "titlePages": [
+        3,
+        6,
+        12
+      ],
+      "trace": [
+        {
+          "guess": 1,
+          "measured": 1
+        }
+      ],
+      "sourceTextCoverage": true,
+      "mapping": {
+        "mode": "a5",
+        "logicalPages": 14,
+        "blankPanels": 0,
+        "paperFaces": 14,
+        "singleSidedSheets": 14,
+        "duplexSheets": 7,
+        "faces": [
+          {
+            "panels": [
+              1
+            ],
+            "sheet": 1,
+            "side": "single"
+          },
+          {
+            "panels": [
+              2
+            ],
+            "sheet": 2,
+            "side": "single"
+          },
+          {
+            "panels": [
+              3
+            ],
+            "sheet": 3,
+            "side": "single"
+          },
+          {
+            "panels": [
+              4
+            ],
+            "sheet": 4,
+            "side": "single"
+          },
+          {
+            "panels": [
+              5
+            ],
+            "sheet": 5,
+            "side": "single"
+          },
+          {
+            "panels": [
+              6
+            ],
+            "sheet": 6,
+            "side": "single"
+          },
+          {
+            "panels": [
+              7
+            ],
+            "sheet": 7,
+            "side": "single"
+          },
+          {
+            "panels": [
+              8
+            ],
+            "sheet": 8,
+            "side": "single"
+          },
+          {
+            "panels": [
+              9
+            ],
+            "sheet": 9,
+            "side": "single"
+          },
+          {
+            "panels": [
+              10
+            ],
+            "sheet": 10,
+            "side": "single"
+          },
+          {
+            "panels": [
+              11
+            ],
+            "sheet": 11,
+            "side": "single"
+          },
+          {
+            "panels": [
+              12
+            ],
+            "sheet": 12,
+            "side": "single"
+          },
+          {
+            "panels": [
+              13
+            ],
+            "sheet": 13,
+            "side": "single"
+          },
+          {
+            "panels": [
+              14
+            ],
+            "sheet": 14,
+            "side": "single"
+          }
+        ]
+      },
+      "urlsCreated": 1,
+      "urlsRevoked": 0,
+      "completeOutputReady": false,
+      "limitations": [
+        "固定材料，非真实身份/正式快照入口",
+        "仅PDF与屏幕可核验；实物折叠/手机内存未验",
+        "系统回退必须明确选择并重新编排"
+      ]
+    },
+    {
+      "name": "normal-spread",
+      "complete": true,
+      "scope": "固定公开材料；程序确认缺图降级；非正式账号/快照入口",
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "font": {
+        "mode": "wenkai",
+        "shards": 52,
+        "uncoveredScalars": 1
+      },
+      "logicalPages": 14,
+      "tocPages": 1,
+      "titlePages": [
+        3,
+        6,
+        12
+      ],
+      "trace": [
+        {
+          "guess": 1,
+          "measured": 1
+        }
+      ],
+      "sourceTextCoverage": true,
+      "mapping": {
+        "mode": "spread",
+        "logicalPages": 14,
+        "blankPanels": 0,
+        "paperFaces": 7,
+        "singleSidedSheets": 7,
+        "duplexSheets": 4,
+        "faces": [
+          {
+            "panels": [
+              1,
+              2
+            ],
+            "sheet": 1,
+            "side": "single"
+          },
+          {
+            "panels": [
+              3,
+              4
+            ],
+            "sheet": 2,
+            "side": "single"
+          },
+          {
+            "panels": [
+              5,
+              6
+            ],
+            "sheet": 3,
+            "side": "single"
+          },
+          {
+            "panels": [
+              7,
+              8
+            ],
+            "sheet": 4,
+            "side": "single"
+          },
+          {
+            "panels": [
+              9,
+              10
+            ],
+            "sheet": 5,
+            "side": "single"
+          },
+          {
+            "panels": [
+              11,
+              12
+            ],
+            "sheet": 6,
+            "side": "single"
+          },
+          {
+            "panels": [
+              13,
+              14
+            ],
+            "sheet": 7,
+            "side": "single"
+          }
+        ]
+      },
+      "urlsCreated": 1,
+      "urlsRevoked": 0,
+      "completeOutputReady": false,
+      "limitations": [
+        "固定材料，非真实身份/正式快照入口",
+        "仅PDF与屏幕可核验；实物折叠/手机内存未验",
+        "系统回退必须明确选择并重新编排"
+      ]
+    },
+    {
+      "name": "normal-booklet",
+      "complete": true,
+      "scope": "固定公开材料；程序确认缺图降级；非正式账号/快照入口",
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "font": {
+        "mode": "wenkai",
+        "shards": 52,
+        "uncoveredScalars": 1
+      },
+      "logicalPages": 14,
+      "tocPages": 1,
+      "titlePages": [
+        3,
+        6,
+        12
+      ],
+      "trace": [
+        {
+          "guess": 1,
+          "measured": 1
+        }
+      ],
+      "sourceTextCoverage": true,
+      "mapping": {
+        "mode": "booklet",
+        "logicalPages": 14,
+        "blankPanels": 2,
+        "paperFaces": 8,
+        "singleSidedSheets": 8,
+        "duplexSheets": 4,
+        "faces": [
+          {
+            "panels": [
+              null,
+              1
+            ],
+            "sheet": 1,
+            "side": "front"
+          },
+          {
+            "panels": [
+              2,
+              null
+            ],
+            "sheet": 1,
+            "side": "back"
+          },
+          {
+            "panels": [
+              14,
+              3
+            ],
+            "sheet": 2,
+            "side": "front"
+          },
+          {
+            "panels": [
+              4,
+              13
+            ],
+            "sheet": 2,
+            "side": "back"
+          },
+          {
+            "panels": [
+              12,
+              5
+            ],
+            "sheet": 3,
+            "side": "front"
+          },
+          {
+            "panels": [
+              6,
+              11
+            ],
+            "sheet": 3,
+            "side": "back"
+          },
+          {
+            "panels": [
+              10,
+              7
+            ],
+            "sheet": 4,
+            "side": "front"
+          },
+          {
+            "panels": [
+              8,
+              9
+            ],
+            "sheet": 4,
+            "side": "back"
+          }
+        ]
+      },
+      "urlsCreated": 1,
+      "urlsRevoked": 0,
+      "completeOutputReady": false,
+      "limitations": [
+        "固定材料，非真实身份/正式快照入口",
+        "仅PDF与屏幕可核验；实物折叠/手机内存未验",
+        "系统回退必须明确选择并重新编排"
+      ]
+    },
+    {
+      "name": "toc-a5",
+      "complete": true,
+      "scope": "固定公开材料；无图片诊断；非正式账号/快照入口",
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "font": {
+        "mode": "wenkai",
+        "shards": 44,
+        "uncoveredScalars": 1
+      },
+      "logicalPages": 13,
+      "tocPages": 3,
+      "titlePages": [
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "trace": [
+        {
+          "guess": 1,
+          "measured": 3
+        },
+        {
+          "guess": 3,
+          "measured": 3
+        }
+      ],
+      "sourceTextCoverage": true,
+      "mapping": {
+        "mode": "a5",
+        "logicalPages": 13,
+        "blankPanels": 0,
+        "paperFaces": 13,
+        "singleSidedSheets": 13,
+        "duplexSheets": 7,
+        "faces": [
+          {
+            "panels": [
+              1
+            ],
+            "sheet": 1,
+            "side": "single"
+          },
+          {
+            "panels": [
+              2
+            ],
+            "sheet": 2,
+            "side": "single"
+          },
+          {
+            "panels": [
+              3
+            ],
+            "sheet": 3,
+            "side": "single"
+          },
+          {
+            "panels": [
+              4
+            ],
+            "sheet": 4,
+            "side": "single"
+          },
+          {
+            "panels": [
+              5
+            ],
+            "sheet": 5,
+            "side": "single"
+          },
+          {
+            "panels": [
+              6
+            ],
+            "sheet": 6,
+            "side": "single"
+          },
+          {
+            "panels": [
+              7
+            ],
+            "sheet": 7,
+            "side": "single"
+          },
+          {
+            "panels": [
+              8
+            ],
+            "sheet": 8,
+            "side": "single"
+          },
+          {
+            "panels": [
+              9
+            ],
+            "sheet": 9,
+            "side": "single"
+          },
+          {
+            "panels": [
+              10
+            ],
+            "sheet": 10,
+            "side": "single"
+          },
+          {
+            "panels": [
+              11
+            ],
+            "sheet": 11,
+            "side": "single"
+          },
+          {
+            "panels": [
+              12
+            ],
+            "sheet": 12,
+            "side": "single"
+          },
+          {
+            "panels": [
+              13
+            ],
+            "sheet": 13,
+            "side": "single"
+          }
+        ]
+      },
+      "urlsCreated": 0,
+      "urlsRevoked": 0,
+      "completeOutputReady": false,
+      "limitations": [
+        "固定材料，非真实身份/正式快照入口",
+        "仅PDF与屏幕可核验；实物折叠/手机内存未验",
+        "系统回退必须明确选择并重新编排"
+      ]
+    },
+    {
+      "name": "toc-spread",
+      "complete": true,
+      "scope": "固定公开材料；无图片诊断；非正式账号/快照入口",
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "font": {
+        "mode": "wenkai",
+        "shards": 44,
+        "uncoveredScalars": 1
+      },
+      "logicalPages": 13,
+      "tocPages": 3,
+      "titlePages": [
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "trace": [
+        {
+          "guess": 1,
+          "measured": 3
+        },
+        {
+          "guess": 3,
+          "measured": 3
+        }
+      ],
+      "sourceTextCoverage": true,
+      "mapping": {
+        "mode": "spread",
+        "logicalPages": 13,
+        "blankPanels": 1,
+        "paperFaces": 7,
+        "singleSidedSheets": 7,
+        "duplexSheets": 4,
+        "faces": [
+          {
+            "panels": [
+              1,
+              2
+            ],
+            "sheet": 1,
+            "side": "single"
+          },
+          {
+            "panels": [
+              3,
+              4
+            ],
+            "sheet": 2,
+            "side": "single"
+          },
+          {
+            "panels": [
+              5,
+              6
+            ],
+            "sheet": 3,
+            "side": "single"
+          },
+          {
+            "panels": [
+              7,
+              8
+            ],
+            "sheet": 4,
+            "side": "single"
+          },
+          {
+            "panels": [
+              9,
+              10
+            ],
+            "sheet": 5,
+            "side": "single"
+          },
+          {
+            "panels": [
+              11,
+              12
+            ],
+            "sheet": 6,
+            "side": "single"
+          },
+          {
+            "panels": [
+              13,
+              null
+            ],
+            "sheet": 7,
+            "side": "single"
+          }
+        ]
+      },
+      "urlsCreated": 0,
+      "urlsRevoked": 0,
+      "completeOutputReady": false,
+      "limitations": [
+        "固定材料，非真实身份/正式快照入口",
+        "仅PDF与屏幕可核验；实物折叠/手机内存未验",
+        "系统回退必须明确选择并重新编排"
+      ]
+    },
+    {
+      "name": "toc-booklet",
+      "complete": true,
+      "scope": "固定公开材料；无图片诊断；非正式账号/快照入口",
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "font": {
+        "mode": "wenkai",
+        "shards": 44,
+        "uncoveredScalars": 1
+      },
+      "logicalPages": 13,
+      "tocPages": 3,
+      "titlePages": [
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "trace": [
+        {
+          "guess": 1,
+          "measured": 3
+        },
+        {
+          "guess": 3,
+          "measured": 3
+        }
+      ],
+      "sourceTextCoverage": true,
+      "mapping": {
+        "mode": "booklet",
+        "logicalPages": 13,
+        "blankPanels": 3,
+        "paperFaces": 8,
+        "singleSidedSheets": 8,
+        "duplexSheets": 4,
+        "faces": [
+          {
+            "panels": [
+              null,
+              1
+            ],
+            "sheet": 1,
+            "side": "front"
+          },
+          {
+            "panels": [
+              2,
+              null
+            ],
+            "sheet": 1,
+            "side": "back"
+          },
+          {
+            "panels": [
+              null,
+              3
+            ],
+            "sheet": 2,
+            "side": "front"
+          },
+          {
+            "panels": [
+              4,
+              13
+            ],
+            "sheet": 2,
+            "side": "back"
+          },
+          {
+            "panels": [
+              12,
+              5
+            ],
+            "sheet": 3,
+            "side": "front"
+          },
+          {
+            "panels": [
+              6,
+              11
+            ],
+            "sheet": 3,
+            "side": "back"
+          },
+          {
+            "panels": [
+              10,
+              7
+            ],
+            "sheet": 4,
+            "side": "front"
+          },
+          {
+            "panels": [
+              8,
+              9
+            ],
+            "sheet": 4,
+            "side": "back"
+          }
+        ]
+      },
+      "urlsCreated": 0,
+      "urlsRevoked": 0,
+      "completeOutputReady": false,
+      "limitations": [
+        "固定材料，非真实身份/正式快照入口",
+        "仅PDF与屏幕可核验；实物折叠/手机内存未验",
+        "系统回退必须明确选择并重新编排"
+      ]
+    },
+    {
+      "name": "eight-a5",
+      "complete": true,
+      "scope": "固定公开材料；无图片诊断；非正式账号/快照入口",
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "font": {
+        "mode": "wenkai",
+        "shards": 38,
+        "uncoveredScalars": 1
+      },
+      "logicalPages": 8,
+      "tocPages": 1,
+      "titlePages": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "trace": [
+        {
+          "guess": 1,
+          "measured": 1
+        }
+      ],
+      "sourceTextCoverage": true,
+      "mapping": {
+        "mode": "a5",
+        "logicalPages": 8,
+        "blankPanels": 0,
+        "paperFaces": 8,
+        "singleSidedSheets": 8,
+        "duplexSheets": 4,
+        "faces": [
+          {
+            "panels": [
+              1
+            ],
+            "sheet": 1,
+            "side": "single"
+          },
+          {
+            "panels": [
+              2
+            ],
+            "sheet": 2,
+            "side": "single"
+          },
+          {
+            "panels": [
+              3
+            ],
+            "sheet": 3,
+            "side": "single"
+          },
+          {
+            "panels": [
+              4
+            ],
+            "sheet": 4,
+            "side": "single"
+          },
+          {
+            "panels": [
+              5
+            ],
+            "sheet": 5,
+            "side": "single"
+          },
+          {
+            "panels": [
+              6
+            ],
+            "sheet": 6,
+            "side": "single"
+          },
+          {
+            "panels": [
+              7
+            ],
+            "sheet": 7,
+            "side": "single"
+          },
+          {
+            "panels": [
+              8
+            ],
+            "sheet": 8,
+            "side": "single"
+          }
+        ]
+      },
+      "urlsCreated": 0,
+      "urlsRevoked": 0,
+      "completeOutputReady": false,
+      "limitations": [
+        "固定材料，非真实身份/正式快照入口",
+        "仅PDF与屏幕可核验；实物折叠/手机内存未验",
+        "系统回退必须明确选择并重新编排"
+      ]
+    },
+    {
+      "name": "eight-spread",
+      "complete": true,
+      "scope": "固定公开材料；无图片诊断；非正式账号/快照入口",
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "font": {
+        "mode": "wenkai",
+        "shards": 38,
+        "uncoveredScalars": 1
+      },
+      "logicalPages": 8,
+      "tocPages": 1,
+      "titlePages": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "trace": [
+        {
+          "guess": 1,
+          "measured": 1
+        }
+      ],
+      "sourceTextCoverage": true,
+      "mapping": {
+        "mode": "spread",
+        "logicalPages": 8,
+        "blankPanels": 0,
+        "paperFaces": 4,
+        "singleSidedSheets": 4,
+        "duplexSheets": 2,
+        "faces": [
+          {
+            "panels": [
+              1,
+              2
+            ],
+            "sheet": 1,
+            "side": "single"
+          },
+          {
+            "panels": [
+              3,
+              4
+            ],
+            "sheet": 2,
+            "side": "single"
+          },
+          {
+            "panels": [
+              5,
+              6
+            ],
+            "sheet": 3,
+            "side": "single"
+          },
+          {
+            "panels": [
+              7,
+              8
+            ],
+            "sheet": 4,
+            "side": "single"
+          }
+        ]
+      },
+      "urlsCreated": 0,
+      "urlsRevoked": 0,
+      "completeOutputReady": false,
+      "limitations": [
+        "固定材料，非真实身份/正式快照入口",
+        "仅PDF与屏幕可核验；实物折叠/手机内存未验",
+        "系统回退必须明确选择并重新编排"
+      ]
+    },
+    {
+      "name": "eight-booklet",
+      "complete": true,
+      "scope": "固定公开材料；无图片诊断；非正式账号/快照入口",
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "font": {
+        "mode": "wenkai",
+        "shards": 38,
+        "uncoveredScalars": 1
+      },
+      "logicalPages": 8,
+      "tocPages": 1,
+      "titlePages": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "trace": [
+        {
+          "guess": 1,
+          "measured": 1
+        }
+      ],
+      "sourceTextCoverage": true,
+      "mapping": {
+        "mode": "booklet",
+        "logicalPages": 8,
+        "blankPanels": 0,
+        "paperFaces": 4,
+        "singleSidedSheets": 4,
+        "duplexSheets": 2,
+        "faces": [
+          {
+            "panels": [
+              8,
+              1
+            ],
+            "sheet": 1,
+            "side": "front"
+          },
+          {
+            "panels": [
+              2,
+              7
+            ],
+            "sheet": 1,
+            "side": "back"
+          },
+          {
+            "panels": [
+              6,
+              3
+            ],
+            "sheet": 2,
+            "side": "front"
+          },
+          {
+            "panels": [
+              4,
+              5
+            ],
+            "sheet": 2,
+            "side": "back"
+          }
+        ]
+      },
+      "urlsCreated": 0,
+      "urlsRevoked": 0,
+      "completeOutputReady": false,
+      "limitations": [
+        "固定材料，非真实身份/正式快照入口",
+        "仅PDF与屏幕可核验；实物折叠/手机内存未验",
+        "系统回退必须明确选择并重新编排"
+      ]
+    },
+    {
+      "name": "cancel",
+      "pages": 0,
+      "fonts": 0,
+      "report": {
+        "complete": false,
+        "code": "CANCELLED",
+        "urlsCreated": 0,
+        "urlsRevoked": 0
+      }
+    },
+    {
+      "name": "system",
+      "complete": true,
+      "scope": "固定公开材料；程序确认缺图降级；非正式账号/快照入口",
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "font": {
+        "mode": "system",
+        "shards": 0,
+        "uncoveredScalars": 0
+      },
+      "logicalPages": 14,
+      "tocPages": 1,
+      "titlePages": [
+        3,
+        6,
+        12
+      ],
+      "trace": [
+        {
+          "guess": 1,
+          "measured": 1
+        }
+      ],
+      "sourceTextCoverage": true,
+      "mapping": {
+        "mode": "a5",
+        "logicalPages": 14,
+        "blankPanels": 0,
+        "paperFaces": 14,
+        "singleSidedSheets": 14,
+        "duplexSheets": 7,
+        "faces": [
+          {
+            "panels": [
+              1
+            ],
+            "sheet": 1,
+            "side": "single"
+          },
+          {
+            "panels": [
+              2
+            ],
+            "sheet": 2,
+            "side": "single"
+          },
+          {
+            "panels": [
+              3
+            ],
+            "sheet": 3,
+            "side": "single"
+          },
+          {
+            "panels": [
+              4
+            ],
+            "sheet": 4,
+            "side": "single"
+          },
+          {
+            "panels": [
+              5
+            ],
+            "sheet": 5,
+            "side": "single"
+          },
+          {
+            "panels": [
+              6
+            ],
+            "sheet": 6,
+            "side": "single"
+          },
+          {
+            "panels": [
+              7
+            ],
+            "sheet": 7,
+            "side": "single"
+          },
+          {
+            "panels": [
+              8
+            ],
+            "sheet": 8,
+            "side": "single"
+          },
+          {
+            "panels": [
+              9
+            ],
+            "sheet": 9,
+            "side": "single"
+          },
+          {
+            "panels": [
+              10
+            ],
+            "sheet": 10,
+            "side": "single"
+          },
+          {
+            "panels": [
+              11
+            ],
+            "sheet": 11,
+            "side": "single"
+          },
+          {
+            "panels": [
+              12
+            ],
+            "sheet": 12,
+            "side": "single"
+          },
+          {
+            "panels": [
+              13
+            ],
+            "sheet": 13,
+            "side": "single"
+          },
+          {
+            "panels": [
+              14
+            ],
+            "sheet": 14,
+            "side": "single"
+          }
+        ]
+      },
+      "urlsCreated": 1,
+      "urlsRevoked": 0,
+      "completeOutputReady": false,
+      "limitations": [
+        "固定材料，非真实身份/正式快照入口",
+        "仅PDF与屏幕可核验；实物折叠/手机内存未验",
+        "系统回退必须明确选择并重新编排"
+      ]
+    },
+    {
+      "name": "mobile",
+      "width": 390,
+      "scrollWidth": 375,
+      "paperWidth": 343
+    },
+    {
+      "name": "mobile-booklet",
+      "width": 390,
+      "scrollWidth": 375,
+      "paperWidth": 342.984375
+    }
+  ],
+  "nativeEvents": [],
+  "visual": {
+    "individualFramesReviewed": 43,
+    "groups": {
+      "normal-a5": 14,
+      "toc-a5": 13,
+      "normal-booklet": 8,
+      "eight-booklet": 4,
+      "eight-spread": 4
+    },
+    "viewport390": [
+      "initial",
+      "ready"
+    ],
+    "modeButtonColorCorrected": true
+  },
+  "limitations": [
+    "No real account/private store integration acceptance",
+    "No Safari/Edge run in tool environment",
+    "No physical fold/printer flip validation",
+    "No real phone or memory peak validation",
+    "completeOutputReady remains false; no formal print entry/merge/deploy"
+  ],
+  "finalNativeUi": {
+    "mapped": {
+      "samePages": true,
+      "sameImages": true,
+      "pressed": [
+        "booklet"
+      ],
+      "colors": [
+        "rgb(250, 248, 243)",
+        "rgb(250, 248, 243)",
+        "rgb(66, 100, 85)"
+      ],
+      "report": {
+        "complete": true,
+        "scope": "固定公开材料；程序确认缺图降级；非正式账号/快照入口",
+        "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+        "font": {
+          "mode": "wenkai",
+          "shards": 52,
+          "uncoveredScalars": 1
+        },
+        "logicalPages": 14,
+        "tocPages": 1,
+        "titlePages": [
+          3,
+          6,
+          12
+        ],
+        "trace": [
+          {
+            "guess": 1,
+            "measured": 1
+          }
+        ],
+        "sourceTextCoverage": true,
+        "mapping": {
+          "mode": "booklet",
+          "logicalPages": 14,
+          "blankPanels": 2,
+          "paperFaces": 8,
+          "singleSidedSheets": 8,
+          "duplexSheets": 4,
+          "faces": [
+            {
+              "panels": [
+                null,
+                1
+              ],
+              "sheet": 1,
+              "side": "front"
+            },
+            {
+              "panels": [
+                2,
+                null
+              ],
+              "sheet": 1,
+              "side": "back"
+            },
+            {
+              "panels": [
+                14,
+                3
+              ],
+              "sheet": 2,
+              "side": "front"
+            },
+            {
+              "panels": [
+                4,
+                13
+              ],
+              "sheet": 2,
+              "side": "back"
+            },
+            {
+              "panels": [
+                12,
+                5
+              ],
+              "sheet": 3,
+              "side": "front"
+            },
+            {
+              "panels": [
+                6,
+                11
+              ],
+              "sheet": 3,
+              "side": "back"
+            },
+            {
+              "panels": [
+                10,
+                7
+              ],
+              "sheet": 4,
+              "side": "front"
+            },
+            {
+              "panels": [
+                8,
+                9
+              ],
+              "sheet": 4,
+              "side": "back"
+            }
+          ]
+        },
+        "urlsCreated": 1,
+        "urlsRevoked": 0,
+        "completeOutputReady": false,
+        "limitations": [
+          "固定材料，非真实身份/正式快照入口",
+          "仅PDF与屏幕可核验；实物折叠/手机内存未验",
+          "系统回退必须明确选择并重新编排"
+        ]
+      }
+    },
+    "cleared": {
+      "pages": 0,
+      "fonts": 0,
+      "retainedPagesEmpty": true,
+      "pressed": 0,
+      "report": {
+        "complete": false,
+        "code": "CANCELLED",
+        "urlsCreated": 1,
+        "urlsRevoked": 1
+      }
+    },
+    "events": []
+  }
+}

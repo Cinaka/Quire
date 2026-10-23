@@ -6,6 +6,9 @@
       <button v-if="entryId" type="button" class="plain danger" @click="discard">删除</button>
     </header>
 
+    <button v-if="entryId && ready" type="button" class="plain" style="min-height:44px" :disabled="printEntryBusy" @click="openPrint">杀青 · 保存后编排这一简</button>
+    <p v-if="printEntryError" role="alert">{{ printEntryError }}</p>
+
     <input v-model="title" class="title" placeholder="无题" @input="schedule" />
 
     <EntryMetaFields
@@ -24,6 +27,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router"
 
+import { rememberExportHandoff, clearExportHandoff } from "@/shared/exportHandoff"
+import { captureNotebookScope } from "@/repo"
 import { hasNotebookEditReturn } from "@/shared/notebookReturn"
 
 import DiaryEditor from "@/components/DiaryEditor.vue"
@@ -33,6 +38,23 @@ import { collectMediaIds, toPlainText } from "@/shared/text"
 import { isLocalDate, todayLocal, utcNow } from "@/shared/time"
 import { CONTENT_SCHEMA_VERSION, type TiptapDoc } from "@/shared/types"
 
+const printEntryError = ref(""), printEntryBusy = ref(false)
+async function openPrint() {
+  if (printEntryBusy.value) return
+  printEntryBusy.value = true
+  printEntryError.value = ""
+  try {
+    await flush() // Preserve existing editor save/leave protection.
+    const id = entryId.value
+    if (!id) return
+    const scope = await captureNotebookScope()
+    if (entryId.value !== id) return
+    rememberExportHandoff({scope:{kind:"entry",id}}, scope)
+    const failure = await router.push({path:"/print",query:{from:"entry"}})
+    if (failure) clearExportHandoff()
+  } catch { clearExportHandoff(); printEntryError.value = "保存或范围交接未完成，未进入打印。请核对保存状态与登录后重试。" }
+  finally { printEntryBusy.value = false }
+}
 const route = useRoute()
 const router = useRouter()
 const entryId = ref<string | null>(null)

@@ -1,0 +1,248 @@
+{
+  "stage": "P6-3 formal entry, preview confirmation and print lifecycle",
+  "baselineBranches": {
+    "p6/print-export": "3087ae8df7269503bd47f1306c6bf0285ffdb376",
+    "main": "70b758ed4f601968017a075d19c8a2333c13ab56",
+    "p4/schedules": "2955b515e690b3e301546d614361be568b919762",
+    "p5/notebook-view": "fbc51902a44c204ac65ec0e90b32ee830c2020c7"
+  },
+  "authorization": "P6 branch implementation only; no merge/deploy/dependencies/schema/backup/sync changes",
+  "priorUserFeedback": "User reports three-browser retest without errors for previous fix; precise HEAD/build log not supplied; not current-stage acceptance",
+  "tests": {
+    "command": "node --require ./tests/notebook-test-loader.cjs --test tests/export-*.test.cjs tests/print-*.test.cjs tests/notebook-session.test.cjs",
+    "passed": 433,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 9292.095893,
+    "boundary": "Actual SFC setup execution with injected Vue/repo/font/DOM boundaries; not full Vue mount or real DB"
+  },
+  "typecheck": {
+    "compiler": "preinstalled TypeScript 7.0.2",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "diagnostics": 0,
+    "boundary": "Extracted actual formal-view setup and real shared/print dependencies; Vue/router/repo declarations substituted. Not project TS6/vue-tsc/Vite build; no dependencies installed."
+  },
+  "nativeChromium": {
+    "scope": "public fixture; actual book/fonts/images/browser adapter and native Chromium printToPDF; window.print request stubbed, no OS dialog, no Vue/real DB",
+    "initial": {
+      "pages": 14,
+      "images": 1,
+      "fonts": 52,
+      "created": 1,
+      "calls": 0
+    },
+    "retained": {
+      "state": "printing",
+      "armed": "true",
+      "sameRoot": true,
+      "fonts": 52,
+      "revoked": 0,
+      "calls": 1
+    },
+    "returned": {
+      "state": "returned",
+      "sameRoot": true,
+      "pages": true,
+      "images": true,
+      "fonts": 52,
+      "revoked": 0
+    },
+    "ack": {
+      "state": "acknowledged",
+      "fonts": 52,
+      "revoked": 0
+    },
+    "cleared": {
+      "pages": 0,
+      "retainedEmpty": true,
+      "imagesCleared": true,
+      "fonts": 0,
+      "created": 1,
+      "revoked": 1,
+      "surfaces": 0,
+      "events": [
+        "checking",
+        "printing",
+        "returned",
+        "checking",
+        "printing",
+        "returned",
+        "checking",
+        "printing",
+        "acknowledged",
+        "closed"
+      ]
+    },
+    "exceptions": []
+  },
+  "pdfAudit": {
+    "guard": {
+      "pages": 1,
+      "sizes": [
+        [
+          612.0,
+          792.0
+        ]
+      ],
+      "appSentinelAbsent": true,
+      "bodyEndPresent": false,
+      "guardMessagePresent": true
+    },
+    "armed-a5": {
+      "pages": 14,
+      "sizes": [
+        [
+          420.0,
+          595.0
+        ]
+      ],
+      "appSentinelAbsent": true,
+      "bodyEndPresent": true,
+      "guardMessagePresent": false
+    },
+    "armed-booklet": {
+      "pages": 8,
+      "sizes": [
+        [
+          841.9,
+          595.0
+        ]
+      ],
+      "appSentinelAbsent": true,
+      "bodyEndPresent": true,
+      "guardMessagePresent": false
+    }
+  },
+  "visual": {
+    "boundary": "Static reconstruction from actual formal SFC template/scoped CSS with public states, not Vue mount/real data; paper preview audited separately with native actual book/PDF",
+    "screenshots": [
+      {
+        "state": "initial",
+        "viewport": "desktop",
+        "width": 1280,
+        "sha256": "210595a2323d115d473fb5d3005c3618a8d0bb0301ea0d0277aa358bb6bbf38a",
+        "individuallyReviewed": true,
+        "observation": "Readable spacing and controls; no overlaps or page-wide overflow; desktop columns/mobile stack where applicable."
+      },
+      {
+        "state": "initial",
+        "viewport": "mobile",
+        "width": 390,
+        "sha256": "d5746f1d61ee57c0ee47a4ac1dec614c419bdb4a09cb4d003c87de1fc5e53651",
+        "individuallyReviewed": true,
+        "observation": "Readable spacing and controls; no overlaps or page-wide overflow; desktop columns/mobile stack where applicable."
+      },
+      {
+        "state": "review",
+        "viewport": "desktop",
+        "width": 1280,
+        "sha256": "402dde139cb0d7f4d3fcb9c0e35463fe999de85361ffb74ab5a3b81b5f497313",
+        "individuallyReviewed": true,
+        "observation": "Readable spacing and controls; no overlaps or page-wide overflow; desktop columns/mobile stack where applicable."
+      },
+      {
+        "state": "review",
+        "viewport": "mobile",
+        "width": 390,
+        "sha256": "b846326bd72b9f757bf92598e4f5b675f79705abb42cf06f953f1fdee6894be4",
+        "individuallyReviewed": true,
+        "observation": "Readable spacing and controls; no overlaps or page-wide overflow; desktop columns/mobile stack where applicable."
+      },
+      {
+        "state": "preview",
+        "viewport": "desktop",
+        "width": 1280,
+        "sha256": "5c13da4054d5d6ee87e93430391d0cb8dac249c7de7f7346a38c72ee18331881",
+        "individuallyReviewed": true,
+        "observation": "Readable spacing and controls; no overlaps or page-wide overflow; desktop columns/mobile stack where applicable."
+      },
+      {
+        "state": "preview",
+        "viewport": "mobile",
+        "width": 390,
+        "sha256": "9e521ca336678974ceeb534275aebf949c06ac1a7bd881147b915e0e413c92bd",
+        "individuallyReviewed": true,
+        "observation": "Readable spacing and controls; no overlaps or page-wide overflow; desktop columns/mobile stack where applicable."
+      },
+      {
+        "state": "printing",
+        "viewport": "desktop",
+        "width": 1280,
+        "sha256": "ee326d8d99ca17e57dd1fc9a1236a3454d378c59976e75394551ba1be832980a",
+        "individuallyReviewed": true,
+        "observation": "Readable spacing and controls; no overlaps or page-wide overflow; desktop columns/mobile stack where applicable."
+      },
+      {
+        "state": "printing",
+        "viewport": "mobile",
+        "width": 390,
+        "sha256": "a7c06b5ff98ce8f4a9391eeff6d4ad265beb62dcec111ada41e1094ca2919603",
+        "individuallyReviewed": true,
+        "observation": "Readable spacing and controls; no overlaps or page-wide overflow; desktop columns/mobile stack where applicable."
+      },
+      {
+        "state": "error",
+        "viewport": "desktop",
+        "width": 1280,
+        "sha256": "8455772d1382a4e2df038f55184abf7efc2007397751e0dcbf1bc41571e0a415",
+        "individuallyReviewed": true,
+        "observation": "Readable spacing and controls; no overlaps or page-wide overflow; desktop columns/mobile stack where applicable."
+      },
+      {
+        "state": "error",
+        "viewport": "mobile",
+        "width": 390,
+        "sha256": "0834f08b9faad575e21d984db99433eca739aac719c5d11c126f3e98dd82e563",
+        "individuallyReviewed": true,
+        "observation": "Readable spacing and controls; no overlaps or page-wide overflow; desktop columns/mobile stack where applicable."
+      },
+      {
+        "state": "expired",
+        "viewport": "desktop",
+        "width": 1280,
+        "sha256": "a179331fdacf4ca78bba1e58c38df4674b391e74bd0567c9194fe51bd200f5c6",
+        "individuallyReviewed": true,
+        "observation": "Readable spacing and controls; no overlaps or page-wide overflow; desktop columns/mobile stack where applicable."
+      },
+      {
+        "state": "expired",
+        "viewport": "mobile",
+        "width": 390,
+        "sha256": "f5c90c31ca654d18d52481db23829096510e2154ea6a2a4ef98ac5355fa35154",
+        "individuallyReviewed": true,
+        "observation": "Readable spacing and controls; no overlaps or page-wide overflow; desktop columns/mobile stack where applicable."
+      }
+    ],
+    "fixedDuringReview": "Printing progress no longer contradicts locked printing state"
+  },
+  "limitations": [
+    "Full Vue/Vite build and formal-route real data Chrome/Edge/Safari verification pending local user run",
+    "OS print dialog not automated; window.print request counted with replacement",
+    "Real phone, peak memory and folded physical output not accepted",
+    "Cannot infer or revoke OS-saved PDF or paper"
+  ],
+  "sourceSha256": {
+    "frontend/src/shared/exportHandoff.ts": "7247d71c30e100fbdc4878dacd4f93554ea3c6c0a5ad724cddbd9949d7d8b6f8",
+    "frontend/src/shared/exportPrintLifecycle.ts": "c75adc236ac1d065ab39e430ac5e3838d91944bd3ca4b703a3b50b17d0f9951a",
+    "frontend/src/print/exportPrintBrowser.ts": "4a1bfa8111d78e6145b7d310e855b4e51e391b8dc357d7eab79397ccee975715",
+    "frontend/src/views/PrintExportView.vue": "6e91dc8144615b15c01b9e3c3792c17d17bbd3e9a6d00adc40d79f1923697241",
+    "frontend/src/repo/index.ts": "6013c56a474002106678da2b294888de8b62e8cd49b1276349ebd977b5b962ce",
+    "frontend/src/db/exportSessionRepo.ts": "b8d0f496077b537d250e0332c3bddd95c4e8713b0f863b0f633b58c143502045",
+    "frontend/src/shared/exportPreflightTask.ts": "03dd501842894d1b74a09293f6673c6d2539d233146551442357a412fd3c1f59",
+    "frontend/src/shared/exportDocumentTask.ts": "1455782f8ee1d2af3b48247179be76c90fa5102fe4ad4a62ebed4d7e31b50b97",
+    "frontend/src/db/notebookSessionRepo.ts": "dbcf352053ba8caad60fada2adb47a4e507cac81528fc28b30f4d2cddcda7044",
+    "frontend/src/router/index.ts": "068d8f450cee049c9349947a9137702edb52e9b0b827bda5f86921bc650f54d8",
+    "frontend/src/views/SettingsView.vue": "52822331b2aff2f527a3b2a3cbff3b1ee9ca4a25b9cfbb426ab71f53bd14a2cc",
+    "frontend/src/views/ListView.vue": "189ec986b536fbb25a3bf126b7cf5e5a2a6db228906a9bf5777d4a75220c88a3",
+    "frontend/src/views/EntryEditView.vue": "262afba881898752555762ee52dce0608518ad1da6d03408aa83d765db2a6419",
+    "frontend/tests/export-handoff.test.cjs": "633c6918613c2ed829b896f7f79de5a6a569b936d8dcd7146c6731b26ff5ece5",
+    "frontend/tests/export-print-lifecycle.test.cjs": "3eff119094c003504c33a2b9fdd4f20a43b8b68afed7a406d961add185731cf5",
+    "frontend/tests/export-formal-view.test.cjs": "8fa6fa83e84bf87829d94d7afeaadf6867daadbe1bd7eee70ddc8bef8c27e399",
+    "frontend/tests/export-formal-contract.test.cjs": "65d8d068892dc5e5c1ac4508207391ea90526dba2991d3ec83f5333fc94c9c4a",
+    "frontend/tests/export-snapshot-adapter.test.cjs": "f34a859d2b93152b06876089781f4e84db8ba784f8d34f8ff683c1819a88ca83",
+    "doc/P6-3 正式入口与打印生命周期实施记录.md": "f8b6d49cb4ec0e19eb171ff4f779fad5da3eb49ab10f445c7771f5a506ed34f7",
+    "doc/P6 打印与导出（杀青）真相来源.md": "2e8a599a77b48ab598a7aca9edf2d238e82925c515372efcb67706ff5192dd48",
+    "doc/青简 Quire 项目状态索引（真相来源） eb64c86897b44b3ca979c923e3984bd9.md": "6e124b28afddf682e53ab5ea954c8f2fe924b3fed478985f0782c81c221e0f70"
+  }
+}

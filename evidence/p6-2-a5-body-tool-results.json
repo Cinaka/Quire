@@ -1,0 +1,157 @@
+{
+  "scope": "Tool execution; fixed public samples; Node type erasure and Vite URL glob pre-resolution, not Vite build or user-browser acceptance",
+  "tests": {
+    "passed": 309,
+    "failed": 0
+  },
+  "build": {
+    "exitCode": 127,
+    "reason": "vue-tsc not installed; no dependencies installed/upgraded"
+  },
+  "native": {
+    "wenkai": {
+      "complete": true,
+      "scope": "固定公开材料；程序确认缺图降级；非正式账号/快照入口",
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "font": {
+        "mode": "wenkai",
+        "shards": 47,
+        "uncoveredScalars": 1
+      },
+      "bodyPages": 12,
+      "bodyStarts": [
+        1,
+        4,
+        10
+      ],
+      "sourceTextCoverage": true,
+      "coverage": "生产片段连续覆盖及实际DOM文字UTF-16区间核对通过；另核对末端标记/列表序号/几何",
+      "bounds": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "images": 1,
+      "relaxedWidows": 0,
+      "urlsCreated": 1,
+      "urlsRevoked": 0,
+      "completeOutputReady": false,
+      "limitations": [
+        "仅正文A5；无封面目录/A4拼版或正式身份",
+        "固定材料程序确认降级；不代表真实用户确认",
+        "浏览器内存峰值、手机打印与实物未验；无自动打印"
+      ]
+    },
+    "system": {
+      "complete": true,
+      "scope": "固定公开材料；程序确认缺图降级；非正式账号/快照入口",
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "font": {
+        "mode": "system",
+        "shards": 0,
+        "uncoveredScalars": 0
+      },
+      "bodyPages": 12,
+      "bodyStarts": [
+        1,
+        4,
+        10
+      ],
+      "sourceTextCoverage": true,
+      "coverage": "生产片段连续覆盖及实际DOM文字UTF-16区间核对通过；另核对末端标记/列表序号/几何",
+      "bounds": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "images": 1,
+      "relaxedWidows": 0,
+      "urlsCreated": 1,
+      "urlsRevoked": 0,
+      "completeOutputReady": false,
+      "limitations": [
+        "仅正文A5；无封面目录/A4拼版或正式身份",
+        "固定材料程序确认降级；不代表真实用户确认",
+        "浏览器内存峰值、手机打印与实物未验；无自动打印"
+      ]
+    },
+    "faultCases": [
+      {
+        "name": "source release removes ready pages",
+        "pass": true
+      },
+      {
+        "name": "already-aborted does not publish",
+        "pass": true
+      },
+      {
+        "name": "cancel during cooperative measure clears output",
+        "pass": true
+      },
+      {
+        "name": "wrong physical styles fail closed",
+        "pass": true
+      }
+    ],
+    "runtimeEvents": [],
+    "afterStop": {
+      "pages": 0,
+      "urlsCreated": 1,
+      "urlsRevoked": 1,
+      "fontFaces": 0
+    },
+    "mobileViewport": {
+      "width": 390,
+      "documentScrollWidth": 375,
+      "paperPreviewWidth": 343,
+      "zoom": 0.61319,
+      "scope": "Actual Chromium viewport emulation; not a real phone"
+    }
+  },
+  "pdf": {
+    "desktop": {
+      "pages": 12,
+      "sizeMm": [
+        148.17,
+        209.89
+      ],
+      "searchableMarkers": {
+        "BODY_END_01": true,
+        "CODE_END_02": true,
+        "WORD_END_02": true,
+        "BODY_END_03": true
+      }
+    },
+    "390px": {
+      "pages": 12,
+      "sizeMm": [
+        148.17,
+        209.89
+      ],
+      "searchableMarkers": {
+        "BODY_END_01": true,
+        "CODE_END_02": true,
+        "WORD_END_02": true,
+        "BODY_END_03": true
+      }
+    }
+  }
+}

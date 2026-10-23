@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' ws://127.0.0.1:5185; img-src 'none'; font-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
+<title>P6-1 单事务只读快照核验</title><link rel="stylesheet" href="./lab.css">
+</head>
+<body><main>
+<p class="eyebrow">QUIRE / SNAPSHOT LAB · P6-1</p>
+<h1>同一时点，留存一简</h1>
+<p class="intro">真实 Dexie / IndexedDB 与生产快照适配器；身份为模拟，材料为固定公开样例。不读取日常库、账号或私人文件，不同步、不打印。</p>
+<section class="boundary"><h2>运行边界</h2>
+<p>点击后，仅创建本次随机测试库。另一个真实数据库连接会写入固定材料，用来核对并发一致性；生产快照路径必须保持只读。</p>
+<p>本轮含固定2×2 PNG事务外解码、变化提示和程序模拟降级选择；通过不代表真实登录、大图容量、字体、分页、系统 PDF 或手机内存验收。停止后清空页面内快照，不删除测试库。</p></section>
+<div class="actions"><button id="start" disabled>检查运行环境……</button><button id="cancel" disabled>停止并释放快照</button></div>
+<p id="status" role="status" aria-live="polite">尚未运行，不代表通过。</p>
+<section><h2>逐项核验</h2><ol id="checks"><li class="muted" id="empty">等待明确启动。</li></ol></section>
+<section><h2>受控快照展示</h2><p id="snapshot" class="snapshot">尚未持有快照。</p></section>
+<details><summary>原始报告（仅固定材料）</summary><pre id="report">尚未运行</pre></details>
+<p class="note">请保持此页面在前台。每次重新载入后再运行都会创建新测试库；无需清理既有 P4/P5 库或验收目录。</p>
+</main><script type="module" src="./boot.mjs"></script></body>
+</html>

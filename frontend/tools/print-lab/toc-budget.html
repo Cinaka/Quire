@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'none'; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>P6-0 多页目录与预算保护样张</title>
+<link rel="stylesheet" href="/frontend/src/styles/notebook-fonts.css"><link rel="stylesheet" href="./lab.css"><link rel="stylesheet" href="./toc-budget.css"></head>
+<body><header class="lab-ui"><p class="eyebrow">QUIRE / PRINT LAB · P6-0</p><h1>多页目录 · 有界编排</h1><p>固定公开长标题、九篇校验正文；不读账号、日记或数据库。</p>
+<nav aria-label="验证场景"><a href="?case=normal">正常目录</a><a href="?case=normal&font=fallback">系统字体回退</a><a href="?case=overlimit">超限停止</a><a href="?case=cycle">不收敛停止</a><a href="?case=cancel">模拟取消</a></nav>
+<p id="status" role="status">准备目录样张……</p><button id="cancel" type="button">停止本次编排</button>
+<p>仅正常就绪态可核对系统另存A5 PDF；本页不自动打印。故障场景故意停止且清空输出。</p></header>
+<main id="output" aria-label="印刷样张"></main><div id="measure" aria-hidden="true"></div><pre class="lab-ui" id="result" aria-label="验证报告"></pre>
+<script type="module" src="./toc-budget.mjs"></script></body></html>

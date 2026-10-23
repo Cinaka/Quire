@@ -39,3 +39,8 @@ export { listScheduleConflictSources, createScheduleConflictSession } from "@/db
 export type { NotebookReadPort, NotebookMediaResult } from "@/db/notebookReadCore"
 
 export { createVerifiedNotebookReadPort, captureNotebookScope } from "@/db/notebookSessionRepo"
+
+// P6: verified factory only, lazily loaded after explicit entry. No bare leases.
+export async function createVerifiedExportPreflightTask(failed: () => void) {
+  return (await import("@/db/exportSessionRepo")).createVerifiedExportPreflightTask(failed)
+}

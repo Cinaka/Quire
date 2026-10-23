@@ -26,6 +26,12 @@
     </section>
 
     <section class="card">
+      <h2 class="card-title">杀青</h2>
+      <p>将本机已保存的简编成纸页，核对预览后打印或由浏览器另存 PDF。不上传，不等同于全量备份。</p>
+      <button type="button" class="line-btn" @click="router.push('/print')">打印 / 另存 PDF</button>
+    </section>
+
+    <section class="card">
       <h2 class="card-title">防蠹</h2>
       <p class="note">
         导出一份全量备份，含全部日记、预简及其安全草稿、转换恢复信息、标签、图片与断简中的残简。文件只在本机生成，不经服务器。

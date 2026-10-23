@@ -1,0 +1,43 @@
+:root { color-scheme: light; color: #2e2c28; background: #ebe3d5; font-family: system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+.lab-ui { max-width: 1120px; padding: 24px; margin: auto; }
+.eyebrow { letter-spacing: .18em; font-size: 12px; color: #5a7a6b; }
+h1 { font-size: 24px; font-weight: 500; } a { color: #426455; text-underline-offset: 4px; }
+#result { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+#output { padding: 16px; overflow-x: auto; }
+.sheet { margin: 0 auto 24px; background: white; width: 148mm; height: 210mm; display: flex; }
+.sheet.wide { width: 297mm; gap: 1mm; }
+.paper { position: relative; flex: 0 0 148mm; width: 148mm; height: 210mm; background: #fff; padding: 12mm; }
+.paper .body { width: 124mm; height: 179mm; font-family: "Quire Notebook WenKai", "Noto Serif CJK SC", serif; font-size: 12pt; line-height: 1.7; overflow-wrap: anywhere; }
+.fallback .paper .body { font-family: "Noto Serif CJK SC", serif; }
+.body > * { margin: 0 0 3mm; }
+.body .date { font: 9pt/1.6 system-ui,sans-serif; color: #68645f; margin-bottom: 2mm; }
+.body h2 { font-size: 18pt; line-height: 1.35; font-weight: normal; margin-bottom: 5mm; }
+.body pre { font: 9pt/1.65 monospace; white-space: pre-wrap; overflow-wrap: anywhere; border-left: 1px solid #bbb; padding-left: 3mm; }
+.body blockquote { border-left: 1px solid #5a7a6b; padding-left: 3mm; white-space: pre-wrap; }
+.body .list-item { position: relative; padding-left: 6mm; }
+.list-item .marker { position: absolute; left: 0; font-variant-numeric: tabular-nums; }
+.body figure { margin: 0; text-align: center; }
+.body figure img { max-width: 124mm; max-height: 153mm; width: auto; height: auto; display: block; margin: auto; }
+.body figcaption { font: 9pt/1.5 system-ui,sans-serif; margin-top: 2mm; color: #68645f; }
+.folio { position: absolute; bottom: 7mm; left: 12mm; right: 12mm; text-align: center; font: 9pt/1 system-ui,sans-serif; color: #68645f; }
+.cover .body { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
+.cover .brand { letter-spacing: .3em; font-size: 11pt; color: #5a7a6b; }
+.cover h2 { font-size: 36pt; margin: 8mm 0; }
+.cover .rule { width: 16mm; height: 1px; background: #5a7a6b; margin: 10mm 0; }
+.toc-row { display: flex; gap: 4mm; justify-content: space-between; font-size: 11pt; }
+.toc-row span:first-child { flex: 1; }
+.numbered .body { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8mm; }
+.numbered strong { font: 72pt/1 system-ui,sans-serif; font-weight: 300; }
+.numbered .up { font: 24pt/1 system-ui,sans-serif; color: #5a7a6b; }
+.numbered .label { font: 11pt/1.7 system-ui,sans-serif; }
+#measure { position: absolute; left: -20000px; top: 0; visibility: hidden; }
+@page { size: A5 portrait; margin: 0; }
+@media print {
+ :root, body { background: white; }
+ .lab-ui, #measure { display: none !important; }
+ #output { padding: 0; overflow: visible; }
+ .sheet { margin: 0; break-after: page; break-inside: avoid; }
+ .sheet:last-child { break-after: auto; }
+}

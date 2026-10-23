@@ -1,0 +1,51 @@
+/* Scoped independent print document. No global body/heading rules or swap CSS. */
+.quire-print-root { color:#2e2c28; background:white; font-synthesis:weight; }
+.quire-print-root *, .quire-print-root *::before { box-sizing:border-box; }
+.quire-print-root .p6-sheet { position:relative; width:148mm; height:210mm; padding:12mm; background:white; margin:0 auto 24px; }
+.quire-print-root .p6-body { width:124mm; height:179mm; font-size:12pt; line-height:1.7; overflow-wrap:anywhere; white-space:pre-wrap; }
+.quire-print-root .p6-body :where(div,p,h1,h2,h3,ul,ol,li,blockquote,pre) { margin:0 0 3mm; }
+.quire-print-root .p6-body :where(p,span,strong,em,s,code) { overflow-wrap:anywhere; }
+.quire-print-root .p6-body :where(h1,h2,h3) { font-weight:400; font-size:18pt; line-height:1.4; }
+.quire-print-root .p6-body h3 { font-size:15pt; }
+.quire-print-root .p6-body :where(ul,ol) { padding-left:7mm; }
+.quire-print-root .p6-body li { padding-left:1mm; }
+.quire-print-root .p6-body li[data-continued="true"] { list-style-type:none; }
+.quire-print-root .p6-body blockquote { margin-left:0; padding-left:3mm; border-left:1px solid #5a7a6b; }
+.quire-print-root .p6-body pre { font:9pt/1.7 ui-monospace,monospace; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; padding-left:2mm; border-left:1px solid #bcb7ad; }
+.quire-print-root .p6-body code { font:inherit; font-family:ui-monospace,monospace; }
+.quire-print-root .p6-body [data-role="date"], .quire-print-root .p6-body [data-role="meta"] { font-size:9pt; line-height:1.6; color:#68645f; }
+.quire-print-root .p6-body [data-role="diagnostic"], .quire-print-root .p6-body [data-role="placeholder"], .quire-print-root .p6-body [data-role="notice"] { display:block; padding-left:2mm; border-left:1px solid #9b563b; font-size:10pt; }
+.quire-print-root .p6-body [data-role="figure"] { display:block; text-align:center; }
+.quire-print-root .p6-body [data-role="caption"] { display:block; text-align:center; font-size:9pt; line-height:1.5; margin:2mm 0 3mm; }
+.quire-print-root .p6-image-box { display:block; margin:0 auto; }
+.quire-print-root .p6-image-box img { width:100%; height:100%; display:block; object-fit:contain; }
+.quire-print-root .p6-folio { position:absolute; bottom:7mm; left:12mm; right:12mm; text-align:center; font:9pt/1 system-ui,sans-serif; color:#68645f; }
+@page quire-a5 { size:148mm 210mm; margin:0; }
+@media print {
+ .quire-print-root { background:white; }
+ .quire-print-root .p6-sheet { page:quire-a5; margin:0; break-after:page; break-inside:avoid; }
+ .quire-print-root .p6-sheet:last-child { break-after:auto; }
+}
+/* Book assembly keeps the already measured A5 boxes unchanged. */
+.quire-print-root .p6-cover .p6-body { display:flex; flex-direction:column; justify-content:center; gap:3mm; }
+.quire-print-root .p6-cover h1 { font-size:32pt; line-height:1.4; margin:8mm 0; overflow-wrap:anywhere; }
+.quire-print-root .p6-cover p { font-size:11pt; }
+.quire-print-root .p6-cover .p6-brand { font:9pt/1.5 system-ui,sans-serif; letter-spacing:.22em; color:#426455; margin-bottom:5mm; }
+.quire-print-root .p6-cover .p6-cover-note { font-size:9pt; color:#68645f; }
+.quire-print-root .p6-toc-row { display:grid; grid-template-columns:minmax(0,1fr) 12mm; gap:4mm; border-bottom:1px solid #d9d4cb; padding:3mm 0; font-size:11pt; line-height:1.7; }
+.quire-print-root .p6-toc-row p { margin:0 0 1mm; }
+.quire-print-root .p6-toc-date { font-size:9pt; color:#68645f; }
+.quire-print-root .p6-toc-number { text-align:right; white-space:nowrap; font:10pt/1.7 system-ui,sans-serif; }
+.quire-print-root.p6-book-output .p6-sheet { margin:0; flex:0 0 148mm; }
+.quire-print-root .p6-paper-face { height:210mm; display:flex; margin:0 auto 24px; gap:1mm; background:white; }
+.quire-print-root .p6-face-a5 { width:148mm; }
+.quire-print-root .p6-face-a4 { width:297mm; }
+.quire-print-root .p6-panel-blank { width:148mm; height:210mm; flex:0 0 148mm; background:white; }
+@page quire-a4 { size:297mm 210mm; margin:0; }
+@media print {
+ .quire-print-root.p6-book-output .p6-sheet { page:auto; break-after:auto; break-inside:auto; }
+ .quire-print-root .p6-paper-face { margin:0; break-after:page; break-inside:avoid; }
+ .quire-print-root .p6-paper-face:last-child { break-after:auto; }
+ .quire-print-root .p6-face-a5 { page:quire-a5; }
+ .quire-print-root .p6-face-a4 { page:quire-a4; }
+}
