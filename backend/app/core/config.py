@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     MEDIA_ROOT: str = "./media"
     MEDIA_PUBLIC_PREFIX: str = "/media"
+    # Single-worker defaults; all limits remain positive and configurable.
+    REGISTER_IP_PER_HOUR: int = Field(default=5, ge=1)
+    REGISTER_GLOBAL_PER_DAY: int = Field(default=100, ge=1)
+    LOGIN_IP_PER_MINUTE: int = Field(default=30, ge=1)
+    API_IP_PER_MINUTE: int = Field(default=240, ge=1)
+    UPLOAD_IP_PER_MINUTE: int = Field(default=20, ge=1)
+    UPLOAD_USER_PER_MINUTE: int = Field(default=20, ge=1)
+    MEDIA_READ_USER_PER_MINUTE: int = Field(default=120, ge=1)
+    MEDIA_USER_MAX_BYTES: int = Field(default=524288000, ge=1)
+    MEDIA_USER_MAX_COUNT: int = Field(default=1000, ge=1, le=10000)
+    MEDIA_DISK_RESERVE_BYTES: int = Field(default=1073741824, ge=1)
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     @property

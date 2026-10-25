@@ -8,9 +8,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
+from app.core.abuse_middleware import AbuseMiddleware
 from app.core.config import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -18,7 +18,8 @@ logger = logging.getLogger(settings.APP_NAME)
 
 Path(settings.MEDIA_ROOT).mkdir(parents=True, exist_ok=True)
 app = FastAPI(title=settings.APP_NAME, docs_url="/docs", openapi_url="/openapi.json")
-app.mount(settings.MEDIA_PUBLIC_PREFIX, StaticFiles(directory=settings.MEDIA_ROOT), name="media")
+# Private media is available only through owner-checked API byte endpoints.
+app.add_middleware(AbuseMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
