@@ -12,6 +12,18 @@ class LoginRateLimiter:
         self.window_seconds = window_seconds
         self._failures: dict[str, deque[float]] = defaultdict(deque)
         self._locked_until: dict[str, float] = {}
+        self._max_keys = 10000
+
+    def _bound(self, key: str, now: float) -> None:
+        if key in self._failures or len(self._failures) < self._max_keys:
+            return
+        for old in list(self._failures):
+            queue = self._failures[old]
+            if ((not queue or queue[-1] <= now - self.window_seconds)
+                    and self._locked_until.get(old, 0) <= now):
+                self.clear(old)
+        if len(self._failures) >= self._max_keys:
+            raise HTTPException(429, "登录请求过多，请稍后重试", headers={"Retry-After": "60"})
 
     def _now(self) -> float:
         return time.monotonic()
@@ -35,10 +47,12 @@ class LoginRateLimiter:
             )
         if locked_until:
             self.clear(key)
-        self._prune(key, current)
+        if key in self._failures:
+            self._prune(key, current)
 
     def fail(self, key: str, now: float | None = None) -> None:
         current = self._now() if now is None else now
+        self._bound(key, current)
         failures = self._prune(key, current)
         failures.append(current)
         if len(failures) >= self.max_failures:

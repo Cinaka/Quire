@@ -385,7 +385,12 @@ async function pullAll(since: string, context: SyncContext): Promise<void> {
 async function syncOnce(context: SyncContext): Promise<void> {
   await assertSyncContext(context)
   const pushed = await pushAll(context)
-  if (!pushed.complete) return
+  const remainingErrors = await errorRecords()
+  await assertSyncContext(context)
+  if (!pushed.complete || remainingErrors.length > 0) {
+    const detail = remainingErrors.find(item => item.message)?.message
+    throw new Error(detail ? `仍有内容未同步：${detail}` : "仍有内容未同步，本机数据已保留，请检查同步状态")
+  }
   const since = await meta("lastSyncAt")
   if (!since) {
     if (pushed.hadWork) {

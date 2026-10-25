@@ -1,3 +1,7 @@
+# This file is included inside the nginx http {} context, not inside another server {}.
+limit_req_zone $binary_remote_addr zone=quire_api:10m rate=4r/s;
+limit_req_status 429;
+
 server {
     listen 80;
     server_name example.com;
@@ -6,7 +10,22 @@ server {
     index index.html;
     client_max_body_size 22m;
 
+    error_page 429 = @quire_rate_limit;
+    error_page 413 = @quire_body_limit;
+    location @quire_rate_limit {
+        default_type application/json;
+        add_header Cache-Control "private, no-store" always;
+        add_header Retry-After 60 always;
+        return 429 '{"code":429,"message":"请求过于频繁，请稍后重试","data":null}';
+    }
+    location @quire_body_limit {
+        default_type application/json;
+        add_header Cache-Control "private, no-store" always;
+        return 413 '{"code":413,"message":"请求内容过大；本机图片仍保留","data":null}';
+    }
+
     location /api/ {
+        limit_req zone=quire_api burst=120 nodelay;
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -16,10 +35,11 @@ server {
         proxy_read_timeout 120s;
     }
 
-    location /media/ {
-        alias /var/lib/quire/media/;
-        autoindex off;
-        add_header X-Content-Type-Options nosniff always;
+    # Private files must never bypass API authentication (including the bare path).
+    location = /media { return 404; }
+    location ^~ /media/ {
+        add_header Cache-Control "private, no-store" always;
+        return 404;
     }
 
     location / {

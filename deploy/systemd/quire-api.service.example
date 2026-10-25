@@ -9,7 +9,7 @@ User=quire
 Group=quire
 WorkingDirectory=/srv/quire/backend
 EnvironmentFile=/srv/quire/backend/.env
-ExecStart=/opt/anaconda3/envs/quire/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+ExecStart=/opt/anaconda3/envs/quire/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=on-failure
 RestartSec=5
 UMask=0027
