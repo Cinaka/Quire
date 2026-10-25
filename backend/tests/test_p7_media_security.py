@@ -100,6 +100,16 @@ def api(tmp_path, monkeypatch):
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """))
+        # Registration also persists a real refresh session through issue_auth().
+        # This is a temporary SQLite fixture, not a production schema migration.
+        connection.execute(text("""
+            CREATE TABLE refresh_sessions (
+                id BLOB PRIMARY KEY, user_id BLOB NOT NULL,
+                token_version INTEGER NOT NULL,
+                expires_at DATETIME NOT NULL, revoked_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
         connection.execute(text("INSERT INTO users (id, email) VALUES (:id, :email)"), [
             {"id": A.bytes, "email": "a@example.test"},
             {"id": B.bytes, "email": "b@example.test"},
@@ -234,11 +244,17 @@ def test_request_limits_cover_registration_before_password_hash(api, monkeypatch
     monkeypatch.setattr(auth, "hash_password", lambda value: calls.append(value) or "test-hash")
     monkeypatch.setattr(settings, "REGISTER_IP_PER_HOUR", 1)
     body = {"email": "first@example.test", "password": "test-password"}
-    assert api.client.post("/api/v1/auth/register", json=body).status_code == 200
+    first = api.client.post("/api/v1/auth/register", json=body)
+    assert first.status_code == 200
+    assert auth.REFRESH_COOKIE in first.cookies
+    assert api.db.session.scalar(text("SELECT COUNT(*) FROM refresh_sessions")) == 1
+    assert api.db.session.scalar(text("SELECT COUNT(*) FROM users")) == 3
     response = api.client.post("/api/v1/auth/register", json=body)
     assert response.status_code == 429 and len(calls) == 1
     assert response.headers["retry-after"]
     assert response.json()["code"] == 429
+    assert api.db.session.scalar(text("SELECT COUNT(*) FROM refresh_sessions")) == 1
+    assert api.db.session.scalar(text("SELECT COUNT(*) FROM users")) == 3
 
 
 def test_login_attempts_limited_even_before_account_lookup(api, monkeypatch):
@@ -265,3 +281,13 @@ def test_symlink_in_complete_record_is_not_accepted_as_safe_upload(api):
     assert upload(api).status_code == 503
     assert target.read_bytes() == PNG
     assert api.client.get(f"{URL}/original", headers=api.a).status_code == 404
+
+
+def test_fixture_covers_models_used_by_registration(api):
+    from app.models.refresh_session import RefreshSession
+    from app.models.user import User
+
+    for model in (User, Media, RefreshSession):
+        table = model.__tablename__
+        columns = {row[1] for row in api.db.session.execute(text(f"PRAGMA table_info({table})"))}
+        assert set(model.__table__.columns.keys()) <= columns
