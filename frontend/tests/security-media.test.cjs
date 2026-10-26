@@ -70,8 +70,8 @@ test('HTML, empty, and non-200 blobs never become local media', async () => {
     const { read }=await transport(overrides);await assert.rejects(read())
   }
 })
-test('429 and 401 failures do not pretend to be image success', async () => {
-  for(const code of [429,401]) { const {read}=await transport({error:new Error(String(code))});await assert.rejects(read()) }
+test('429, 401 and 503 failures do not pretend to be image success', async () => {
+  for(const code of [429,401,503]) { const {read}=await transport({error:new Error(String(code))});await assert.rejects(read()) }
 })
 
 async function cloud(overrides={}) {
@@ -133,8 +133,8 @@ test('newer local bytes are not overwritten by a pending download',async()=>{
   const result=await repo.get(ID);assert.equal(result.blob,newer);assert.equal(state.updates,0)
 })
 
-async function syncScenario({paused=false}={}) {
-  let errors=paused?[{kind:'media',id:ID,message:'账号图片容量已达上限',paused:true,count:3}]:[]
+async function syncScenario({paused=false,message='账号图片容量已达上限'}={}) {
+  let errors=paused?[{kind:'media',id:ID,message,paused:true,count:3}]:[]
   const media={id:ID,entryId:'entry',blob:blob(),thumbBlob:null,dirty:1}
   let uploads=0, pushes=0
   const table=items=>({where:()=>({equals:()=>({toArray:async()=>items})})})
@@ -145,14 +145,22 @@ async function syncScenario({paused=false}={}) {
   const identity=value=>value
   const held=async()=>({entryIds:new Set(),tagIds:new Set(),mediaIds:new Set()})
   const mod=await load('src/api/sync.ts',{
-    '@/api/endpoints':{uploadMedia:async()=>{uploads++;throw Error('账号图片容量已达上限')},pushBatch:async()=>{pushes++;throw Error('unexpected push')},pullChanges:async()=>{throw Error('unexpected pull')}},
+    '@/api/endpoints':{uploadMedia:async()=>{uploads++;throw Error(message)},pushBatch:async()=>{pushes++;throw Error('unexpected push')},pullChanges:async()=>{throw Error('unexpected pull')}},
     '@/api/mappers':Object.fromEntries(['fromWireEntry','fromWireTag','mediaPatchFromWire','toWireEntry','toWireMediaMetaPush','toWireTag'].map(name=>[name,identity])),
     '@/db/schema':{db},'@/db/scheduleStateRepo':{holdConversionServerEntry:async()=>{},protectedConversions:held},
     './syncContext':{assertSyncContext:async()=>{},captureSyncContext:async()=>({ownerUserId:'A',generation:1,tokenGeneration:1})},
     '@/shared/time':{utcNow:()=>new Date().toISOString()},
   })
-  await assert.rejects(mod.runSync(),/账号图片容量已达上限/)
+  await assert.rejects(mod.runSync(), error => error.message.includes(message))
   assert.equal(media.dirty,1);assert.equal(pushes,0);assert.equal(uploads,paused?0:1)
 }
 test('upload quota failure keeps dirty and rejects sync instead of success',async()=>syncScenario())
 test('paused media error cannot turn later no-work sync into success',async()=>syncScenario({paused:true}))
+
+test('503 cloud fill preserves local metadata and dirty',async()=>{
+  const {state,repo}=await cloud({error:Error('503 安全限流服务暂不可用')});const before=state.item
+  assert.equal(await repo.get(ID),undefined);assert.equal(state.updates,0);assert.equal(state.item,before)
+  assert.equal(state.item.dirty,1)
+})
+test('503 upload failure keeps dirty and rejects sync',async()=>syncScenario({message:'503 安全限流服务暂不可用'}))
+test('paused 503 error never becomes later sync success',async()=>syncScenario({paused:true,message:'503 安全限流服务暂不可用'}))

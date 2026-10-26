@@ -1,9 +1,11 @@
-from pydantic import Field
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore", hide_input_in_errors=True,
+    )
 
     APP_NAME: str = "quire-api"
     DEBUG: bool = True
@@ -15,7 +17,23 @@ class Settings(BaseSettings):
     MYSQL_DB: str = "quire"
     DATABASE_URL: str | None = None
     REDIS_ENABLED: bool = False
-    REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    REDIS_URL: SecretStr = SecretStr("redis://127.0.0.1:6379/0")
+    REDIS_KEY_PREFIX: str = Field(default="quire:dev:rl:v1", pattern=r"^[a-zA-Z0-9:_-]{1,80}$")
+    REDIS_HMAC_SECRET: SecretStr = SecretStr("")
+    REDIS_CONNECT_TIMEOUT: float = Field(default=0.5, gt=0, le=5)
+    REDIS_SOCKET_TIMEOUT: float = Field(default=0.5, gt=0, le=5)
+    REDIS_MAX_CONNECTIONS: int = Field(default=20, ge=1, le=200)
+    REDIS_ATTEMPT_MAX_KEYS: int = Field(default=4096, ge=1, le=10000)
+    REDIS_LOGIN_MAX_KEYS: int = Field(default=10000, ge=1, le=10000)
+
+    @model_validator(mode="after")
+    def validate_redis(self):
+        if self.REDIS_ENABLED:
+            if len(self.REDIS_HMAC_SECRET.get_secret_value()) < 32:
+                raise ValueError("Redis requires an independent HMAC secret of at least 32 chars")
+            if not self.REDIS_URL.get_secret_value().startswith(("redis://", "rediss://")):
+                raise ValueError("Redis URL must use redis:// or rediss://")
+        return self
     JWT_SECRET: str = Field(...)
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15

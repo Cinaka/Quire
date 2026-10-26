@@ -5,6 +5,7 @@ import json
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.core.redis_limits import consume_attempt
 from app.core.request_limits import attempt_limiter
 
 MAX_BODY = 22 * 1024 * 1024
@@ -55,19 +56,27 @@ class AbuseMiddleware:
             return await reject(404, "资源不存在")
         if path != prefix and not path.startswith(prefix + "/"):
             return await self.app(scope, receive, guarded_send)
+        if path == prefix + "/health" and scope.get("method") in {"GET", "HEAD"}:
+            return await self.app(scope, receive, guarded_send)
         ip = (scope.get("client") or ("unknown", 0))[0]
         method = scope.get("method", "GET")
         try:
-            attempt_limiter.consume("api-ip", ip, settings.API_IP_PER_MINUTE, 60)
+            await consume_attempt(attempt_limiter, "api-ip", ip, settings.API_IP_PER_MINUTE, 60)
             if method == "POST" and path == prefix + "/auth/register":
-                attempt_limiter.consume("register-ip", ip, settings.REGISTER_IP_PER_HOUR, 3600)
-                attempt_limiter.consume(
+                await consume_attempt(
+                    attempt_limiter, "register-ip", ip, settings.REGISTER_IP_PER_HOUR, 3600,
+                )
+                await consume_attempt(attempt_limiter, 
                     "register-global", "all", settings.REGISTER_GLOBAL_PER_DAY, 86400,
                 )
             elif method == "POST" and path == prefix + "/auth/login":
-                attempt_limiter.consume("login-ip", ip, settings.LOGIN_IP_PER_MINUTE, 60)
+                await consume_attempt(
+                    attempt_limiter, "login-ip", ip, settings.LOGIN_IP_PER_MINUTE, 60,
+                )
             elif method == "POST" and path.startswith(prefix + "/media/"):
-                attempt_limiter.consume("upload-ip", ip, settings.UPLOAD_IP_PER_MINUTE, 60)
+                await consume_attempt(
+                    attempt_limiter, "upload-ip", ip, settings.UPLOAD_IP_PER_MINUTE, 60,
+                )
         except HTTPException as exc:
             return await reject(exc.status_code, exc.detail, exc.headers)
         headers = dict(scope.get("headers", []))

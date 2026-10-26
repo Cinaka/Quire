@@ -1,5 +1,6 @@
 import logging
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -12,12 +13,26 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.v1.router import api_router
 from app.core.abuse_middleware import AbuseMiddleware
 from app.core.config import settings
+from app.core.redis_limits import redis_limits
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(settings.APP_NAME)
 
 Path(settings.MEDIA_ROOT).mkdir(parents=True, exist_ok=True)
-app = FastAPI(title=settings.APP_NAME, docs_url="/docs", openapi_url="/openapi.json")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await redis_limits.start()
+    try:
+        yield
+    finally:
+        await redis_limits.close()
+
+
+app = FastAPI(
+    title=settings.APP_NAME, docs_url="/docs", openapi_url="/openapi.json", lifespan=lifespan,
+)
 # Private media is available only through owner-checked API byte endpoints.
 app.add_middleware(AbuseMiddleware)
 app.add_middleware(

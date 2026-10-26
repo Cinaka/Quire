@@ -1,0 +1,5 @@
+# EXAMPLE ONLY: replace password hash and align prefix with REDIS_KEY_PREFIX.
+# Generate a random password OUTSIDE shell history, store SHA256 hex after '#'.
+# Preserve an independently configured administrator account before disabling default.
+user default off
+user quire on #REPLACE_WITH_SHA256_HEX ~{quire:prod:rl:v1}:* -@all +eval +evalsha +script|load +time +del +hget +hset +pexpire +pttl +zrem +zremrangebyscore +zcard +zadd +zrange +zscore

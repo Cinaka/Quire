@@ -17,6 +17,7 @@ dependencies:
       - bcrypt==4.0.1
       - python-multipart==0.0.20
       - uuid-utils==0.17.0
+      - redis==5.2.1
       - httpx==0.28.1
       - pytest==9.1.1
       - ruff==0.16.3

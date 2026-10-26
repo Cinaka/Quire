@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.ids import new_id
 from app.core.rate_limit import login_rate_limiter
+from app.core.redis_limits import check_login, clear_login, fail_login
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -153,7 +154,7 @@ async def login(
     email = body.email.strip().lower()
     client_ip = request.client.host if request.client else "unknown"
     rate_key = f"{client_ip}:{email}"
-    login_rate_limiter.check(rate_key)
+    login_revision = await check_login(login_rate_limiter, rate_key)
 
     user = await db.scalar(select(User).where(User.email == email))
     if (
@@ -161,10 +162,10 @@ async def login(
         or not user.password_hash
         or not verify_password(body.password, user.password_hash)
     ):
-        login_rate_limiter.fail(rate_key)
+        await fail_login(login_rate_limiter, rate_key)
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
 
-    login_rate_limiter.clear(rate_key)
+    await clear_login(login_rate_limiter, rate_key, login_revision)
     return await issue_auth(response, user, db)
 
 

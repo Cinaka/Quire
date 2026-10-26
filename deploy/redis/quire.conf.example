@@ -1,0 +1,12 @@
+# Merge into the existing Redis config; NOT a complete replacement config.
+# Ubuntu 24 / Redis >=7, same host only. Keep distribution systemd ownership/paths.
+bind 127.0.0.1 ::1
+protected-mode yes
+port 6379
+# Budget example, size according to actual server RAM and observed usage.
+maxmemory 128mb
+maxmemory-policy noeviction
+appendonly yes
+appendfsync everysec
+# Configure an ACL file readable only by Redis; do not commit its real contents.
+# aclfile /etc/redis/users.acl
