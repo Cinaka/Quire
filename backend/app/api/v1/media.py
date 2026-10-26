@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.media_publish import discard_created, publish_media, stored_file_size
 from app.core.media_storage import media_disk_paths, remove_media_paths
+from app.core.redis_limits import consume_attempt
 from app.core.request_limits import attempt_limiter
 from app.core.security import get_current_user
 from app.db.session import get_db
@@ -111,7 +112,9 @@ async def upload_media(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Envelope[MediaResponse]:
-    attempt_limiter.consume("upload-user", str(user.id), settings.UPLOAD_USER_PER_MINUTE, 60)
+    await consume_attempt(
+        attempt_limiter, "upload-user", str(user.id), settings.UPLOAD_USER_PER_MINUTE, 60,
+    )
     created: list[tuple[Path, int, int]] = []
     commit_started = False
     try:
@@ -232,7 +235,7 @@ async def private_media(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    attempt_limiter.consume(
+    await consume_attempt(attempt_limiter, 
         "media-read-user", str(user.id), settings.MEDIA_READ_USER_PER_MINUTE, 60,
     )
     row = await db.scalar(select(Media).where(Media.id == media_id, Media.user_id == user.id))

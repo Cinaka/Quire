@@ -14,7 +14,8 @@
 - Node.js 与 npm（前端统一使用 npm）。
 - Conda 环境 `quire`，Python 3.12。
 - MySQL 8.0。
-- 不需要 Docker；P2 仍不启用 Redis，`REDIS_ENABLED=false`。
+- 不需要 Docker。公开部署启用 Redis 共享限流；本地单 worker 可用 `REDIS_ENABLED=false`。
+- Redis 接入、独立测试环境与回滚见 [`doc/P7 Redis 接入与验收.md`](doc/P7%20Redis%20接入与验收.md)。
 
 MySQL 必须使用：
 

@@ -67,6 +67,11 @@ def injected(relative, values, *, handlers=False):
     return SimpleNamespace(**env)
 
 
+async def consume_attempt(memory, bucket, key, limit, window):
+    # Disabled Redis mode only; real async facade/fail-closed paths have separate tests.
+    return memory.consume(bucket, key, limit, window)
+
+
 def settings(root="."):
     return SimpleNamespace(
         MEDIA_ROOT=root, MEDIA_PUBLIC_PREFIX="/media", API_V1_PREFIX="/api/v1",
@@ -206,7 +211,7 @@ class HandlerTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.s=settings(self.temp.name)
         self.limiter=injected("core/request_limits.py",{}).AttemptLimiter()
-        values={"settings":self.s,"attempt_limiter":self.limiter,"Media":Media,"User":User,
+        values={"settings":self.s,"attempt_limiter":self.limiter,"consume_attempt":consume_attempt,"Media":Media,"User":User,
                 "select":Statement,"ok":lambda data:data,"MediaResponse":lambda **kw:SimpleNamespace(**kw),
                 "Response":lambda data,**kw:SimpleNamespace(data=data,**kw),
                 "media_disk_paths":lambda *urls:[Path(self.temp.name)/u[len('/media/'):] for u in urls if u],
@@ -308,7 +313,7 @@ class LimitTests(unittest.TestCase):
 class MiddlewareTests(unittest.TestCase):
     def setUp(self):
         self.s=settings();self.limiter=injected('core/request_limits.py',{}).AttemptLimiter()
-        self.mod=injected('core/abuse_middleware.py',{'settings':self.s,'attempt_limiter':self.limiter})
+        self.mod=injected('core/abuse_middleware.py',{'settings':self.s,'attempt_limiter':self.limiter,'consume_attempt':consume_attempt})
     def request(self,path,method='POST',body=b'',headers=(),ip='test-ip',consumer=None):
         messages=[];called=[]
         async def app(scope,receive,send):
