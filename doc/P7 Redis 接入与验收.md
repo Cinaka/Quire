@@ -5,8 +5,8 @@
 基线：`be5ba4190b99d8dcce565a5210e2f84163be8f07`。分支：`p7/redis-shared-rate-limits`。
 用户已确认第一阶段：共享请求限流与登录失败保护；启用后故障关闭；同机 Redis/systemd；保持一个 API worker。
 
-源码与隔离回归已完成，真实 Redis/FastAPI/项目环境验收待执行；不是合并或上线批准。
-未安装/升级依赖、未改真实 `.env`、未连服务器、未改数据库或执行迁移。新增客户端版本声明 `redis==5.2.1`，未在本工具环境安装或验证真实客户端连接。
+源码与工具端隔离回归已完成；用户已回传本地真实Redis测试、应用联调、后端回归、Ruff与前端构建通过。可以进入PR审阅；生产配置/故障/持久化验收仍有未执行项，不是合并或上线批准。
+代理工具环境未安装/升级依赖、未改真实 `.env`、未连服务器、未改数据库或执行迁移。新增客户端版本声明 `redis==5.2.1`，未在代理工具环境安装或验证真实客户端连接；下方本地验证由用户执行并回传，不混为工具端实测。
 
 不改 IndexedDB 本地优先、MySQL 日记同步/RefreshSession、媒体磁盘存储/配额/行锁/发布锁，不加入缓存、队列或分布式文件存储。Redis 共享限流不是多服务器部署批准。
 
@@ -52,9 +52,9 @@ URL中的用户名/密码需正确编码；URL和HMAC配置使用SecretStr，日
 
 AOF everysec 不是零丢失保证；异常掉电可能丢失最近约一秒写入。正常Redis重启应恢复额度，但AOF/磁盘/配置需实际验收。noeviction避免计数被驱逐，内存满时写入报错→503；它不是防御所有DDoS的保证。Nginx原有边缘IP限流和请求体限制继续保留。
 
-## 已实际执行
+## 代理工具环境已实际执行
 
-- Python源码语法编译与Python3.12语法解析通过（工具环境Python3.13；目标Python3.12实际运行仍需确认）。
+- Python源码语法编译与Python3.12语法解析通过（工具环境Python3.13；用户Python3.12项目环境的运行结果见下节）。
 - Lua脚本通过系统liblua5.4语法编译；不等于Redis内置Lua执行通过。
 - `python tools/test_p7_security_stdlib.py`：34/34，实际文件和handler/ASGI函数体，注入FastAPI/DB端口。
 - `python tools/test_redis_limits_stdlib.py`：18/18，实际异步facade/中间件函数体，注入Redis/config/HTTP端口；覆盖启动全操作权限接线及失败清理、故障503、超时、容量429接线、HMAC隔离、CAS参数、取消与健康豁免。
@@ -62,7 +62,41 @@ AOF everysec 不是零丢失保证；异常掉电可能丢失最近约一秒写�
 
 上述不冒充真实Redis原子性、FastAPI/JWT/SQLAlchemy/MySQL HTTP、Vue构建、真实IndexedDB或生产测试。
 
-## 待项目环境执行
+## 用户本地验收回传（代码提交 6e9b57e）
+
+证据来源：用户在本次开发对话中提供的命令输出和联调反馈，非代理远程执行、CI日志或服务器审计；未收到完整日志文件。未提供明确验收日期，因此不补写日期。
+
+### 环境与结果
+
+- 用户本地 macOS / Conda quire / Python3.12；通过SSH本地端口转发访问服务器A上的Redis。此前使用的测试地址为本地127.0.0.1:16379/15，不是生产部署地址。
+- 用户已单独执行Redis集成测试并反馈无报错；随后完整回归的3项跳过均明确为P4可选HTTP契约测试，没有Redis跳过项。
+- 应用健康检查：`{"status":"ok","mysql":true,"redis":true}`。
+- 用户反馈应用联调正常：关闭SSH隧道后请求503，重新打开后正常使用。这里只证明该断连/恢复路径，不证明Redis进程重启或AOF持久化恢复。
+- 完整后端：`python -m pytest -q -rs` → **595 passed, 3 skipped, 3 warnings, 57 subtests passed in 9.53s**。前次无-rs执行也为595 passed、57 subtests passed；不把两次执行累计为更多覆盖。
+- Ruff：`All checks passed!`。
+- 前端安全测试：20 tests / 20 pass / 0 fail / 0 skipped。
+- 前端 `npm run build`：通过，用户输出 `built in 834ms`。
+- 用户回传 `git status --short` 无输出；这只说明当时本地工作区干净，不代表后续拉取或生产工作区状态。
+
+### 3项跳过：明确未执行，不计为通过
+
+`tests/test_schedule_resource_http_contract.py` 的3个参数场景（roundtrip、stale_image、unknown_receipt），需显式 `QUIRE_P4_HTTP_CONTRACT=1` 并使用已有前端Axios/TypeScript依赖。已核对源码：它们是P4可选真实HTTP契约回归，不是Redis测试。
+
+本批可带此明确覆盖边界进入Redis PR审阅；不能据此宣称P4全部HTTP契约验证或整站生产验收已完成。如需单独补跑，在backend目录使用已有前端依赖执行：
+
+```sh
+QUIRE_P4_HTTP_CONTRACT=1 python -m pytest -q tests/test_schedule_resource_http_contract.py
+```
+
+### 3条警告：保留可见，不屏蔽、不顺带升级依赖
+
+1. Passlib导入标准库crypt的弃用警告：Python3.13移除风险，应在未来运行时/密码库兼容性工作中单独验证。本批目标仍为Python3.12，不自动升级Python或替换密码哈希实现。
+2. Starlette TestClient关于httpx弃用、建议httpx2的警告：测试依赖后续兼容事项，不在本批直接安装httpx2或升级FastAPI/Starlette/httpx组合。
+3. SQLAlchemy identity冲突SAWarning：发生在`test_primary_key_collision_is_409_not_overwrite_or_500[entry1]`。已核对测试源码，该测试故意制造相同主键，断言409 identity_conflict、零提交且既有日记不被覆盖；该测试已通过。保留警告，不伪装成普通业务无冲突，也不为消除警告改生产事务逻辑。
+
+结论：上述输出未显示本批Redis回归阻断失败；可进入审阅。依赖兼容性、未执行的可选契约测试和生产验收限制继续保留。
+
+## 项目环境复现命令与尚待验收项
 
 先检查现有未提交修改，不覆盖/reset/clean用户文件。正式测试使用独立数据与临时媒体目录。不要连接生产Redis测试。
 
@@ -98,7 +132,7 @@ npm run build
 - 测试期间停止专用Redis、制造短超时、使用错误密码/不足ACL、在专用实例设置低内存制造OOM：业务503，健康正文degraded，无连接密码泄露，不回退内存。恢复后业务自动恢复，不要求重启API。
 - 断连发生在写入后、回执前时可能已计数，不能声称该请求确定没有消耗额度。
 - 浏览器隔离账号：503时可继续本地编辑、未上传dirty保留、云端同步不得显示全部成功。若累计错误到原有3次暂停阈值，恢复后可能仍需用户手动重试/解除暂停；本批不改原同步策略。
-- 检查Nginx配置、受信代理IP、HTTPS/Cookie与原P7未完成门禁；真实MySQL并发、完整后端回归、前端build、目标桌面/手机浏览器仍需执行。
+- 检查Nginx配置、受信代理IP、HTTPS/Cookie与原P7未完成门禁；完整后端回归与前端build已有上述用户回传；真实MySQL并发、完整目标桌面/手机浏览器矩阵仍未新增证据，不能倒填通过。
 
 ## 回滚
 
@@ -111,4 +145,32 @@ npm run build
 
 建议PR标题：`feat(security): Redis-backed shared rate limits with fail-closed behavior`。
 变更：Redis异步生命周期、Lua滑动窗口/容量保护、登录CAS清理、全调用点接线、健康脱敏、配置/依赖声明、隔离与真实集成测试、503前端回归、部署/回滚文档。
-未自动创建/合并PR，未部署、未迁移；需真实集成验收通过后再审阅合并。
+未自动创建/合并PR，未部署、未迁移。本地验证已回传，可按以下正文准备PR；合并需明确确认，生产部署另行授权。
+
+### 可复制PR正文
+
+#### 目的与范围
+
+将已有防滥用状态迁至Redis共享存储，保持单worker生产部署及业务存储边界。无数据库迁移，不引入日记缓存或任务队列。
+
+#### 变更
+
+- FastAPI lifespan异步连接池、超时与启动写入/登录元数据/清理权限探针。
+- Lua精确滑动窗口、TTL、活跃桶容量保护，覆盖注册/IP/API/上传/媒体读取。
+- 登录失败锁定及成功清理CAS，避免并发失败被误清除。
+- Redis启用后故障503，不自动回退内存；429与Retry-After契约保留。
+- 健康检查豁免业务限流并脱敏；HMAC键空间隔离、SecretStr配置。
+- Redis客户端固定版本、ACL/服务配置片段、自动测试与手工部署/回滚说明。
+
+#### 验证
+
+- 工具端隔离：后端原安全34/34、Redis facade18/18、前端安全20/20；Python/Lua语法检查通过。
+- 用户本地回传：完整pytest595 passed、57 subtests passed、3个P4可选项skipped、3条已说明警告；Ruff通过、前端安全20/20、正式build通过。
+- 真实Redis测试用户反馈通过；完整pytest仅P4可选项跳过。应用健康MySQL/Redis均true；断SSH隧道503、恢复后可用。
+
+#### 限制与上线门禁
+
+- 3个P4可选HTTP契约场景未执行；2个依赖弃用警告及1个预期主键冲突警告保留。
+- 未新增真实MySQL并发、生产专用ACL、实际Redis重启/AOF恢复、真实OOM/密码/ACL/超时故障全矩阵或完整浏览器矩阵的验收证据。
+- 不变更worker数量；同机生产后端直接连接回环Redis，不使用测试SSH隧道。
+- 本PR不授权部署、数据库操作或自动合并。回滚需维护模式/关闭公开入口，不自动降级放行。
