@@ -17,7 +17,7 @@ from sqlalchemy.pool import StaticPool
 from app.core import abuse_middleware
 from app.core.config import settings
 from app.core.request_limits import AttemptLimiter
-from app.core.security import create_access_token
+from app.core.security import create_access_token, decode_token
 from app.db.session import get_db
 from app.main import app
 from app.models.media import Media
@@ -84,7 +84,7 @@ def api(tmp_path, monkeypatch):
     with engine.begin() as connection:
         connection.execute(text("""
             CREATE TABLE users (
-                id BLOB PRIMARY KEY, phone VARCHAR(20), email VARCHAR(128) UNIQUE,
+                id CHAR(32) PRIMARY KEY, phone VARCHAR(20), email VARCHAR(128) UNIQUE,
                 password_hash VARCHAR(255), nickname VARCHAR(64), avatar VARCHAR(512),
                 timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Shanghai',
                 token_version INTEGER NOT NULL DEFAULT 0,
@@ -94,7 +94,7 @@ def api(tmp_path, monkeypatch):
         """))
         connection.execute(text("""
             CREATE TABLE media (
-                id BLOB PRIMARY KEY, user_id BLOB NOT NULL, entry_id BLOB,
+                id CHAR(32) PRIMARY KEY, user_id CHAR(32) NOT NULL, entry_id CHAR(32),
                 url VARCHAR(512) NOT NULL, thumb_url VARCHAR(512),
                 width INTEGER, height INTEGER, size BIGINT, sort_order INTEGER DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -104,15 +104,15 @@ def api(tmp_path, monkeypatch):
         # This is a temporary SQLite fixture, not a production schema migration.
         connection.execute(text("""
             CREATE TABLE refresh_sessions (
-                id BLOB PRIMARY KEY, user_id BLOB NOT NULL,
+                id CHAR(32) PRIMARY KEY, user_id CHAR(32) NOT NULL,
                 token_version INTEGER NOT NULL,
                 expires_at DATETIME NOT NULL, revoked_at DATETIME,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """))
         connection.execute(text("INSERT INTO users (id, email) VALUES (:id, :email)"), [
-            {"id": A.bytes, "email": "a@example.test"},
-            {"id": B.bytes, "email": "b@example.test"},
+            {"id": A.hex, "email": "a@example.test"},
+            {"id": B.hex, "email": "b@example.test"},
         ])
     previous = app.dependency_overrides.copy()
     try:
@@ -291,3 +291,33 @@ def test_fixture_covers_models_used_by_registration(api):
         table = model.__tablename__
         columns = {row[1] for row in api.db.session.execute(text(f"PRAGMA table_info({table})"))}
         assert set(model.__table__.columns.keys()) <= columns
+
+
+def test_real_jwt_subject_matches_text_uuid_seed(api):
+    token = api.a["Authorization"].removeprefix("Bearer ")
+    assert decode_token(token, "access")["sub"] == A.hex
+    row = api.db.session.execute(text(
+        "SELECT id, typeof(id), length(id) FROM users WHERE id = :id"
+    ), {"id": A.hex}).one()
+    assert tuple(row) == (A.hex, "text", 32)
+    response = upload(api)
+    assert response.status_code == 200, response.text
+    media = api.db.session.execute(text(
+        "SELECT id, user_id, typeof(id), typeof(user_id) FROM media WHERE id = :id"
+    ), {"id": ID.hex}).one()
+    assert tuple(media) == (ID.hex, A.hex, "text", "text")
+
+
+@pytest.mark.parametrize("remove_user", [False, True])
+def test_real_jwt_rejects_revoked_version_or_missing_user(api, remove_user):
+    statement = (
+        "DELETE FROM users WHERE id = :id" if remove_user else
+        "UPDATE users SET token_version = token_version + 1 WHERE id = :id"
+    )
+    api.db.session.execute(text(statement), {"id": A.hex})
+    api.db.session.commit()
+    response = upload(api)
+    assert response.status_code == 401, response.text
+    assert response.json()["message"] == "登录已失效"
+    assert api.db.session.get(Media, ID) is None
+    assert not original(api).exists()

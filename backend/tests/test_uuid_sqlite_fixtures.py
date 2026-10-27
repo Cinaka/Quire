@@ -13,6 +13,7 @@ FIXTURES = (
     "test_schedule_queries.py",
     "test_schedule_convert.py",
     "test_schedule_resource_review.py",
+    "test_p7_media_security.py",
 )
 UUID_COLUMNS = {
     "users": {"id"},
@@ -21,6 +22,7 @@ UUID_COLUMNS = {
     "entry_tags": {"entry_id", "tag_id"},
     "media": {"id", "user_id", "entry_id"},
     "tags": {"id", "user_id"},
+    "refresh_sessions": {"id", "user_id"},
 }
 
 
@@ -51,7 +53,7 @@ class UUIDSQLiteFixtureTests(unittest.TestCase):
                         for column in UUID_COLUMNS[table]:
                             self.assertEqual(columns[column].upper(), "CHAR(32)")
                         seen.append(table)
-        self.assertEqual(len(seen), 8)
+        self.assertEqual(len(seen), 11)
         self.assertEqual(set(seen), set(UUID_COLUMNS))
 
     def test_fixture_uuid_seeds_do_not_use_binary_values(self):
