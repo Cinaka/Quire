@@ -1,4 +1,5 @@
 import { db } from "@/db/schema"
+import { normalizeUuidList, uuidToHex } from "@/shared/uuidHex"
 
 import { clearCheckinCache, currentCheckinCacheOwner } from "./checkinCache"
 import { del, get, post } from "./request"
@@ -86,8 +87,10 @@ export async function localOwnerUserId(): Promise<string> {
 
 export async function login(email: string, password: string): Promise<SessionUser> {
   const data = await post<AuthResponse>("/auth/login", { email, password })
+  // Validate identity before publishing the access token to the current session.
+  const user = { ...data.user, id: uuidToHex(data.user.id, true) }
   setAccessToken(data.access_token)
-  return data.user
+  return user
 }
 
 export async function register(
@@ -96,8 +99,10 @@ export async function register(
   timezone = detectedTimezone(),
 ): Promise<SessionUser> {
   const data = await post<AuthResponse>("/auth/register", { email, password, timezone })
+  // Validate identity before publishing the access token to the current session.
+  const user = { ...data.user, id: uuidToHex(data.user.id, true) }
   setAccessToken(data.access_token)
-  return data.user
+  return user
 }
 
 export async function refreshSession(): Promise<string> {
@@ -119,7 +124,10 @@ export async function logout(): Promise<void> {
 }
 
 export async function listDeviceSessions(): Promise<DeviceSession[]> {
-  return get<DeviceSession[]>("/auth/sessions")
+  const sessions = await get<DeviceSession[]>("/auth/sessions")
+  const normalized = sessions.map(session => ({ ...session, id: uuidToHex(session.id) }))
+  normalizeUuidList(normalized.map(session => session.id))
+  return normalized
 }
 
 export async function revokeOtherSessions(): Promise<number> {
@@ -128,5 +136,5 @@ export async function revokeOtherSessions(): Promise<number> {
 }
 
 export async function revokeDeviceSession(id: string): Promise<void> {
-  await del<null>(`/auth/sessions/${id}`)
+  await del<null>(`/auth/sessions/${uuidToHex(id)}`)
 }

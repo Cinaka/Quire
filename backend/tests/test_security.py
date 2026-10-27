@@ -35,8 +35,10 @@ def test_access_and_refresh_types_are_distinct() -> None:
     refresh = create_refresh_token(user, session_id)  # type: ignore[arg-type]
     assert decode_token(access, "access")["tv"] == 3
     refresh_payload = decode_token(refresh, "refresh")
+    assert decode_token(access, "access")["sub"] == user.id.hex
+    assert refresh_payload["sub"] == user.id.hex
     assert refresh_payload["tv"] == 3
-    assert refresh_payload["jti"] == str(session_id)
+    assert refresh_payload["jti"] == session_id.hex
     with pytest.raises(HTTPException):
         decode_token(refresh, "access")
 
@@ -46,3 +48,6 @@ def test_refresh_tokens_get_unique_session_ids() -> None:
     first = decode_token(create_refresh_token(user), "refresh")  # type: ignore[arg-type]
     second = decode_token(create_refresh_token(user), "refresh")  # type: ignore[arg-type]
     assert first["jti"] != second["jti"]
+
+    assert uuid.UUID(hex=first["jti"]).version == 7
+    assert len(first["jti"]) == len(second["jti"]) == 32

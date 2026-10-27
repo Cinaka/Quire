@@ -9,16 +9,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.auth import REFRESH_COOKIE, clear_refresh_cookie
 from app.core.security import decode_token, get_current_user
 from app.core.time import utcnow
+from app.core.uuid_hex import parse_uuid
 from app.db.session import get_db
 from app.models.refresh_session import RefreshSession
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
+from app.schemas.uuid_hex import UUIDHex
 
 router = APIRouter(prefix="/auth/sessions", tags=["auth"])
 
 
 class SessionResponse(BaseModel):
-    id: uuid.UUID
+    id: UUIDHex
     createdAt: datetime
     expiresAt: datetime
     current: bool
@@ -33,7 +35,7 @@ def current_session_id(token: str | None) -> uuid.UUID | None:
         return None
     try:
         payload = decode_token(token, "refresh")
-        return uuid.UUID(str(payload["jti"]))
+        return parse_uuid(payload["jti"])
     except (HTTPException, ValueError):
         return None
 
@@ -99,7 +101,7 @@ async def revoke_other_sessions(
 
 @router.delete("/{session_id}")
 async def revoke_session(
-    session_id: uuid.UUID,
+    session_id: UUIDHex,
     response: Response,
     quire_refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE),
     user: User = Depends(get_current_user),

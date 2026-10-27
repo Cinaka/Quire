@@ -14,9 +14,10 @@
 - 生成：保留 UUID v7 算法；`new_id()` 仍返回 UUID 对象，新增 `new_id_hex()` 返回小写 hex32。不要通过改变 UUID 的实际身份来去掉横线。
 - 已新增可执行 Alembic revision：`uuid32_empty_v1`，前置版本 `p4_convert_receipts`。历史 revision 没有改写。
 - 已更新 Alembic 类型渲染及只读预览；预览调用实际冻结 revision 的规划函数，而不是旧的三阶段数据转换规划器。
-- **仍未完成：** API/JWT 的全部文本输出、前端 ID 生成、媒体地址和各处校验、浏览器本地数据及备份处理的最终协调切换。当前不能宣称完整 B 方案已交付，不应部署到正式环境或重新积累正式业务数据。
+- 已接入认证链路：注册/登录/me 的 UserResponse、设备 SessionResponse 的 ID 使用 UUIDHex 显式序列化；生产 access/refresh 创建器的 sub、jti 输出小写 hex32。前端登录、注册、设备会话列表和撤销操作同步适配。
+- **仍未完成：** 日记/标签/同步/日程/媒体等其余接口、前端业务 ID 生成、媒体地址与各处校验、浏览器本地数据及备份处理的最终协调切换。当前不能宣称完整 B 方案已交付，不应部署到正式环境或重新积累正式业务数据。
 
-内部 UUID 对象在 `str(value)` 时依然显示标准带横线形式，这是 Python 的对象表示，不代表数据库又存回了横线。当前数据库绑定明确使用 `.hex`；接口的统一文本表示属于下一步改造。
+内部 UUID 对象在 `str(value)` 时依然显示标准带横线形式，这是 Python 的对象表示，不代表数据库又存回了横线。当前数据库绑定明确使用 `.hex`；认证链路已显式输出 hex32，其余接口仍待改造。
 
 ### 字段范围
 
@@ -114,3 +115,43 @@ MySQL 清空不会清空浏览器 IndexedDB、待同步队列、登录令牌或�
 ## 历史实现
 
 `uuid_storage_plan.py` 中的三阶段保留数据规划器及其测试保留作历史实现，不再是当前空库迁移的默认/执行路径。新 revision 完全自包含，不依赖这些可变应用模块。`UUIDBinary` 类仅供旧代码引用兼容，没有业务模型继续使用它。
+
+
+## 认证链路接通
+
+本地已反馈 36 项测试通过，并完成数据库升级无报错。此前 `alembic current` 为 `p3_checkins`，正常迁移需补齐 P4；操作流程不使用 stamp 跳过中间字段变更。没有远程连接或修改用户数据库。
+
+本批没有新增 revision，**无需再次运行数据库升级**。
+
+### 行为
+
+- `UserResponse.id`、`SessionResponse.id` 保持 Python UUID 对象，JSON 输出小写 hex32。序列化只针对显式 UUID 字段，不替换 nickname、正文、URL 等普通字符串里的 UUID 外观文本。
+- OpenAPI 区分输入和输出：严格接受精确 hex32 / 标准 36 位文本输入；输出仅为小写 hex32。精确格式兼容不等于提供旧数据库数据搬迁。
+- access token 的 sub、refresh token 的 sub/jti 使用 hex32。未显式传入会话 ID 的 refresh 创建器也改用 UUID v7，不再生成 UUID v4。签名、有效期、token_version、刷新旋转及会话撤销规则不变。
+- JWT 读取处使用严格 UUID 解析，保留精确 36 位旧令牌标识的输入兼容；URN、花括号、空白及非 UUID 值不作为有效身份。撤销会话路径同样使用 UUIDHex 校验。
+- 前端先校验并规范化用户身份，再发布 access token；设备会话列表规范化 ID 并拒绝重复别名；撤销请求的路径使用规范化 ID，畸形 ID 在发请求前拒绝。
+- 不会自动改写或删除 IndexedDB 的 ownerUserId、业务数据、同步队列或备份。应用尚未完成整体切换。
+
+### 本批验证
+
+- 沙箱实际执行：真实 Pydantic UUIDHex 序列化/校验/JSON Schema 测试 8 项通过。
+- 沙箱实际执行：实际 TypeScript 会话模块的 9 项测试通过，网络/令牌存储/数据库依赖使用模拟；原 UUID codec 6 项回归通过，合计 15 项。不是真实浏览器或后端联调。
+- Python 3.12 语法与行宽检查通过。
+- 沙箱缺少 FastAPI、SQLAlchemy、python-jose、uuid_utils、passlib 和可用 TypeScript 编译器：未执行 JWT 加解密、真实 HTTP 测试、完整 pytest/Ruff、TypeScript 类型检查或 Vite 构建。没有将 Node 的类型剥离执行当成类型检查。
+
+新增 `test_uuid_auth_wire.py` 覆盖实际认证 DTO、HTTP、JWT 和会话操作；数据库依赖为模拟，不连接真实库。它需在已有后端依赖的本地环境中执行。
+
+从 backend 运行完整回归：
+
+```bash
+python -m pytest -q -rs
+```
+
+从 frontend 运行本批边界测试及真实项目构建：
+
+```bash
+node --experimental-vm-modules --test tests/uuid-hex.test.cjs tests/uuid-session.test.cjs
+npm run build
+```
+
+Node ExperimentalWarning 不代表测试失败。构建需检查实际项目依赖及 Vue/TypeScript，不能用 15 项边界测试替代。

@@ -11,7 +11,7 @@ export function uuidToHex(value: unknown, requireV7 = false): string {
   }
   const result = value.replaceAll("-", "").toLowerCase()
   // The version nibble and RFC variant both matter; a bare replace is not validation.
-  if (requireV7 && (result[12] !== "7" || !/[89ab]/.test(result[16]))) {
+  if (requireV7 && (result.charAt(12) !== "7" || !/[89ab]/.test(result.charAt(16)))) {
     throw new Error("business identifier must be a UUID v7")
   }
   return result

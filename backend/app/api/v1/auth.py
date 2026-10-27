@@ -1,4 +1,3 @@
-import uuid
 from datetime import timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -20,10 +19,12 @@ from app.core.security import (
     verify_password,
 )
 from app.core.time import utcnow
+from app.core.uuid_hex import parse_uuid
 from app.db.session import get_db
 from app.models.refresh_session import RefreshSession
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
+from app.schemas.uuid_hex import UUIDHex
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 REFRESH_COOKIE = "quire_refresh_token"
@@ -51,7 +52,7 @@ class LoginRequest(BaseModel):
 
 
 class UserResponse(BaseModel):
-    id: uuid.UUID
+    id: UUIDHex
     email: str | None
     nickname: str | None
     timezone: str
@@ -179,8 +180,8 @@ async def refresh(
         raise HTTPException(status_code=401, detail="缺少刷新令牌")
     payload = decode_token(quire_refresh_token, "refresh")
     try:
-        user_id = uuid.UUID(str(payload["sub"]))
-        session_id = uuid.UUID(str(payload["jti"]))
+        user_id = parse_uuid(payload["sub"])
+        session_id = parse_uuid(payload["jti"])
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="刷新令牌无效") from exc
 
@@ -226,7 +227,7 @@ async def logout(
     if quire_refresh_token:
         try:
             payload = decode_token(quire_refresh_token, "refresh")
-            session_id = uuid.UUID(str(payload["jti"]))
+            session_id = parse_uuid(payload["jti"])
             session = await db.scalar(
                 select(RefreshSession).where(RefreshSession.id == session_id)
             )

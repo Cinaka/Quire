@@ -10,6 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.ids import new_id
+from app.core.uuid_hex import parse_uuid, uuid_to_hex
 from app.db.session import get_db
 from app.models.user import User
 
@@ -33,7 +35,7 @@ def create_token(
 ) -> str:
     now = int(time.time())
     payload: dict[str, object] = {
-        "sub": str(user.id),
+        "sub": uuid_to_hex(user.id),
         "typ": token_type,
         "tv": user.token_version,
         "iat": now,
@@ -53,12 +55,12 @@ def create_access_token(user: User) -> str:
 
 
 def create_refresh_token(user: User, session_id: uuid.UUID | None = None) -> str:
-    token_id = session_id or uuid.uuid4()
+    token_id = session_id or new_id()
     return create_token(
         user,
         "refresh",
         timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
-        {"jti": str(token_id)},
+        {"jti": uuid_to_hex(token_id)},
     )
 
 
@@ -82,7 +84,7 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
     payload = decode_token(credentials.credentials, "access")
     try:
-        user_id = uuid.UUID(str(payload["sub"]))
+        user_id = parse_uuid(payload["sub"])
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="用户标识无效") from exc
     user = await db.scalar(select(User).where(User.id == user_id))
