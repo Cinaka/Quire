@@ -93,9 +93,19 @@ async def check_database():
         await engine.dispose()
 
 
-async def plan_database(direction):
+def load_empty_revision():
+    """Load local migration code synchronously; callers run this in a worker thread."""
     import importlib.util
 
+    path = (Path(__file__).resolve().parents[1] / "alembic/versions"
+            / "20261026_uuid32_empty_database.py")
+    spec = importlib.util.spec_from_file_location("quire_uuid32_empty_preview", path)
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
+    return revision
+
+
+async def plan_database(direction):
     from sqlalchemy import text
     from sqlalchemy.engine import make_url
     from sqlalchemy.ext.asyncio import create_async_engine
@@ -104,12 +114,8 @@ async def plan_database(direction):
 
     if make_url(settings.database_url).get_backend_name() != "mysql":
         raise MigrationPlanError("UUID32 planner requires MySQL")
-    # Preview the exact frozen Alembic revision, not the superseded data-copy planner.
-    path = (Path(__file__).resolve().parents[1] / "alembic/versions"
-            / "20261026_uuid32_empty_database.py")
-    spec = importlib.util.spec_from_file_location("quire_uuid32_empty_preview", path)
-    revision = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(revision)
+    # Preview the exact frozen revision, without blocking the database event loop.
+    revision = await asyncio.to_thread(load_empty_revision)
     engine = create_async_engine(settings.database_url, echo=False)
     try:
         async with engine.connect() as connection:

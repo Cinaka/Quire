@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from test_schedule_writes import ID, OTHER_USER_ID, USER_ID
 
 from app.api.v1 import sync
 from app.core.security import get_current_user
 from app.core.time import utcnow
 from app.db.session import get_db
 from app.main import app
-from test_schedule_writes import ID, OTHER_USER_ID, USER_ID
 
 AT = utcnow() - timedelta(minutes=1)
 OWNER = SimpleNamespace(id=USER_ID)
