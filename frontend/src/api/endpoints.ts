@@ -1,3 +1,6 @@
+import { localUuidHex, normalizeUuidList, uuidToHex } from "@/shared/uuidHex"
+import { assertEntryPush, assertMediaPush, assertTagPush, entryWire, mediaWire,
+  pushAcks, tagWire, uniqueWireRows } from "./uuidWire"
 import { del, get, post, put } from "./request"
 import type {
   PullResult,
@@ -33,6 +36,10 @@ interface RawPull {
 }
 
 export async function pushBatch(body: PushBody, syncOwner?: string): Promise<PushResult> {
+  body.entries.forEach(assertEntryPush)
+  body.tags.forEach(assertTagPush)
+  body.mediaMeta.forEach(assertMediaPush)
+  for (const rows of [body.entries, body.tags, body.mediaMeta]) normalizeUuidList(rows.map(row => row.id), true)
   const d = await post<RawPush>("/sync/push", {
     entries: body.entries,
     tags: body.tags,
@@ -40,9 +47,9 @@ export async function pushBatch(body: PushBody, syncOwner?: string): Promise<Pus
   }, syncOwner)
   return {
     serverTime: d.server_time,
-    entries: d.entries ?? [],
-    tags: d.tags ?? [],
-    mediaMeta: d.media_meta ?? [],
+    entries: pushAcks(d.entries, body.entries),
+    tags: pushAcks(d.tags, body.tags),
+    mediaMeta: pushAcks(d.media_meta, body.mediaMeta),
   }
 }
 
@@ -54,18 +61,22 @@ export async function pullChanges(params: {
 }, syncOwner?: string): Promise<PullResult> {
   const d = await get<RawPull>("/sync/changes", {
     since: params.since,
-    after_id: params.afterId || undefined,
+    after_id: params.afterId ? uuidToHex(params.afterId, true) : undefined,
     until: params.until || undefined,
     limit: params.limit,
   }, syncOwner)
+  if (typeof d.has_more !== "boolean" || typeof d.server_time !== "string" ||
+      typeof d.sync_until !== "string") throw new Error("同步分页响应无效")
+  const cursorId = d.cursor_id === null ? "" : uuidToHex(d.cursor_id, true)
+  if (d.has_more && !cursorId) throw new Error("同步续页身份缺失")
   return {
     serverTime: d.server_time,
     syncUntil: d.sync_until,
-    cursorId: d.cursor_id ?? "",
-    hasMore: Boolean(d.has_more),
-    entries: d.entries ?? [],
-    tags: d.tags ?? [],
-    mediaMeta: d.media_meta ?? [],
+    cursorId,
+    hasMore: d.has_more,
+    entries: uniqueWireRows(d.entries, entryWire),
+    tags: uniqueWireRows(d.tags, tagWire),
+    mediaMeta: uniqueWireRows(d.media_meta, mediaWire),
   }
 }
 
@@ -81,6 +92,8 @@ export async function uploadMedia(
   } = {},
   syncOwner?: string,
 ): Promise<unknown> {
+  id = localUuidHex(id)
+  if (options.entryId) localUuidHex(options.entryId)
   const body = new FormData()
   body.append("file", file, `${id}.${file.type.split("/")[1] || "bin"}`)
   if (options.thumb) body.append("thumb", options.thumb, `${id}_thumb.webp`)
@@ -88,17 +101,23 @@ export async function uploadMedia(
   body.append("sort_order", String(options.sortOrder ?? 0))
   if (options.width != null) body.append("width", String(options.width))
   if (options.height != null) body.append("height", String(options.height))
-  return post<unknown>(`/media/${id}`, body, syncOwner)
+  const response = mediaWire(await post<unknown>(`/media/${id}`, body, syncOwner))
+  if (response.id !== id) throw new Error("上传回执不属于本图片，未确认上传")
+  return response
 }
 
 export async function listMedia(entryId?: string): Promise<unknown[]> {
-  return get<unknown[]>("/media", entryId ? { entry_id: entryId } : undefined)
+  return uniqueWireRows(await get<unknown[]>("/media",
+    entryId ? { entry_id: uuidToHex(entryId, true) } : undefined), mediaWire)
 }
 
 export async function putEntry(id: string, body: WireEntry): Promise<unknown> {
+  id = localUuidHex(id)
+  assertEntryPush(body)
+  if (body.id !== id) throw new Error("日记路径与正文身份不一致")
   return put(`/entries/${id}`, body)
 }
 
 export async function deleteEntry(id: string, clientUpdatedAt: string): Promise<unknown> {
-  return del(`/entries/${id}`, { client_updated_at: clientUpdatedAt })
+  return del(`/entries/${localUuidHex(id)}`, { client_updated_at: clientUpdatedAt })
 }

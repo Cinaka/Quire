@@ -7,7 +7,7 @@ export type NotebookNode =
   | { kind: "notice"; text: string }
 export interface NotebookProjection { nodes: NotebookNode[]; warnings: string[]; mediaIds: string[] }
 
-const LOCAL_MEDIA = /^local:\/\/media\/([0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i
+const LOCAL_MEDIA = /^local:\/\/media\/([0-9a-f]{12}7[0-9a-f]{3}[89ab][0-9a-f]{15}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?![\s\S])/i
 export function notebookMediaId(src: unknown): string | null {
   return typeof src === "string" ? LOCAL_MEDIA.exec(src)?.[1] ?? null : null
 }

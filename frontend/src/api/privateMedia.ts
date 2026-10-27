@@ -1,3 +1,4 @@
+import { uuidToHex } from "@/shared/uuidHex"
 import type { AxiosRequestConfig } from "axios"
 
 import { ApiError, http } from "./request"
@@ -10,10 +11,10 @@ export interface MediaLease { ownerUserId: string; tokenGeneration: number }
 export async function readPrivateMedia(
   id: string, variant: "original" | "thumbnail", lease: MediaLease,
 ): Promise<Blob> {
+  id = uuidToHex(id, true)
   const current = () => accessTokenSubject() === lease.ownerUserId &&
     tokenGeneration() === lease.tokenGeneration
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
-      !["original", "thumbnail"].includes(variant) || !lease.ownerUserId || !current()) {
+  if (!["original", "thumbnail"].includes(variant) || !lease.ownerUserId || !current()) {
     throw new ApiError(-1, "图片读取身份或范围已失效")
   }
   const controller = new AbortController()

@@ -182,6 +182,12 @@ async function pushAll(context: SyncContext): Promise<{ serverTime: string; comp
     }
     hadWork = true
 
+    // Validate the entire local snapshot before the first media upload. Never re-key local rows
+    // while awaiting a response; an old 36-character key needs storage coordination first.
+    entries.forEach(toWireEntry)
+    tags.forEach(toWireTag)
+    mediaMeta.forEach(toWireMediaMetaPush)
+
     const uploadFailed = new Set<string>()
     for (const media of mediaMeta) {
       if (!media.entryId || media.blob.size === 0) continue

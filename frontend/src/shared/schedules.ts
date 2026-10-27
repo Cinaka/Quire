@@ -1,3 +1,4 @@
+import { isBusinessUuid } from "./uuidHex"
 import { toPlainText } from "./text"
 import { isLocalDate, todayLocal } from "./time"
 import {
@@ -99,9 +100,11 @@ export function schedulePhase(
 
 /** 由来源 UUID v7 直接映射；不同资源表允许相同主键，不另造随机 Entry ID。 */
 export function scheduleEntryId(scheduleId: string): string {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(scheduleId)) {
+  if (!isBusinessUuid(scheduleId)) {
     throw new Error("预简来源必须为 UUID v7")
   }
+  // Preserve an existing local key while reading old evidence/backups; never re-key here.
+  // newId() already emits hex32, so every newly created mapping remains hex32.
   return scheduleId.toLowerCase()
 }
 

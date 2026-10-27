@@ -10,19 +10,21 @@ try { ts = require("typescript") } catch (error) {
 }
 function compile(source) {
   source = source.replaceAll("import.meta.env.VITE_API_BASE_URL", JSON.stringify("/api/v1"))
+    .replaceAll("import.meta.env.VITE_MEDIA_BASE_URL", JSON.stringify(""))
   if (ts) return ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText
+  const namedImports = value => value.replace(/\b(\w+)\s+as\s+(\w+)\b/g, "$1: $2")
   const names = []
   let index = 0
   return require("node:module").stripTypeScriptTypes(source)
     .replace(/import\s+(\w+)\s*,\s*\{([\s\S]*?)\}\s+from\s+["']([^"']+)["']\s*;?/g,
       (_, name, imports, specifier) => {
         const module = `__module${index++}`
-        return `const ${module} = require(${JSON.stringify(specifier)}); const ${name} = ${module}.default ?? ${module}; const { ${imports} } = ${module};\n`
+        return `const ${module} = require(${JSON.stringify(specifier)}); const ${name} = ${module}.default ?? ${module}; const { ${namedImports(imports)} } = ${module};\n`
       })
     .replace(/import\s+\{([\s\S]*?)\}\s+from\s+["']([^"']+)["']\s*;?/g,
-      (_, imports, specifier) => `const { ${imports} } = require(${JSON.stringify(specifier)});\n`)
+      (_, imports, specifier) => `const { ${namedImports(imports)} } = require(${JSON.stringify(specifier)});\n`)
     .replace(/export\s+(async\s+)?(const|function|class)\s+(\w+)/g, (_, asyncPart, kind, name) => {
       names.push(name)
       return `${asyncPart ?? ""}${kind} ${name}`

@@ -6,6 +6,8 @@ import axios, {
   type InternalAxiosRequestConfig,
 } from "axios"
 
+import { isBusinessUuid } from "@/shared/uuidHex"
+
 import { accessTokenSubject, clearAccessToken, getAccessToken, setAccessToken, tokenGeneration } from "./tokenStore"
 
 /** 后端统一响应体。code === 0 才是成功。 */
@@ -186,8 +188,8 @@ function syncRequestOptions(syncOwner?: string): AxiosRequestConfig & { _syncOwn
 export async function postPinnedSchedule<T>(
   url: string, body: unknown, lease: { ownerUserId: string; tokenGeneration: number },
 ): Promise<T> {
-  const id = "[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
-  if (!new RegExp(`^/schedules/(?:sync/push|${id}/convert)$`).test(url) ||
+  const id = "(?:[0-9a-f]{12}7[0-9a-f]{3}[89ab][0-9a-f]{15}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})"
+  if (!new RegExp(`^/schedules/(?:sync/push|${id}/convert)(?![\\s\\S])`).test(url) ||
       !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0) {
     throw new ApiError(-1, "日程请求路径或登录租约无效")
   }
@@ -222,7 +224,7 @@ export async function getPinnedScheduleChanges<T>(
 export async function getPinnedScheduleDetail<T>(
   id: string, lease: { ownerUserId: string; tokenGeneration: number },
 ): Promise<T> {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
+  if (!isBusinessUuid(id) ||
       !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0) {
     throw new ApiError(-1, "日程核对ID或登录租约无效")
   }
@@ -240,7 +242,7 @@ export async function getPinnedScheduleDetail<T>(
 export async function getPinnedScheduleReview<T>(
   id: string, lease: { ownerUserId: string; tokenGeneration: number },
 ): Promise<T> {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
+  if (!isBusinessUuid(id) ||
       !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0) {
     throw new ApiError(-1, "终态核对ID或登录租约无效")
   }
@@ -258,7 +260,7 @@ export async function getPinnedScheduleReview<T>(
 export async function getPinnedScheduleResourceReview<T>(
   id: string, lease: { ownerUserId: string; tokenGeneration: number },
 ): Promise<T> {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
+  if (!isBusinessUuid(id) ||
       !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0) {
     throw new ApiError(-1, "资源核对ID或登录租约无效")
   }
@@ -278,8 +280,7 @@ export async function getPinnedScheduleResourceImage(
   proof: { state: string; size: number | null; mime: string | null; sha256: string | null },
   lease: { ownerUserId: string; tokenGeneration: number }, signal: AbortSignal,
 ): Promise<unknown> {
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
-  if (!uuid.test(id) || !uuid.test(mediaId) || !["original", "thumbnail"].includes(variant) ||
+  if (!isBusinessUuid(id) || !isBusinessUuid(mediaId) || !["original", "thumbnail"].includes(variant) ||
       proof.state !== "verified" || !Number.isSafeInteger(proof.size) || !proof.size || proof.size < 1 || proof.size > 10 * 1024 * 1024 ||
       !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(proof.mime ?? "") ||
       !/^[0-9a-f]{64}$/.test(proof.sha256 ?? "") || !lease.ownerUserId ||
@@ -318,7 +319,7 @@ async function pinnedScheduleIndependentTags(
   reviewOnly: boolean,
 ): Promise<unknown> {
   const payload = JSON.stringify(body)
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
+  if (!isBusinessUuid(id) ||
       !lease.ownerUserId || !Number.isSafeInteger(lease.tokenGeneration) || lease.tokenGeneration < 0 || signal.aborted ||
       typeof payload !== "string" || new Blob([payload]).size > 2 * 1024 * 1024) throw new ApiError(-1, "标签发布身份、租约或请求无效")
   const controller = new AbortController(), abort = () => controller.abort(), limit = 128 * 1024

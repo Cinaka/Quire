@@ -1,8 +1,8 @@
 const { test } = require("node:test"), assert = require("node:assert/strict")
 const { validateConfig } = require("../scripts/check-p4-resource-http.cjs")
 const valid = () => ({ origin: "http://127.0.0.1:49152", nonce: "n".repeat(43),
-  source_id: "0198f2a1-4b3c-7000-8000-000000000001", media_id: "0198f2a1-4b3c-7000-8000-abcdef123457",
-  user_id: "0198f2a1-4b3c-7000-8000-abcdef123456", token: "header.payload.signature", other_token: "other.payload.signature", scenario: "roundtrip" })
+  source_id: "0198f2a14b3c70008000000000000001", media_id: "0198f2a14b3c70008000abcdef123457",
+  user_id: "0198f2a14b3c70008000abcdef123456", token: "header.payload.signature", other_token: "other.payload.signature", scenario: "roundtrip" })
 test("HTTP contract configuration is frozen and detached without starting a server", () => {
   const input = valid(), output = validateConfig(input)
   assert.ok(Object.isFrozen(output)); input.origin = "http://example.com"; assert.notEqual(output.origin, input.origin)

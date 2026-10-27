@@ -1,3 +1,5 @@
+import { localUuidHex, normalizeUuidList } from "@/shared/uuidHex"
+import { entryWire, mediaWire, tagWire } from "./uuidWire"
 import type { Entry, EntryContent, MediaItem, Tag } from "@/shared/types"
 import type { WireEntry, WireMediaMeta, WireMediaMetaPush, WireTag } from "./wire"
 
@@ -9,7 +11,7 @@ export function mediaUrl(path: string): string {
 
 export function toWireEntry(e: Entry): WireEntry {
   return {
-    id: e.id,
+    id: localUuidHex(e.id),
     entry_date: e.entryDate,
     sort_order: e.sortOrder,
     title: e.title,
@@ -17,14 +19,15 @@ export function toWireEntry(e: Entry): WireEntry {
     content_text: e.contentText,
     mood: e.mood,
     weather: e.weather,
-    tag_ids: e.tagIds,
-    from_schedule_id: e.fromScheduleId,
+    tag_ids: normalizeUuidList(e.tagIds.map(localUuidHex), true),
+    from_schedule_id: e.fromScheduleId === null ? null : localUuidHex(e.fromScheduleId),
     client_updated_at: e.clientUpdatedAt,
     deleted_at: e.deletedAt,
   }
 }
 
 export function fromWireEntry(w: WireEntry): Entry {
+  w = entryWire(w)
   return {
     id: w.id,
     entryDate: w.entry_date,
@@ -47,17 +50,18 @@ export function fromWireEntry(w: WireEntry): Entry {
 }
 
 export function fromWireTag(w: WireTag): Tag {
+  w = tagWire(w)
   return { id: w.id, name: w.name, color: w.color, createdAt: w.created_at, dirty: 0 }
 }
 
 export function toWireTag(t: Tag): WireTag {
-  return { id: t.id, name: t.name, color: t.color, created_at: t.createdAt }
+  return { id: localUuidHex(t.id), name: t.name, color: t.color, created_at: t.createdAt }
 }
 
 export function toWireMediaMetaPush(m: MediaItem): WireMediaMetaPush {
   return {
-    id: m.id,
-    entry_id: m.entryId || null,
+    id: localUuidHex(m.id),
+    entry_id: m.entryId ? localUuidHex(m.entryId) : null,
     sort_order: m.sortOrder,
     width: m.width,
     height: m.height,
@@ -70,6 +74,7 @@ export function toWireMediaMetaPush(m: MediaItem): WireMediaMetaPush {
 export function mediaPatchFromWire(
   w: WireMediaMeta,
 ): Pick<MediaItem, "entryId" | "sortOrder" | "remoteUrl"> & { thumbRemoteUrl: string } {
+  w = mediaWire(w)
   return {
     entryId: w.entry_id ?? "",
     sortOrder: w.sort_order,

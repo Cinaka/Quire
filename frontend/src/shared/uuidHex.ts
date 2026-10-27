@@ -29,3 +29,15 @@ export function normalizeUuidList(values: readonly unknown[], requireV7 = false)
   }
   return result
 }
+
+/** Local primary keys are not re-keyed while preparing a network request. */
+export function localUuidHex(value: unknown): string {
+  const id = uuidToHex(value, true)
+  if (value !== id) throw new Error("本地身份尚未完成 UUID32 切换；数据已保留，请先核对本地库与备份")
+  return id
+}
+
+/** Exact legacy spelling remains readable; no whitespace, wrappers, paths or URNs. */
+export function isBusinessUuid(value: unknown): value is string {
+  try { uuidToHex(value, true); return true } catch { return false }
+}

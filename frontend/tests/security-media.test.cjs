@@ -6,7 +6,7 @@ const vm = require('node:vm')
 const { stripTypeScriptTypes } = require('node:module')
 const { test } = require('node:test')
 const root = path.resolve(__dirname, '..')
-const ID = '0198f2a1-4b3c-7000-8000-abcdef123458'
+const ID = '0198f2a14b3c70008000abcdef123458'
 const blob = () => new Blob(['public fixture'], { type: 'image/png' })
 
 async function load(relative, dependencies, globals = {}) {
@@ -14,6 +14,12 @@ async function load(relative, dependencies, globals = {}) {
   const source = stripTypeScriptTypes(fs.readFileSync(path.join(root, relative), 'utf8'))
   const module = new vm.SourceTextModule(source, { context, identifier: relative })
   await module.link(async name => {
+    if (name === '@/shared/uuidHex') {
+      const code = stripTypeScriptTypes(fs.readFileSync(path.join(root, 'src/shared/uuidHex.ts'), 'utf8'))
+      const codec = new vm.SourceTextModule(code, { context })
+      await codec.link(() => { throw Error('unexpected UUID codec dependency') })
+      return codec
+    }
     assert.ok(Object.hasOwn(dependencies, name), `unmocked import: ${name}`)
     const exports = dependencies[name]
     return new vm.SyntheticModule(Object.keys(exports), function () {

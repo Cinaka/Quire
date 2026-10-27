@@ -3,6 +3,7 @@ const assert = require("node:assert/strict")
 const { webcrypto } = require("node:crypto")
 const { loadTS } = require("../tests/schedules-harness.cjs")
 const { setup } = require("../tests/schedules-data-harness.cjs")
+const { uuidToHex } = loadTS("shared/uuidHex.ts")
 function validateConfig(raw) {
   assert.ok(raw && typeof raw === "object" && !Array.isArray(raw))
   assert.deepEqual(Object.keys(raw).sort(), ["media_id", "nonce", "origin", "other_token", "scenario", "source_id", "token", "user_id"].sort())
@@ -11,12 +12,16 @@ function validateConfig(raw) {
   assert.equal(url.protocol, "http:"); assert.equal(url.hostname, "127.0.0.1")
   assert.ok(url.port && +url.port >= 1024 && +url.port <= 65535)
   assert.equal(raw.origin, url.origin); assert.equal(url.username + url.password + url.search + url.hash, "")
-  for (const key of ["source_id", "media_id", "user_id"])
-    assert.match(raw[key], /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  const ids = {}
+  for (const key of ["source_id", "media_id", "user_id"]) {
+    assert.equal(typeof raw[key], "string")
+    assert.equal(raw[key], raw[key].toLowerCase())
+    ids[key] = uuidToHex(raw[key], true)
+  }
   assert.match(raw.nonce, /^[A-Za-z0-9_-]{32,128}$/)
   for (const key of ["token", "other_token"]) assert.match(raw[key], /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/)
   assert.ok(["roundtrip", "stale_image", "unknown_receipt"].includes(raw.scenario))
-  return Object.freeze({ ...raw })
+  return Object.freeze({ ...raw, ...ids })
 }
 let phase = "configuration"
 async function run(raw) {

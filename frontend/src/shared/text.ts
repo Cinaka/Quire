@@ -1,3 +1,4 @@
+import { isBusinessUuid, localUuidHex } from "./uuidHex"
 import type { EntryContent } from "./types"
 
 type AnyNode = {
@@ -66,11 +67,14 @@ export function toPlainText(content: EntryContent | null | undefined): string {
 export const LOCAL_MEDIA_PREFIX = "local://media/"
 
 export function toLocalSrc(mediaId: string): string {
-  return `${LOCAL_MEDIA_PREFIX}${mediaId}`
+  return `${LOCAL_MEDIA_PREFIX}${localUuidHex(mediaId)}`
 }
 
 export function parseLocalSrc(src: string): string | null {
-  return src.startsWith(LOCAL_MEDIA_PREFIX) ? src.slice(LOCAL_MEDIA_PREFIX.length) : null
+  if (typeof src !== "string" || !src.startsWith(LOCAL_MEDIA_PREFIX)) return null
+  const id = src.slice(LOCAL_MEDIA_PREFIX.length)
+  // Keep old local keys readable until the separately reviewed storage migration.
+  return isBusinessUuid(id) ? id : null
 }
 
 
