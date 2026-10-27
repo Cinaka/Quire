@@ -13,7 +13,8 @@ class ScheduleModelTests(unittest.TestCase):
     def test_registered_table_and_native_types(self) -> None:
         table = Schedule.__table__
         self.assertIs(Base.metadata.tables["schedules"], table)
-        self.assertEqual(table.c.id.type.impl.length, 16)
+        for name in ["id", "user_id", "converted_entry_id"]:
+            self.assertEqual(table.c[name].type.impl.length, 32)
         self.assertEqual(table.c.remind_date.type.__class__.__name__, "Date")
         self.assertEqual(table.c.status.type.__class__.__name__, "TINYINT")
         self.assertFalse(table.c.client_updated_at.nullable)

@@ -53,16 +53,16 @@ def client_fixture(sources=(), entries=(), *, authenticated=True):
     with api_client(sources, authenticated=authenticated) as (client, db):
         db.session.execute(text("""
             CREATE TABLE diary_entries (
-                id BLOB PRIMARY KEY, user_id BLOB NOT NULL, entry_date DATE NOT NULL,
+                id CHAR(32) PRIMARY KEY, user_id CHAR(32) NOT NULL, entry_date DATE NOT NULL,
                 sort_order INTEGER NOT NULL, title VARCHAR(255), content JSON, content_text TEXT,
-                mood VARCHAR(16), weather VARCHAR(16), from_schedule_id BLOB UNIQUE,
+                mood VARCHAR(16), weather VARCHAR(16), from_schedule_id CHAR(32) UNIQUE,
                 client_updated_at DATETIME, deleted_at DATETIME,
                 created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
             )
         """))
         db.session.execute(text("""
             CREATE TABLE entry_tags (
-                entry_id BLOB NOT NULL, tag_id BLOB NOT NULL, PRIMARY KEY (entry_id, tag_id)
+                entry_id CHAR(32) NOT NULL, tag_id CHAR(32) NOT NULL, PRIMARY KEY (entry_id, tag_id)
             )
         """))
         db.session.add_all(entries)
@@ -128,7 +128,7 @@ def test_retry_preserves_later_diary_text_date_images_metadata_and_tags():
             {"type": "image", "attrs": {"src": "local://media/preserved"}},
         ]}}
         db.session.execute(text("INSERT INTO entry_tags VALUES (:entry_id, :tag_id)"), {
-            "entry_id": ID.bytes, "tag_id": bytes.fromhex(tag_id.replace("-", "")),
+            "entry_id": ID.hex, "tag_id": tag_id.replace("-", ""),
         })
         db.session.commit()
         data = converted(client.post(URL, json=request()))

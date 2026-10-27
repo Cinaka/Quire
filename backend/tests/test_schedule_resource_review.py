@@ -43,14 +43,14 @@ def resource_fixture(tmp_path, monkeypatch, *, foreign_media=False, foreign_tag=
     ) as (client, db):
         db.session.execute(text("""
             CREATE TABLE media (
-                id BLOB PRIMARY KEY, user_id BLOB NOT NULL, entry_id BLOB, url VARCHAR(512),
+                id CHAR(32) PRIMARY KEY, user_id CHAR(32) NOT NULL, entry_id CHAR(32), url VARCHAR(512),
                 thumb_url VARCHAR(512), width INTEGER, height INTEGER, size BIGINT,
                 sort_order INTEGER NOT NULL, created_at DATETIME NOT NULL
             )
         """))
         db.session.execute(text("""
             CREATE TABLE tags (
-                id BLOB PRIMARY KEY, user_id BLOB NOT NULL, name VARCHAR(32) NOT NULL,
+                id CHAR(32) PRIMARY KEY, user_id CHAR(32) NOT NULL, name VARCHAR(32) NOT NULL,
                 color VARCHAR(16), created_at DATETIME NOT NULL
             )
         """))

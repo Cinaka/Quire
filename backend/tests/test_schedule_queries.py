@@ -70,18 +70,18 @@ def api_client(rows=(), *, user_id=USER_ID, authenticated=True):
     with engine.begin() as connection:
         connection.execute(text("""
             CREATE TABLE schedules (
-                id BLOB PRIMARY KEY, user_id BLOB NOT NULL, remind_date DATE NOT NULL,
+                id CHAR(32) PRIMARY KEY, user_id CHAR(32) NOT NULL, remind_date DATE NOT NULL,
                 title VARCHAR(255), content JSON, content_text TEXT, status INTEGER NOT NULL,
-                converted_entry_id BLOB, converted_at DATETIME, converted_receipt JSON,
+                converted_entry_id CHAR(32), converted_at DATETIME, converted_receipt JSON,
                 client_updated_at DATETIME,
                 deleted_at DATETIME, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
             )
         """))
     with engine.begin() as connection:
-        connection.execute(text("CREATE TABLE users (id BLOB PRIMARY KEY)"))
+        connection.execute(text("CREATE TABLE users (id CHAR(32) PRIMARY KEY)"))
         connection.execute(
             text("INSERT INTO users (id) VALUES (:id)"),
-            [{"id": USER_ID.bytes}, {"id": OTHER_USER_ID.bytes}],
+            [{"id": USER_ID.hex}, {"id": OTHER_USER_ID.hex}],
         )
     previous = app.dependency_overrides.copy()
     try:

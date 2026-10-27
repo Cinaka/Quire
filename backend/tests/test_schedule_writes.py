@@ -90,18 +90,18 @@ def api_client(rows=(), *, authenticated=True, injected=None):
     with engine.begin() as connection:
         connection.execute(text("""
             CREATE TABLE schedules (
-                id BLOB PRIMARY KEY, user_id BLOB NOT NULL, remind_date DATE NOT NULL,
+                id CHAR(32) PRIMARY KEY, user_id CHAR(32) NOT NULL, remind_date DATE NOT NULL,
                 title VARCHAR(255), content JSON, content_text TEXT, status INTEGER NOT NULL,
-                converted_entry_id BLOB, converted_at DATETIME, converted_receipt JSON,
+                converted_entry_id CHAR(32), converted_at DATETIME, converted_receipt JSON,
                 client_updated_at DATETIME,
                 deleted_at DATETIME, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
             )
         """))
     with engine.begin() as connection:
-        connection.execute(text("CREATE TABLE users (id BLOB PRIMARY KEY)"))
+        connection.execute(text("CREATE TABLE users (id CHAR(32) PRIMARY KEY)"))
         connection.execute(
             text("INSERT INTO users (id) VALUES (:id)"),
-            [{"id": USER_ID.bytes}, {"id": OTHER_USER_ID.bytes}],
+            [{"id": USER_ID.hex}, {"id": OTHER_USER_ID.hex}],
         )
     previous = app.dependency_overrides.copy()
     try:
@@ -149,6 +149,10 @@ def test_create_derives_text_and_keeps_date_client_uuid_and_server_timestamps():
         assert data["created_at"] == data["updated_at"]
         assert "user_id" not in data and db.commits == 1
         assert db.session.get(Schedule, ID).user_id == USER_ID
+        raw = db.session.execute(text(
+            "SELECT id, user_id, typeof(id), typeof(user_id) FROM schedules"
+        )).one()
+        assert tuple(raw) == (ID.hex, USER_ID.hex, "text", "text")
 
 
 def test_title_only_and_elapsed_first_upload_are_allowed_without_server_day_guess():
@@ -374,3 +378,14 @@ def test_non_duplicate_integrity_error_is_not_misreported_as_missing_owner():
         assert response.status_code == 500 and "private" not in response.text
         assert db.scalar.await_count == 1
         db.commit.assert_not_awaited()
+
+
+def test_missing_owner_still_returns_401_without_writing_schedule():
+    with api_client() as (client, db):
+        db.session.execute(text("DELETE FROM users WHERE id = :id"), {"id": USER_ID.hex})
+        db.session.commit()
+        response = client.put(URL, json=payload())
+        assert response.status_code == 401, response.text
+        assert response.json()["message"] == "账号已失效"
+        assert db.session.get(Schedule, ID) is None
+        assert db.commits == 0 and db.flushes == 0
