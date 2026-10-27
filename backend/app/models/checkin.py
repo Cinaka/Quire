@@ -5,8 +5,9 @@ from sqlalchemy import UniqueConstraint, text
 from sqlalchemy.dialects.mysql import DATETIME as MySQLDateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base, UUIDBinary
+from app.db.base import Base
 from app.db.mixins import TABLE_ARGS
+from app.db.uuid_hex import UUIDHexText
 
 
 class Checkin(Base):
@@ -16,8 +17,8 @@ class Checkin(Base):
         TABLE_ARGS,
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUIDBinary, primary_key=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUIDBinary, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(UUIDHexText, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUIDHexText, nullable=False)
     checkin_date: Mapped[date] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         MySQLDateTime(fsp=3),

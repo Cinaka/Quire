@@ -6,8 +6,9 @@ from sqlalchemy.dialects.mysql import DATETIME as MySQLDateTime
 from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base, UUIDBinary
+from app.db.base import Base
 from app.db.mixins import TABLE_ARGS, TimestampMixin
+from app.db.uuid_hex import UUIDHexText
 
 
 class DiaryEntry(TimestampMixin, Base):
@@ -26,8 +27,8 @@ class DiaryEntry(TimestampMixin, Base):
         TABLE_ARGS,
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUIDBinary, primary_key=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUIDBinary, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(UUIDHexText, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUIDHexText, nullable=False)
 
     entry_date: Mapped[date] = mapped_column(nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
@@ -39,7 +40,7 @@ class DiaryEntry(TimestampMixin, Base):
     mood: Mapped[str | None] = mapped_column(String(16))
     weather: Mapped[str | None] = mapped_column(String(16))
 
-    from_schedule_id: Mapped[uuid.UUID | None] = mapped_column(UUIDBinary)
+    from_schedule_id: Mapped[uuid.UUID | None] = mapped_column(UUIDHexText)
 
     client_updated_at: Mapped[datetime | None] = mapped_column(MySQLDateTime(fsp=3))
     deleted_at: Mapped[datetime | None] = mapped_column(MySQLDateTime(fsp=3))

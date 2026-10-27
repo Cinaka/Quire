@@ -202,3 +202,90 @@ async def run_rehearsal():
 
 def test_mysql_storage_upgrade_and_downgrade_preserve_identity_and_watermarks():
     asyncio.run(run_rehearsal())
+
+
+async def run_empty_cutover_rehearsal():
+    import importlib.util
+    from pathlib import Path
+
+    from sqlalchemy import Column, MetaData, Table, select
+
+    from app.db.uuid_hex import UUIDHexText
+
+    try:
+        url = make_url(TEST_URL)
+    except Exception:
+        raise AssertionError("Invalid disposable MySQL test URL") from None
+    if (url.drivername != "mysql+asyncmy"
+            or not re.fullmatch(r"quire_uuid32_test_[a-z0-9_]+", url.database or "")):
+        raise AssertionError("Refusing non-disposable MySQL database")
+    path = (Path(__file__).resolve().parents[1] / "alembic/versions"
+            / "20261026_uuid32_empty_database.py")
+    spec = importlib.util.spec_from_file_location("quire_empty_cutover_rehearsal", path)
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
+    engine = create_async_engine(url, echo=False)
+    try:
+        async with engine.connect() as connection:
+            lock = (await connection.execute(text(
+                "SELECT GET_LOCK('quire_uuid32_disposable_rehearsal', 0)",
+            ))).scalar_one()
+            if lock != 1:
+                raise AssertionError("Another disposable UUID32 rehearsal is running")
+            created = []
+            try:
+                existing = (await connection.execute(text("""
+                    SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()
+                """))).scalar_one()
+                if existing != 0:
+                    raise AssertionError("Refusing to modify a non-empty test schema")
+                for table in UUID_COLUMNS:
+                    await connection.execute(text(table_ddl(table)))
+                    created.append(table)
+                await connection.run_sync(lambda sync: revision._run(sync, "upgrade"))
+                state = await connection.run_sync(inspect_uuid_storage)
+                assert all(column.data_type == "char" and column.length == 32
+                           and column.charset == "ascii" and column.collation == "ascii_bin"
+                           for column in state.columns
+                           if column.name in UUID_COLUMNS[column.table])
+                probe = Table("users", MetaData(),
+                              Column("id", UUIDHexText(), primary_key=True))
+                identifier = uuid.UUID("01a0c67c515a76618dae30dc09147cd6")
+                await connection.execute(probe.insert().values(id=identifier))
+                await connection.commit()
+                assert (await connection.execute(text("SELECT id FROM users"))).scalar_one() == (
+                    identifier.hex
+                )
+                for key in (identifier, identifier.hex, str(identifier)):
+                    assert (await connection.execute(
+                        select(probe.c.id).where(probe.c.id == key),
+                    )).scalar_one() == identifier
+                # Any business rows must block both retry and downgrade before any ALTER.
+                for direction in ("upgrade", "downgrade"):
+                    with pytest.raises(RuntimeError, match="ALL eight business tables"):
+                        await connection.run_sync(lambda sync, step=direction: (
+                            revision._run(sync, step)
+                        ))
+                # This DELETE affects only the row created by this disposable test.
+                await connection.execute(text("DELETE FROM users"))
+                await connection.commit()
+                await connection.run_sync(lambda sync: revision._run(sync, "downgrade"))
+                state = await connection.run_sync(inspect_uuid_storage)
+                assert all(column.data_type == "binary" and column.length == 16
+                           for column in state.columns
+                           if column.name in UUID_COLUMNS[column.table])
+            finally:
+                await connection.rollback()
+                for table in reversed(created):
+                    await connection.execute(text(f"DROP TABLE {quoted(table)}"))
+                await connection.execute(text(
+                    "SELECT RELEASE_LOCK('quire_uuid32_disposable_rehearsal')",
+                ))
+                await connection.commit()
+    finally:
+        await engine.dispose()
+
+
+def test_empty_cutover_then_new_insert_stores_hex32(monkeypatch):
+    monkeypatch.setenv("QUIRE_UUID32_EMPTY_DB_ACK", "1")
+    asyncio.run(run_empty_cutover_rehearsal())

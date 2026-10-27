@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 import app.models  # noqa: F401
 from app.core.config import settings
 from app.db.base import Base, UUIDBinary
+from app.db.uuid_hex import UUIDHexText
 
 config = context.config
 if config.config_file_name is not None:
@@ -18,6 +19,9 @@ target_metadata = Base.metadata
 
 def render_item(type_, obj, autogen_context):
     """把自定义类型渲染成数据库层类型，避免迁移文件依赖 app 包。"""
+    if type_ == "type" and isinstance(obj, UUIDHexText):
+        autogen_context.imports.add("from sqlalchemy.dialects import mysql")
+        return "mysql.CHAR(32, charset='ascii', collation='ascii_bin')"
     if type_ == "type" and isinstance(obj, UUIDBinary):
         autogen_context.imports.add("import sqlalchemy as sa")
         return "sa.BINARY(16)"

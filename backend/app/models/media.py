@@ -5,17 +5,18 @@ from sqlalchemy import BigInteger, Index, Integer, String, text
 from sqlalchemy.dialects.mysql import DATETIME as MySQLDateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base, UUIDBinary
+from app.db.base import Base
 from app.db.mixins import TABLE_ARGS
+from app.db.uuid_hex import UUIDHexText
 
 
 class Media(Base):
     __tablename__ = "media"
     __table_args__ = (Index("idx_entry", "entry_id"), TABLE_ARGS)
 
-    id: Mapped[uuid.UUID] = mapped_column(UUIDBinary, primary_key=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUIDBinary, nullable=False)
-    entry_id: Mapped[uuid.UUID | None] = mapped_column(UUIDBinary)
+    id: Mapped[uuid.UUID] = mapped_column(UUIDHexText, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUIDHexText, nullable=False)
+    entry_id: Mapped[uuid.UUID | None] = mapped_column(UUIDHexText)
     url: Mapped[str] = mapped_column(String(512), nullable=False)
     thumb_url: Mapped[str | None] = mapped_column(String(512))
     width: Mapped[int | None] = mapped_column(Integer)

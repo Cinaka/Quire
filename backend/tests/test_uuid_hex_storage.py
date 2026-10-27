@@ -1,4 +1,4 @@
-"""Target UUID32 adapters only; application models remain on UUIDBinary until cutover."""
+"""UUID32 storage and schema adapter tests; active model mappings have separate tests."""
 
 import json
 import uuid

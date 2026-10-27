@@ -18,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.core.uuid_storage_plan import (  # noqa: E402
     UUID_COLUMNS,
     MigrationPlanError,
-    build_storage_plan,
 )
 
 # These referential checks do not assume physical FK constraints exist in MySQL.
@@ -95,27 +94,44 @@ async def check_database():
 
 
 async def plan_database(direction):
-    from dataclasses import asdict
+    import importlib.util
 
+    from sqlalchemy import text
     from sqlalchemy.engine import make_url
     from sqlalchemy.ext.asyncio import create_async_engine
 
     from app.core.config import settings
-    from app.db.uuid_storage_inspection import inspect_uuid_storage
 
     if make_url(settings.database_url).get_backend_name() != "mysql":
         raise MigrationPlanError("UUID32 planner requires MySQL")
+    # Preview the exact frozen Alembic revision, not the superseded data-copy planner.
+    path = (Path(__file__).resolve().parents[1] / "alembic/versions"
+            / "20261026_uuid32_empty_database.py")
+    spec = importlib.util.spec_from_file_location("quire_uuid32_empty_preview", path)
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
     engine = create_async_engine(settings.database_url, echo=False)
     try:
         async with engine.connect() as connection:
-            state = await connection.run_sync(inspect_uuid_storage)
-        plan = build_storage_plan(state, direction)
+            version, mode = (await connection.execute(text(
+                "SELECT VERSION(), @@SESSION.sql_mode",
+            ))).one()
+            state = await connection.run_sync(revision._snapshot)
+        try:
+            revision._verify_server(version, mode)
+            columns, engines, counts, features = state
+            statements = revision._plan(columns, engines, counts, direction, **features)
+        except RuntimeError as error:
+            raise MigrationPlanError(str(error)) from None
         return {
             "read_only": True,
-            "mode": "sql-preview-only",
+            "mode": "empty-database-sql-preview-only",
+            "requires_empty_database": True,
+            "revision": revision.revision,
+            "direction": direction,
             "executable_cutover": False,
-            "warning": "No row validation, backup verification or SQL execution performed",
-            **asdict(plan),
+            "warning": "No backup verification or SQL execution performed; stop writers separately",
+            "statements": statements,
         }
     finally:
         await engine.dispose()

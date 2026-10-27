@@ -1,4 +1,4 @@
-"""Target storage type for the UUID32 migration, NOT wired to existing models yet.
+"""Active UUID32 storage type for all eight business models; migrate before starting.
 
 Keep Python UUID objects internally so .hex/.bytes and identity comparisons remain
 well-defined. API text output is controlled separately by schemas/uuid_hex.py.
