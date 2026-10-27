@@ -132,7 +132,7 @@ def test_list_defaults_live_owner_only_and_has_stable_date_id_order():
                 row(4, deleted_at=AT), row(5, user_id=OTHER_USER_ID)]
     with api_client(fixtures) as (client, db):
         data = success(client.get("/api/v1/schedules"))
-        assert [item["id"] for item in data["items"]] == [str(identity(i)) for i in (2, 1, 3)]
+        assert [item["id"] for item in data["items"]] == [identity(i).hex for i in (2, 1, 3)]
         assert (data["total"], data["page"], data["page_size"]) == (3, 1, 20)
         assert len(db.statements) == 2
         assert all("user_id" not in item for item in data["items"])
@@ -161,7 +161,7 @@ def test_pagination_and_out_of_range_page_do_not_change_filtered_total():
         second = success(client.get("/api/v1/schedules", params={"page_size": 2, "page": 2}))
         empty = success(client.get("/api/v1/schedules", params={"page_size": 2, "page": 3}))
         assert [item["id"] for item in first["items"] + second["items"]] == [
-            str(identity(i)) for i in (1, 2, 3)
+            identity(i).hex for i in (1, 2, 3)
         ]
         assert first["total"] == second["total"] == empty["total"] == 3
         assert empty["items"] == [] and empty["page"] == 3
@@ -183,7 +183,7 @@ def test_detail_preserves_terminal_deleted_identity_natural_day_and_exact_revisi
         data = success(client.get(f"/api/v1/schedules/{identity(1)}"))
         assert data["remind_date"] == "2028-02-29"
         assert data["status"] == "converted"
-        assert data["converted_entry_id"] == str(identity(1))
+        assert data["converted_entry_id"] == identity(1).hex
         assert data["content"] == DOC and data["content_text"] == "原文"
         assert data["client_updated_at"] == AT.isoformat()
         assert data["deleted_at"] == data["converted_at"] == AT.isoformat()
@@ -207,7 +207,7 @@ def test_foreign_and_missing_detail_are_indistinguishable_404():
 def test_same_data_is_visible_only_to_its_owner():
     with api_client([row(1), row(2, user_id=OTHER_USER_ID)], user_id=OTHER_USER_ID) as (client, _):
         data = success(client.get("/api/v1/schedules"))
-        assert data["total"] == 1 and data["items"][0]["id"] == str(identity(2))
+        assert data["total"] == 1 and data["items"][0]["id"] == identity(2).hex
         error(client.get(f"/api/v1/schedules/{identity(1)}"), 404)
 
 

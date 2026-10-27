@@ -1,6 +1,5 @@
 """P4 terminal review GET: coherent locked read, rollback only, no conversion or repair."""
 
-import uuid
 from datetime import date
 from typing import Literal
 
@@ -16,6 +15,7 @@ from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
+from app.schemas.uuid_hex import UUIDHex
 from app.services.schedule_conversion import ConversionResult, linked_diary
 from app.services.schedule_review import ReviewReason, terminal_review_state
 from app.services.schedules import ScheduleWriteOwner, lock_schedule_owner, locked_schedule
@@ -37,7 +37,7 @@ class ScheduleTerminalReviewResponse(BaseModel):
 
 @router.get("/{schedule_id}/review", response_model=Envelope[ScheduleTerminalReviewResponse])
 async def get_terminal_review(
-    schedule_id: uuid.UUID,
+    schedule_id: UUIDHex,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

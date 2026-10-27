@@ -1,7 +1,6 @@
 """P4 source-scoped authenticated image bytes; rollback only, never a conversion ACK."""
 
 import base64
-import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -17,6 +16,7 @@ from app.db.session import get_db
 from app.models.media import Media
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
+from app.schemas.uuid_hex import UUIDHex
 from app.services.schedule_conversion import linked_diary
 from app.services.schedule_resource_review import (
     MAX_IMAGE_BYTES,
@@ -37,8 +37,8 @@ class ScheduleResourceImageResponse(BaseModel):
     read_only: Literal[True] = True
     resolution_enabled: Literal[False] = False
     proof_scope: Literal["current_entry_image_bytes"] = "current_entry_image_bytes"
-    schedule_id: uuid.UUID
-    media_id: uuid.UUID
+    schedule_id: UUIDHex
+    media_id: UUIDHex
     variant: ImageVariant
     size: int
     mime: ImageMime
@@ -55,8 +55,8 @@ def unavailable(status, detail):
     response_model=Envelope[ScheduleResourceImageResponse],
 )
 async def download_current_resource_image(
-    schedule_id: uuid.UUID,
-    media_id: uuid.UUID,
+    schedule_id: UUIDHex,
+    media_id: UUIDHex,
     variant: ImageVariant,
     response: Response,
     expected_size: int = Query(ge=1, le=MAX_IMAGE_BYTES),

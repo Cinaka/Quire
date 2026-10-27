@@ -34,7 +34,7 @@ def test_current_original_download_is_repeatable_private_read_only(tmp_path, mon
         data = success(reply)
         assert data["read_only"] and data["resolution_enabled"] is False
         assert data["proof_scope"] == "current_entry_image_bytes"
-        assert data["schedule_id"] == str(ID) and data["media_id"] == str(OTHER_USER_ID)
+        assert data["schedule_id"] == ID.hex and data["media_id"] == OTHER_USER_ID.hex
         assert data["variant"] == "original" and data["size"] == len(PNG)
         assert data["sha256"] == expected()["expected_sha256"]
         assert base64.b64decode(data["data_base64"], validate=True) == PNG

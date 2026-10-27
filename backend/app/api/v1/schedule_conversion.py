@@ -1,6 +1,5 @@
 """Private P4 conversion namespace; front-end queue consumption remains disabled."""
 
-import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,6 +18,7 @@ from app.db.session import get_db
 from app.models.entry_tag import EntryTag
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
+from app.schemas.uuid_hex import UUIDHex
 from app.services.schedule_conversion import (
     ConversionResult,
     ScheduleConvertRequest,
@@ -76,7 +76,7 @@ async def response_snapshot(db: AsyncSession, result: ConversionResult) -> Sched
 
 @router.post("/{schedule_id}/convert", response_model=Envelope[ScheduleConvertResponse])
 async def post_convert(
-    schedule_id: uuid.UUID,
+    schedule_id: UUIDHex,
     body: ScheduleConvertRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

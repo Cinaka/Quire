@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.diary_entry import DiaryEntry
 from app.models.schedule import Schedule
+from app.schemas.uuid_hex import UUIDHex
 from app.services.schedule_content import schedule_content_text, trim_text
 from app.services.schedule_receipts import conversion_receipt, receipt_matches
 from app.services.schedules import (
@@ -28,8 +29,8 @@ from app.services.schedules import (
 class ConversionEntrySnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: uuid.UUID
-    from_schedule_id: uuid.UUID
+    id: UUIDHex
+    from_schedule_id: UUIDHex
     entry_date: date
     sort_order: int = Field(default=0, ge=0, le=2147483647, strict=True)
     title: str = Field(max_length=255)
@@ -37,7 +38,7 @@ class ConversionEntrySnapshot(BaseModel):
     content_text: str | None = None
     mood: None = None
     weather: None = None
-    tag_ids: list[uuid.UUID] = Field(default_factory=list, max_length=0)
+    tag_ids: list[UUIDHex] = Field(default_factory=list, max_length=0)
     client_updated_at: datetime
     deleted_at: datetime | None = None
 

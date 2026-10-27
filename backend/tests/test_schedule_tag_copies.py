@@ -63,8 +63,8 @@ def test_create_then_retry_confirms_presence_without_updating_originals(tmp_path
         assert first["tags_confirmed"] and not first["resolution_enabled"]
         assert not first["diary_sync_enabled"]
         assert first["proof_scope"] == "independent_tag_presence"
-        assert first["plan_id"] == str(PLAN) and first["schedule_id"] == str(ID)
-        assert first["tags"][0]["id"] == str(COPY) and first["tags"][0]["created"]
+        assert first["plan_id"] == PLAN.hex and first["schedule_id"] == ID.hex
+        assert first["tags"][0]["id"] == COPY.hex and first["tags"][0]["created"]
         assert original_state(db) == before and db.commits == db.flushes == 1
         created = saved(db.session.get(Tag, COPY))
         second = success(client.post(URL, json=body))

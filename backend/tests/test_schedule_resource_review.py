@@ -43,7 +43,8 @@ def resource_fixture(tmp_path, monkeypatch, *, foreign_media=False, foreign_tag=
     ) as (client, db):
         db.session.execute(text("""
             CREATE TABLE media (
-                id CHAR(32) PRIMARY KEY, user_id CHAR(32) NOT NULL, entry_id CHAR(32), url VARCHAR(512),
+                id CHAR(32) PRIMARY KEY, user_id CHAR(32) NOT NULL, entry_id CHAR(32),
+                url VARCHAR(512),
                 thumb_url VARCHAR(512), width INTEGER, height INTEGER, size BIGINT,
                 sort_order INTEGER NOT NULL, created_at DATETIME NOT NULL
             )
@@ -80,7 +81,7 @@ def test_current_resource_hash_tags_and_metadata_are_private_read_only(tmp_path,
         data = success(client.get(URL))
         assert data["read_only"] and data["resolution_enabled"] is False
         assert data["proof_scope"] == "current_entry_resources" and data["resources_complete"]
-        assert data["review"]["receipt_known"] and data["media_ids"] == [str(OTHER_USER_ID)]
+        assert data["review"]["receipt_known"] and data["media_ids"] == [OTHER_USER_ID.hex]
         image = data["media"][0]["original"]
         assert image["state"] == "verified" and image["size"] == len(PNG)
         assert image["sha256"] == hashlib.sha256(PNG).hexdigest()
@@ -100,9 +101,9 @@ def test_missing_or_foreign_resources_are_not_complete_or_exposed(kind, tmp_path
         assert not data["resources_complete"] and data["resource_state"] == "incomplete"
         assert "private foreign label" not in str(data)
         if kind == "foreign_media":
-            assert data["missing_media_ids"] == [str(OTHER_USER_ID)] and data["media"] == []
+            assert data["missing_media_ids"] == [OTHER_USER_ID.hex] and data["media"] == []
         if kind == "foreign_tag":
-            assert data["missing_tag_ids"] == [str(ID)] and data["tags"] == []
+            assert data["missing_tag_ids"] == [ID.hex] and data["tags"] == []
         if kind == "missing_file":
             assert data["media"][0]["original"]["state"] == "missing"
         assert db.commits == db.flushes == 0

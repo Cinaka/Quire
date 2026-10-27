@@ -1,6 +1,5 @@
 """P4 coherent current resource read; rollback only, no URL/owner/first-intent proof."""
 
-import uuid
 from datetime import datetime
 from typing import Literal
 
@@ -20,6 +19,7 @@ from app.models.media import Media
 from app.models.tag import Tag
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
+from app.schemas.uuid_hex import UUIDHex
 from app.services.schedule_conversion import ConversionResult, linked_diary
 from app.services.schedule_resource_review import (
     MAX_PROOF_BYTES,
@@ -42,8 +42,8 @@ class ResourceImageProof(BaseModel):
 
 
 class ResourceMediaProof(BaseModel):
-    id: uuid.UUID
-    entry_id: uuid.UUID
+    id: UUIDHex
+    entry_id: UUIDHex
     sort_order: int
     width: int | None
     height: int | None
@@ -54,7 +54,7 @@ class ResourceMediaProof(BaseModel):
 
 
 class ResourceTagProof(BaseModel):
-    id: uuid.UUID
+    id: UUIDHex
     name: str
     color: str | None
     created_at: datetime
@@ -67,12 +67,12 @@ class ScheduleResourceReviewResponse(BaseModel):
     resource_state: Literal["verified", "incomplete", "unsupported", "no_entry"]
     resources_complete: bool = False
     review: ScheduleTerminalReviewResponse
-    media_ids: list[uuid.UUID]
-    tag_ids: list[uuid.UUID]
+    media_ids: list[UUIDHex]
+    tag_ids: list[UUIDHex]
     media: list[ResourceMediaProof]
     tags: list[ResourceTagProof]
-    missing_media_ids: list[uuid.UUID]
-    missing_tag_ids: list[uuid.UUID]
+    missing_media_ids: list[UUIDHex]
+    missing_tag_ids: list[UUIDHex]
 
 
 async def image_proof(row, *, thumbnail, remaining):
@@ -169,7 +169,7 @@ async def locked_resource_review(db, owner, schedule_id):
     response_model=Envelope[ScheduleResourceReviewResponse],
 )
 async def get_resource_review(
-    schedule_id: uuid.UUID,
+    schedule_id: UUIDHex,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

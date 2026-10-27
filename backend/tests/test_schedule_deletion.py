@@ -69,7 +69,7 @@ def test_delete_and_restore_touch_only_deletion_and_revisions_even_without_known
         original = snapshot(db.session.get(Schedule, ID))
         deleted = success(client.put(URL, json=deletion()))
         assert deleted["status"] == "converted" and deleted["deleted_at"] == NEXT.isoformat()
-        assert deleted["converted_entry_id"] == str(ID) and "converted_receipt" not in deleted
+        assert deleted["converted_entry_id"] == ID.hex and "converted_receipt" not in deleted
         restored = success(client.put(URL, json=deletion(
             expected_schedule_client_updated_at=stamp(NEXT),
             client_updated_at=stamp(LAST), deleted_at=None,
@@ -223,17 +223,17 @@ def test_changes_and_lists_observe_delete_restore_without_unlocking_conversion(m
         live = client.get("/api/v1/schedules", params={"status": "converted"}).json()["data"]
         assert live["total"] == 0
         trash = client.get("/api/v1/schedules", params={"only_deleted": True}).json()["data"]
-        assert trash["items"][0]["id"] == str(ID)
+        assert trash["items"][0]["id"] == ID.hex
         first = client.get(CHANGES, params={"since": stamp(head)}).json()["data"]
-        assert any(row["id"] == str(ID) and row["deleted_at"] for row in first["schedules"])
+        assert any(row["id"] == ID.hex and row["deleted_at"] for row in first["schedules"])
         success(client.put(URL, json=deletion(
             expected_schedule_client_updated_at=stamp(NEXT),
             client_updated_at=stamp(LAST), deleted_at=None,
         )))
         second = client.get(CHANGES, params={"since": first["server_time"]}).json()["data"]
-        source = next(row for row in second["schedules"] if row["id"] == str(ID))
+        source = next(row for row in second["schedules"] if row["id"] == ID.hex)
         assert source["status"] == deleted["status"] == "converted"
-        assert source["deleted_at"] is None and source["converted_entry_id"] == str(ID)
+        assert source["deleted_at"] is None and source["converted_entry_id"] == ID.hex
         assert db.session.get(Schedule, ID).updated_at > head + timedelta(milliseconds=1)
         conflict(client.put(URL, json=payload(client_updated_at=stamp(LAST))), "terminal")
 

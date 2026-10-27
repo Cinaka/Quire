@@ -13,10 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.schedules import ScheduleResponse, to_response
 from app.core.security import get_current_user
 from app.core.time import as_utc_naive
+from app.core.uuid_hex import parse_uuid
 from app.db.session import get_db
 from app.models.schedule import Schedule
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
+from app.schemas.uuid_hex import UUIDHex
 from app.services.schedule_deletion import (
     TerminalScheduleDeletionRequest,
     update_terminal_deletion,
@@ -40,7 +42,7 @@ class SchedulePushRequest(BaseModel):
 
 
 class PendingPushItem(PendingScheduleRequest):
-    id: uuid.UUID
+    id: UUIDHex
 
     @field_validator("id")
     @classmethod
@@ -51,7 +53,7 @@ class PendingPushItem(PendingScheduleRequest):
 
 
 class TerminalDeletionPushItem(TerminalScheduleDeletionRequest):
-    id: uuid.UUID
+    id: UUIDHex
 
     @field_validator("id")
     @classmethod
@@ -63,7 +65,7 @@ class TerminalDeletionPushItem(TerminalScheduleDeletionRequest):
 
 class SchedulePushResult(BaseModel):
     index: int
-    id: uuid.UUID | None
+    id: UUIDHex | None
     status: Literal["applied", "stale", "error"]
     reason: str
     message: str
@@ -81,7 +83,7 @@ def item_id(raw: object) -> uuid.UUID | None:
     if not isinstance(raw, dict) or not isinstance(raw.get("id"), (str, uuid.UUID)):
         return None
     try:
-        return uuid.UUID(str(raw["id"]))
+        return parse_uuid(raw["id"])
     except ValueError:
         return None
 
@@ -181,7 +183,7 @@ EMPTY_SYNC_TIME = datetime(1000, 1, 1, tzinfo=timezone.utc).replace(tzinfo=None)
 class ScheduleChangesResponse(BaseModel):
     server_time: datetime
     sync_until: datetime
-    cursor_id: uuid.UUID | None
+    cursor_id: UUIDHex | None
     has_more: bool
     schedules: list[ScheduleResponse]
 
@@ -198,7 +200,7 @@ def cursor_time(value: datetime | None) -> datetime | None:
 @router.get("/changes")
 async def changes_schedules(
     since: datetime | None = None,
-    after_id: uuid.UUID | None = None,
+    after_id: UUIDHex | None = None,
     until: datetime | None = None,
     limit: int = Query(200, ge=1, le=500),
     user: User = Depends(get_current_user),

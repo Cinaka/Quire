@@ -17,6 +17,7 @@ from unittest.mock import patch
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.schemas.uuid_hex import UUIDHex  # noqa: E402
 from app.services.schedule_resource_review import (  # noqa: E402
     MAX_IMAGE_BYTES,
     current_resource_ids,
@@ -278,7 +279,7 @@ def actual_handler(root):
         return function(*args)
 
     db.scalar, db.rollback, db.disk_calls = scalar, rollback, 0
-    env = dict(base64=base64, uuid=uuid, Literal=Literal, BaseModel=BaseModel,
+    env = dict(base64=base64, uuid=uuid, Literal=Literal, BaseModel=BaseModel, UUIDHex=UUIDHex,
                ImageVariant=Literal["original", "thumbnail"],
                ImageMime=Literal["image/png", "image/jpeg", "image/webp", "image/gif"],
                HTTPException=SimulatedHTTPError, OperationalError=SimulatedOperationalError,

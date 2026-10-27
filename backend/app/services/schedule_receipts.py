@@ -4,6 +4,8 @@ import hashlib
 import json
 from datetime import date, datetime, timezone
 
+from app.core.uuid_hex import uuid_to_legacy_text
+
 KEYS = {"version", "source_client_updated_at", "entry_date", "deleted", "fingerprint"}
 
 
@@ -14,9 +16,12 @@ def utc_stamp(value: datetime) -> str:
 
 
 def entry_fingerprint(entry: dict) -> str:
+    # Version 1 hashes canonical 36-char identity text, not the current wire spelling.
+    # Keep the immutable digest compatible; do not rewrite body/title/media references.
     # Automatic local ordering/clock metadata need not match across devices.
     business = {
-        "id": entry["id"], "from_schedule_id": entry["from_schedule_id"],
+        "id": uuid_to_legacy_text(entry["id"]),
+        "from_schedule_id": uuid_to_legacy_text(entry["from_schedule_id"]),
         "entry_date": entry["entry_date"], "title": entry["title"], "content": entry["content"],
         "deleted": entry.get("deleted_at") is not None,
     }

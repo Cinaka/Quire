@@ -1,6 +1,5 @@
 """Explicit P4 tag presence confirmation; no diary/source/receipt/reference mutation."""
 
-import uuid
 from datetime import datetime
 from typing import Literal
 
@@ -14,6 +13,7 @@ from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
+from app.schemas.uuid_hex import UUIDHex
 from app.services.schedule_tag_copies import IndependentTagCopiesRequest, create_independent_tags
 from app.services.schedules import ScheduleWriteOwner, is_duplicate, lock_schedule_owner
 
@@ -22,8 +22,8 @@ PRIVATE_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
 
 class IndependentTagPresence(BaseModel):
-    from_tag_id: uuid.UUID
-    id: uuid.UUID
+    from_tag_id: UUIDHex
+    id: UUIDHex
     name: str
     color: str | None
     created_at: datetime
@@ -35,8 +35,8 @@ class IndependentTagCopiesResponse(BaseModel):
     tags_confirmed: Literal[True] = True
     resolution_enabled: Literal[False] = False
     diary_sync_enabled: Literal[False] = False
-    schedule_id: uuid.UUID
-    plan_id: uuid.UUID
+    schedule_id: UUIDHex
+    plan_id: UUIDHex
     tags: list[IndependentTagPresence]
 
 
@@ -45,7 +45,7 @@ class IndependentTagCopiesResponse(BaseModel):
     response_model=Envelope[IndependentTagCopiesResponse],
 )
 async def publish_independent_tags(
-    schedule_id: uuid.UUID,
+    schedule_id: UUIDHex,
     body: IndependentTagCopiesRequest,
     response: Response,
     user: User = Depends(get_current_user),
@@ -97,7 +97,7 @@ async def publish_independent_tags(
     response_model=Envelope[IndependentTagCopiesResponse],
 )
 async def review_independent_tags(
-    schedule_id: uuid.UUID,
+    schedule_id: UUIDHex,
     body: IndependentTagCopiesRequest,
     response: Response,
     user: User = Depends(get_current_user),

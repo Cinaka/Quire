@@ -57,7 +57,7 @@ def test_full_pull_is_owner_scoped_sorted_and_includes_terminal_and_tombstones()
     ]
     with api_client(fixtures) as (client, db):
         data = changes(client)
-        assert [item["id"] for item in data["schedules"]] == [str(resource_id(i)) for i in range(3)]
+        assert [item["id"] for item in data["schedules"]] == [resource_id(i).hex for i in range(3)]
         assert data["schedules"][1]["deleted_at"] is not None
         assert data["schedules"][2]["status"] == "converted"
         assert data["sync_until"] == data["server_time"] == utc(AT)
@@ -77,7 +77,7 @@ def test_same_millisecond_uuid_pages_cover_every_item_once_with_fixed_window():
                 break
             assert page["cursor_id"] == page["schedules"][-1]["id"]
             page = next_page(client, page, 2)
-        assert ids == [str(resource_id(i)) for i in range(6)]
+        assert ids == [resource_id(i).hex for i in range(6)]
         assert page["cursor_id"] is None and page["server_time"] == window
 
 
@@ -89,7 +89,7 @@ def test_timestamp_transition_and_offset_cursor_preserve_inclusive_restart_bound
         since = AT.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=8))).isoformat()
         second = changes(client, since=since, after_id=first["cursor_id"],
                          until=first["sync_until"], limit=2)
-        assert [row["id"] for row in second["schedules"]] == [str(resource_id(i)) for i in (1, 2)]
+        assert [row["id"] for row in second["schedules"]] == [resource_id(i).hex for i in (1, 2)]
         restart = changes(client, since=utc(AT))
         assert len(restart["schedules"]) == 3
 
@@ -98,7 +98,7 @@ def test_explicit_older_window_does_not_leak_newer_records():
     fixtures = [stored(), stored(id=resource_id(1), updated_at=AT + timedelta(milliseconds=1))]
     with api_client(fixtures) as (client, _db):
         data = changes(client, until=utc(AT))
-        assert [row["id"] for row in data["schedules"]] == [str(ID)]
+        assert [row["id"] for row in data["schedules"]] == [ID.hex]
         assert data["sync_until"] == utc(AT) and data["has_more"] is False
 
 
@@ -108,10 +108,10 @@ def test_new_commit_between_pages_is_above_old_window_and_appears_in_next_round(
         written = client.put(f"/api/v1/schedules/{resource_id(2)}", json=payload())
         assert written.status_code == 200, written.text
         second = next_page(client, first, 1)
-        assert [row["id"] for row in second["schedules"]] == [str(resource_id(1))]
+        assert [row["id"] for row in second["schedules"]] == [resource_id(1).hex]
         assert second["sync_until"] == first["sync_until"] and second["has_more"] is False
         new = changes(client, since=second["server_time"])
-        assert str(resource_id(2)) in [row["id"] for row in new["schedules"]] and db.commits == 1
+        assert resource_id(2).hex in [row["id"] for row in new["schedules"]] and db.commits == 1
 
 
 def test_edit_or_delete_between_pages_is_not_a_historical_snapshot_but_is_not_lost():
@@ -125,7 +125,7 @@ def test_edit_or_delete_between_pages_is_not_a_historical_snapshot_but_is_not_lo
         end = next_page(client, first, 1)
         assert end["schedules"] == [] and end["server_time"] == first["sync_until"]
         next_round = changes(client, since=end["server_time"])
-        source = next(row for row in next_round["schedules"] if row["id"] == str(resource_id(1)))
+        source = next(row for row in next_round["schedules"] if row["id"] == resource_id(1).hex)
         assert source["title"] == "后来的修改" and source["deleted_at"] is not None
 
 
@@ -136,7 +136,7 @@ def test_empty_account_uses_floor_not_wall_clock_and_accepts_next_first_write():
         assert empty["schedules"] == [] and empty["cursor_id"] is None
         assert client.put(f"/api/v1/schedules/{ID}", json=payload()).status_code == 200
         data = changes(client, since=empty["server_time"])
-        assert data["schedules"][0]["id"] == str(ID) and db.commits == 1
+        assert data["schedules"][0]["id"] == ID.hex and db.commits == 1
 
 
 def test_future_or_restored_database_cursor_is_conflict_not_silent_advancement():
@@ -188,7 +188,7 @@ def test_account_clock_advances_across_resources_even_when_wall_clock_goes_back(
             expected = head + timedelta(milliseconds=serial)
             assert response.json()["data"]["updated_at"] == expected.isoformat()
         data = changes(client, since=initial["server_time"])
-        assert [row["id"] for row in data["schedules"]] == [str(resource_id(i)) for i in (0, 1, 2)]
+        assert [row["id"] for row in data["schedules"]] == [resource_id(i).hex for i in (0, 1, 2)]
         assert data["sync_until"] == utc(head + timedelta(milliseconds=2))
 
 

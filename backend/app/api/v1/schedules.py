@@ -1,6 +1,5 @@
 """P4 queries, pending snapshots, and sparse terminal deletion writes."""
 
-import uuid
 from datetime import date, datetime
 from typing import Literal
 
@@ -17,6 +16,7 @@ from app.db.session import get_db
 from app.models.schedule import Schedule
 from app.models.user import User
 from app.schemas.envelope import Envelope, Page, ok, paged
+from app.schemas.uuid_hex import UUIDHex
 from app.services.schedule_deletion import (
     TerminalScheduleDeletionRequest,
     update_terminal_deletion,
@@ -30,13 +30,13 @@ STATUS_NAMES: dict[int, ScheduleStatus] = {0: "pending", 1: "converted"}
 
 
 class ScheduleResponse(BaseModel):
-    id: uuid.UUID
+    id: UUIDHex
     remind_date: date
     title: str
     content: dict | None
     content_text: str
     status: ScheduleStatus
-    converted_entry_id: uuid.UUID | None
+    converted_entry_id: UUIDHex | None
     converted_at: datetime | None
     client_updated_at: datetime
     deleted_at: datetime | None
@@ -99,7 +99,7 @@ async def list_schedules(
 # Future static /sync routes must be registered before this UUID detail route.
 @router.get("/{schedule_id}")
 async def get_schedule(
-    schedule_id: uuid.UUID,
+    schedule_id: UUIDHex,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Envelope[ScheduleResponse]:
@@ -114,7 +114,7 @@ async def get_schedule(
 
 @router.put("/{schedule_id}", response_model=Envelope[ScheduleResponse])
 async def put_schedule(
-    schedule_id: uuid.UUID,
+    schedule_id: UUIDHex,
     body: PendingScheduleRequest | TerminalScheduleDeletionRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

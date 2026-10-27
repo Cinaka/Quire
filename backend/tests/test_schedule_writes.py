@@ -142,7 +142,7 @@ def conflict(response, reason):
 def test_create_derives_text_and_keeps_date_client_uuid_and_server_timestamps():
     with api_client() as (client, db):
         data = success(client.put(URL, json=payload(content_text="伪造摘要")))
-        assert data["id"] == str(ID) and data["remind_date"] == "2026-10-09"
+        assert data["id"] == ID.hex and data["remind_date"] == "2026-10-09"
         assert data["status"] == "pending" and data["converted_entry_id"] is None
         assert data["content"] == DOC and data["content_text"] == "正文"
         assert data["client_updated_at"] == AT.isoformat()
@@ -220,7 +220,7 @@ def test_converted_source_cannot_be_changed_or_reset_by_newer_pending_snapshot()
         current = conflict(client.put(URL, json=payload(
             title="不覆盖", client_updated_at="2026-10-08T11:00:00.123Z", deleted_at=AT.isoformat(),
         )), "terminal")
-        assert current["status"] == "converted" and current["converted_entry_id"] == str(ID)
+        assert current["status"] == "converted" and current["converted_entry_id"] == ID.hex
         row = db.session.get(Schedule, ID)
         assert row.title == "预简" and row.deleted_at is None and db.commits == 0
 

@@ -2,7 +2,6 @@
 
 import json
 import unicodedata
-import uuid
 from typing import Literal
 
 from fastapi import HTTPException
@@ -14,6 +13,7 @@ from app.models.diary_entry import DiaryEntry
 from app.models.media import Media
 from app.models.schedule import Schedule
 from app.models.tag import Tag
+from app.schemas.uuid_hex import UUIDHex
 
 
 def name_key(value):
@@ -30,8 +30,8 @@ def proof_key(value):
 class IndependentTagCopy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    from_tag_id: uuid.UUID
-    id: uuid.UUID
+    from_tag_id: UUIDHex
+    id: UUIDHex
     name: str = Field(min_length=1, max_length=32)
     color: str | None = Field(max_length=16)
 
@@ -53,7 +53,7 @@ class IndependentTagCopy(BaseModel):
 class IndependentTagCopiesRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    plan_id: uuid.UUID
+    plan_id: UUIDHex
     choice: Literal["cloud-source-use-diary", "cloud-source-keep-diary"]
     confirmed: bool = Field(strict=True)
     expected_resources: dict

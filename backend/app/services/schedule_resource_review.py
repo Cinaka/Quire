@@ -4,10 +4,11 @@ import hashlib
 import os
 import re
 import stat
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+from app.core.uuid_hex import parse_uuid
 
 MAX_RESOURCE_IDS = 64
 MAX_PROOF_BYTES = 16 * 1024 * 1024
@@ -19,7 +20,7 @@ MIME_SUFFIX = {
 
 def current_resource_ids(content, tag_ids):
     """Keep v1 JSON read-only; never chase URLs or guess references in unknown versions."""
-    tags = {uuid.UUID(str(value)) for value in tag_ids}
+    tags = {parse_uuid(value, require_v7=True) for value in tag_ids}
     if any(value.version != 7 for value in tags) or len(tags) > MAX_RESOURCE_IDS:
         raise ValueError("unsupported resource identities")
     media = set()
@@ -44,9 +45,7 @@ def current_resource_ids(content, tag_ids):
                     src = attrs.get("src") if isinstance(attrs, dict) else None
                     if not isinstance(src, str) or not src.startswith("local://media/"):
                         raise ValueError("external image")
-                    ident = uuid.UUID(src[len("local://media/"):])
-                    if ident.version != 7 or src != f"local://media/{ident}":
-                        raise ValueError("invalid image identity")
+                    ident = parse_uuid(src[len("local://media/"):], require_v7=True)
                     media.add(ident)
                     if len(media) > MAX_RESOURCE_IDS:
                         raise ValueError("resource limit")
@@ -69,11 +68,17 @@ def stored_relative_path(url, prefix, ident, *, thumbnail=False):
     """Only the existing server-generated ID path, never a caller-supplied filesystem path."""
     if not isinstance(url, str) or not url:
         return None
-    stem = f"{ident}_thumb" if thumbnail else str(ident)
-    expected = f"{prefix.rstrip('/')}/{ident.hex[:4]}/{stem}"
-    for suffix, mime in MIME_SUFFIX.items():
-        if url == expected + suffix:
-            return Path(ident.hex[:4]) / (stem + suffix), mime
+    try:
+        ident = parse_uuid(ident, require_v7=True)
+    except ValueError:
+        return None
+    # Exact current hex32 or legacy canonical filename only. Never rename or guess a path.
+    for spelling in (ident.hex, str(ident)):
+        stem = f"{spelling}_thumb" if thumbnail else spelling
+        expected = f"{prefix.rstrip('/')}/{ident.hex[:4]}/{stem}"
+        for suffix, mime in MIME_SUFFIX.items():
+            if url == expected + suffix:
+                return Path(ident.hex[:4]) / (stem + suffix), mime
     return None
 
 
