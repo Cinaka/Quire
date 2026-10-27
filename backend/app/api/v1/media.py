@@ -1,4 +1,3 @@
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -20,6 +19,7 @@ from app.db.session import get_db
 from app.models.media import Media
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
+from app.schemas.uuid_hex import UUIDHex
 from app.services.schedule_resource_review import (
     probe_image,
     read_expected_image,
@@ -39,8 +39,8 @@ MAX_BYTES = 10 * 1024 * 1024
 
 
 class MediaResponse(BaseModel):
-    id: uuid.UUID
-    entry_id: uuid.UUID | None
+    id: UUIDHex
+    entry_id: UUIDHex | None
     sort_order: int
     width: int | None
     height: int | None
@@ -85,6 +85,20 @@ def stored_media_files_exist(row: Media) -> bool:
     return len(paths) == len(public_paths) and all(path.is_file() for path in paths)
 
 
+def upload_target(media_id, mime, *, thumbnail=False, existing_url=""):
+    """New files use hex32; a validated existing row keeps its exact stored path."""
+    if existing_url:
+        mapped = stored_relative_path(
+            existing_url, settings.MEDIA_PUBLIC_PREFIX, media_id, thumbnail=thumbnail,
+        )
+        if mapped is None or mapped[1] != mime:
+            raise HTTPException(409, "图片格式或已有路径不一致，未覆盖")
+        return mapped[0].name, existing_url
+    stem = media_id.hex + ("_thumb" if thumbnail else "")
+    name = stem + MIME_SUFFIX[mime]
+    return name, f"{settings.MEDIA_PUBLIC_PREFIX.rstrip('/')}/{media_id.hex[:4]}/{name}"
+
+
 def to_response(row: Media) -> MediaResponse:
     return MediaResponse(
         id=row.id,
@@ -102,10 +116,10 @@ def to_response(row: Media) -> MediaResponse:
 
 @router.post("/{media_id}")
 async def upload_media(
-    media_id: uuid.UUID,
+    media_id: UUIDHex,
     file: UploadFile = File(...),
     thumb: UploadFile | None = File(default=None),
-    entry_id: uuid.UUID | None = Form(default=None),
+    entry_id: UUIDHex | None = Form(default=None),
     sort_order: int = Form(default=0),
     width: int | None = Form(default=None),
     height: int | None = Form(default=None),
@@ -148,18 +162,19 @@ async def upload_media(
         if len(data) > MAX_BYTES:
             raise HTTPException(413, "图片不能超过 10 MB")
         mime = validate_image_bytes(data, file.content_type)
-        files = {f"{media_id}{MIME_SUFFIX[mime]}": data}
+        name, url = upload_target(media_id, mime, existing_url=existing.url if existing else "")
+        files = {name: data}
         thumb_url = existing.thumb_url or "" if existing else ""
         if thumb is not None:
             thumb_data = await thumb.read(MAX_BYTES + 1)
             if len(thumb_data) > MAX_BYTES:
                 raise HTTPException(413, "缩略图不能超过 10 MB")
             thumb_mime = validate_image_bytes(thumb_data, thumb.content_type)
-            files[f"{media_id}_thumb{MIME_SUFFIX[thumb_mime]}"] = thumb_data
-            thumb_url = (f"{settings.MEDIA_PUBLIC_PREFIX}/{media_id.hex[:4]}"
-                         f"/{media_id}_thumb{MIME_SUFFIX[thumb_mime]}")
+            thumb_name, thumb_url = upload_target(
+                media_id, thumb_mime, thumbnail=True, existing_url=thumb_url,
+            )
+            files[thumb_name] = thumb_data
 
-        url = f"{settings.MEDIA_PUBLIC_PREFIX}/{media_id.hex[:4]}/{media_id}{MIME_SUFFIX[mime]}"
         if existing and existing.url and existing.url != url:
             raise HTTPException(409, "图片格式与已有记录不一致，未覆盖")
         if existing and existing.thumb_url and thumb_url != existing.thumb_url:
@@ -230,7 +245,7 @@ async def upload_media(
 
 @router.get("/{media_id}/{variant}")
 async def private_media(
-    media_id: uuid.UUID,
+    media_id: UUIDHex,
     variant: Literal["original", "thumbnail"],
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -262,7 +277,7 @@ async def private_media(
 
 @router.get("")
 async def list_media(
-    entry_id: uuid.UUID | None = None,
+    entry_id: UUIDHex | None = None,
     since: datetime | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -280,7 +295,7 @@ async def list_media(
 
 @router.delete("/{media_id}")
 async def delete_media(
-    media_id: uuid.UUID,
+    media_id: UUIDHex,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Envelope[None]:

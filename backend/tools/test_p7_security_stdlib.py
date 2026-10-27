@@ -227,6 +227,28 @@ class StorageTests(unittest.TestCase):
             reserve_bytes=kw.get('reserve', 1)
         )
 
+    def test_hex32_original_and_thumbnail_publish_and_retry(self):
+        files = {f'{ID.hex}.png': PNG, f'{ID.hex}_thumb.png': PNG}
+        created = publish.publish_media(
+            self.root, self.folder, files, allow_existing=False, reserve_bytes=1,
+        )
+        self.assertEqual(len(created), 2)
+        for name in files:
+            self.assertEqual((Path(self.root) / self.folder / name).read_bytes(), PNG)
+            self.assertEqual(publish.stored_file_size(self.root, self.folder, name), len(PNG))
+        self.assertEqual(publish.publish_media(
+            self.root, self.folder, files, allow_existing=True, reserve_bytes=1,
+        ), [])
+
+    def test_filename_validation_rejects_unsafe_or_guessed_spellings(self):
+        for name in [
+            '-' * 36 + '.png', ID.hex.upper() + '.png', '{' + str(ID) + '}.png',
+            'urn:uuid:' + str(ID) + '.png', '../' + ID.hex + '.png',
+            ID.hex + '.png?x=1', ID.hex + '.png#x', ID.hex + '_thumb_thumb.png',
+        ]:
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                publish.stored_file_size(self.root, self.folder, name)
+
     def test_atomic_creation_and_bytes(self):
         self.assertEqual(len(self.put()), 1)
         self.assertEqual((Path(self.root) / self.folder / self.name).read_bytes(), PNG)
@@ -385,6 +407,37 @@ class HandlerTests(unittest.TestCase):
         )
         return item
 
+    def test_new_upload_uses_hex32_for_both_files(self):
+        result = self.upload(DB(), thumb=PNG)
+        self.assertEqual(result.url, f'/media/{ID.hex[:4]}/{ID.hex}.png')
+        self.assertEqual(result.thumb_url, f'/media/{ID.hex[:4]}/{ID.hex}_thumb.png')
+        for name in [f'{ID.hex}.png', f'{ID.hex}_thumb.png']:
+            self.assertEqual((Path(self.temp.name) / ID.hex[:4] / name).read_bytes(), PNG)
+        self.assertFalse((Path(self.temp.name) / ID.hex[:4] / f'{ID}.png').exists())
+
+    def test_legacy_partial_repair_keeps_paths_and_original_bytes(self):
+        item = self.seed(row(thumb=True))
+        result = self.upload(DB([item]), thumb=PNG)
+        self.assertEqual((result.url, result.thumb_url), (item.url, item.thumb_url))
+        for name in [f'{ID}.png', f'{ID}_thumb.png']:
+            self.assertEqual((Path(self.temp.name) / ID.hex[:4] / name).read_bytes(), PNG)
+        self.assertFalse((Path(self.temp.name) / ID.hex[:4] / f'{ID.hex}.png').exists())
+
+    def test_new_upload_retry_does_not_replace_bytes(self):
+        db = DB()
+        self.upload(db)
+        self.upload(db, PNG + b'different')
+        self.assertEqual(db.commits, 1)
+        self.assertEqual((Path(self.temp.name) / ID.hex[:4] / f'{ID.hex}.png').read_bytes(), PNG)
+
+    def test_target_rejects_foreign_path_or_changed_mime(self):
+        for value in [f'/media/{ID.hex[:4]}/{B.hex}.png',
+                      f'/media/{ID.hex[:4]}/{ID.hex}.jpg',
+                      f'/media/{ID.hex[:4]}/{ID.hex}.png?x=1']:
+            with self.subTest(value=value), self.assertRaises(HTTPException) as caught:
+                self.h.upload_target(ID, 'image/png', existing_url=value)
+            self.assertEqual(caught.exception.status_code, 409)
+
     def test_success_and_account_lock_first(self):
         db = DB()
         result = self.upload(db)
@@ -408,7 +461,7 @@ class HandlerTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as caught:
             self.upload(db)
         self.assertEqual(caught.exception.status_code, 409)
-        self.assertFalse((Path(self.temp.name) / ID.hex[:4] / f'{ID}.png').exists())
+        self.assertFalse((Path(self.temp.name) / ID.hex[:4] / f'{ID.hex}.png').exists())
 
     def test_uncertain_commit_retains_bytes_and_does_not_report_success(self):
         db = DB()
@@ -416,7 +469,7 @@ class HandlerTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as caught:
             self.upload(db)
         self.assertEqual(caught.exception.status_code, 503)
-        self.assertTrue((Path(self.temp.name) / ID.hex[:4] / f'{ID}.png').exists())
+        self.assertTrue((Path(self.temp.name) / ID.hex[:4] / f'{ID.hex}.png').exists())
 
     def test_quota_ignores_forged_size_and_counts_thumbnail(self):
         item = self.seed(row(thumb=True, size=-999999))

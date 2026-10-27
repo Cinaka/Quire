@@ -1,4 +1,4 @@
-"""POSIX no-replace publishing. Existing deterministic P4 paths stay unchanged."""
+"""POSIX no-replace publishing for hex32 files and exact legacy UUID filenames."""
 
 import fcntl
 import os
@@ -30,7 +30,11 @@ def media_directory(root: str, folder: str):
 
 
 def _name(name: str) -> None:
-    if re.fullmatch(r"[0-9a-f-]{36}(?:_thumb)?\.(?:jpg|png|webp|gif)", name) is None:
+    pattern = (
+        r"(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+        r"[0-9a-f]{4}-[0-9a-f]{12})(?:_thumb)?\.(?:jpg|png|webp|gif)"
+    )
+    if re.fullmatch(pattern, name) is None:
         raise ValueError("invalid media filename")
 
 

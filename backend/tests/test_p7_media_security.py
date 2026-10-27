@@ -47,6 +47,9 @@ class AsyncTestSession:
     def add(self, row):
         self.session.add(row)
 
+    async def delete(self, row):
+        self.session.delete(row)
+
     async def flush(self):
         if self.fail_flush:
             raise RuntimeError("test flush failure")
@@ -138,17 +141,17 @@ def api(tmp_path, monkeypatch):
         engine.dispose()
 
 
-def upload(api, *, ident=ID, headers=None, data=PNG, thumb=False):
+def upload(api, *, ident=ID, headers=None, data=PNG, thumb=False, fields=None):
     files = {"file": ("public.png", data, "image/png")}
     if thumb:
         files["thumb"] = ("thumb.png", PNG, "image/png")
     return api.client.post(
-        f"/api/v1/media/{ident}", headers=headers or api.a, files=files,
+        f"/api/v1/media/{ident}", headers=headers or api.a, files=files, data=fields or {},
     )
 
 
 def original(api, ident=ID):
-    return api.root / ident.hex[:4] / f"{ident}.png"
+    return api.root / ident.hex[:4] / f"{ident.hex}.png"
 
 
 def test_upload_owner_get_and_private_headers(api):
@@ -194,7 +197,7 @@ def test_complete_same_owner_retry_does_not_overwrite(api):
 
 def test_partial_repair_cannot_replace_existing_original(api):
     assert upload(api, thumb=True).status_code == 200
-    (api.root / ID.hex[:4] / f"{ID}_thumb.png").unlink()
+    (api.root / ID.hex[:4] / f"{ID.hex}_thumb.png").unlink()
     assert upload(api, data=PNG + b"different", thumb=True).status_code == 409
     assert original(api).read_bytes() == PNG
 
@@ -321,3 +324,77 @@ def test_real_jwt_rejects_revoked_version_or_missing_user(api, remove_user):
     assert response.json()["message"] == "登录已失效"
     assert api.db.session.get(Media, ID) is None
     assert not original(api).exists()
+
+
+@pytest.mark.parametrize("spelling", [ID.hex, str(ID), ID.hex.upper(), str(ID).upper()])
+def test_media_uuid32_upload_list_read_and_delete_aliases(api, spelling):
+    response = upload(api, ident=spelling, thumb=True, fields={"entry_id": str(OTHER).upper()})
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["id"] == ID.hex and data["entry_id"] == OTHER.hex
+    assert data["url"].endswith(f"/{ID.hex}.png")
+    assert data["thumb_url"].endswith(f"/{ID.hex}_thumb.png")
+    assert original(api).read_bytes() == PNG
+    assert not (api.root / ID.hex[:4] / f"{ID}.png").exists()
+    listing = api.client.get(
+        "/api/v1/media", params={"entry_id": str(OTHER)}, headers=api.a,
+    )
+    assert listing.status_code == 200, listing.text
+    assert [row["id"] for row in listing.json()["data"]] == [ID.hex]
+    for variant in ["original", "thumbnail"]:
+        result = api.client.get(f"/api/v1/media/{spelling}/{variant}", headers=api.a)
+        assert result.status_code == 200 and result.content == PNG
+    response = api.client.delete(f"/api/v1/media/{spelling}", headers=api.a)
+    assert response.status_code == 200, response.text
+    assert api.db.session.get(Media, ID) is None
+    assert not original(api).exists()
+    assert not (api.root / ID.hex[:4] / f"{ID.hex}_thumb.png").exists()
+
+
+@pytest.mark.parametrize("value", ["urn:uuid:" + str(ID), "{" + str(ID) + "}",
+                                   " " + ID.hex, ID.hex + " ", "bad"])
+def test_media_rejects_non_exact_uuid_inputs_without_writes(api, value):
+    response = upload(api, ident=value)
+    assert response.status_code == 422, response.text
+    response = upload(api, fields={"entry_id": value})
+    assert response.status_code == 422, response.text
+    response = api.client.get("/api/v1/media", params={"entry_id": value}, headers=api.a)
+    assert response.status_code == 422, response.text
+    response = api.client.get(f"/api/v1/media/{value}/original", headers=api.a)
+    assert response.status_code == 422, response.text
+    response = api.client.delete(f"/api/v1/media/{value}", headers=api.a)
+    assert response.status_code == 422, response.text
+    assert api.db.session.get(Media, ID) is None
+    assert not original(api).exists()
+
+
+@pytest.mark.parametrize("repair", [False, True])
+def test_legacy_media_paths_remain_readable_and_retry_keeps_exact_paths(api, repair):
+    from datetime import datetime, timezone
+
+    folder = api.root / ID.hex[:4]
+    folder.mkdir()
+    old_original = folder / f"{ID}.png"
+    old_thumbnail = folder / f"{ID}_thumb.png"
+    old_original.write_bytes(PNG)
+    if not repair:
+        old_thumbnail.write_bytes(PNG)
+    row = Media(
+        id=ID, user_id=A, entry_id=OTHER, sort_order=0, size=len(PNG),
+        url=f"/media/{ID.hex[:4]}/{ID}.png",
+        thumb_url=f"/media/{ID.hex[:4]}/{ID}_thumb.png",
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    api.db.session.add(row)
+    api.db.session.commit()
+    response = upload(api, ident=ID.hex, thumb=True)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["id"] == ID.hex
+    assert data["url"].endswith(f"/{ID}.png")
+    assert data["thumb_url"].endswith(f"/{ID}_thumb.png")
+    assert old_original.read_bytes() == old_thumbnail.read_bytes() == PNG
+    assert not original(api).exists()
+    for variant in ["original", "thumbnail"]:
+        result = api.client.get(f"/api/v1/media/{ID.hex}/{variant}", headers=api.a)
+        assert result.status_code == 200 and result.content == PNG
