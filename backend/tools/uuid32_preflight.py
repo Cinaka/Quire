@@ -1,7 +1,8 @@
 """Read-only UUID32 inventory/check. No DDL, DML, migration, file or ID rewriting.
 
 Default: print the reviewed column inventory, without loading .env or connecting.
-Explicit --check: read the configured MySQL metadata and aggregate integrity counts.
+Explicit --check: read MySQL metadata and aggregate integrity counts.
+Explicit --plan: SELECT metadata and print proposed SQL; NEVER execute that SQL.
 Do not pass a password/URL in argv. A read-only database account is recommended.
 """
 
@@ -14,16 +15,12 @@ from pathlib import Path
 # Script execution from backend/tools must still find the backend app package.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-UUID_COLUMNS = {
-    "users": ("id",),
-    "diary_entries": ("id", "user_id", "from_schedule_id"),
-    "tags": ("id", "user_id"),
-    "media": ("id", "user_id", "entry_id"),
-    "entry_tags": ("entry_id", "tag_id"),
-    "refresh_sessions": ("id", "user_id"),
-    "checkins": ("id", "user_id"),
-    "schedules": ("id", "user_id", "converted_entry_id"),
-}
+from app.core.uuid_storage_plan import (  # noqa: E402
+    UUID_COLUMNS,
+    MigrationPlanError,
+    build_storage_plan,
+)
+
 # These referential checks do not assume physical FK constraints exist in MySQL.
 # Some missing diary references may be intentional tombstone/purge states: report,
 # never repair or delete anything automatically.
@@ -97,21 +94,56 @@ async def check_database():
         await engine.dispose()
 
 
+async def plan_database(direction):
+    from dataclasses import asdict
+
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.core.config import settings
+    from app.db.uuid_storage_inspection import inspect_uuid_storage
+
+    if make_url(settings.database_url).get_backend_name() != "mysql":
+        raise MigrationPlanError("UUID32 planner requires MySQL")
+    engine = create_async_engine(settings.database_url, echo=False)
+    try:
+        async with engine.connect() as connection:
+            state = await connection.run_sync(inspect_uuid_storage)
+        plan = build_storage_plan(state, direction)
+        return {
+            "read_only": True,
+            "mode": "sql-preview-only",
+            "executable_cutover": False,
+            "warning": "No row validation, backup verification or SQL execution performed",
+            **asdict(plan),
+        }
+    finally:
+        await engine.dispose()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true", help="Run SELECT-only MySQL checks")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--check", action="store_true", help="Run SELECT-only MySQL checks")
+    group.add_argument("--plan", choices=("upgrade", "downgrade"),
+                       help="SELECT metadata and print proposed SQL; NEVER execute it")
     args = parser.parse_args()
-    if not args.check:
+    if not args.check and not args.plan:
         print(json.dumps({"mode": "inventory-only", "columns": UUID_COLUMNS}, indent=2))
         return 0
     try:
-        report = asyncio.run(check_database())
+        report = asyncio.run(plan_database(args.plan) if args.plan else check_database())
+    except MigrationPlanError as error:
+        print(f"UUID32 SQL preview refused: {error}", file=sys.stderr)
+        return 1
     except Exception:
         # Do not print connection URL, SQL parameters, account identifiers or credentials.
         print("Read-only UUID32 check failed; verify connectivity and SELECT permissions.",
               file=sys.stderr)
         return 1
     print(json.dumps(report, indent=2))
+    if args.plan:
+        return 0
     # A successful scan is not proof of cross-store migration safety.
     return int(any(item["state"] in {"missing", "unexpected"}
                    or item.get("invalid_count", 0) for item in report["columns"]))
