@@ -7,7 +7,7 @@ well-defined. API text output is controlled separately by schemas/uuid_hex.py.
 import uuid
 
 from sqlalchemy import CHAR, TypeDecorator
-from sqlalchemy.dialects.mysql import CHAR as MySQLChar
+from sqlalchemy.dialects.mysql import CHAR as MYSQL_CHAR
 
 from app.core.uuid_hex import parse_uuid, uuid_to_hex
 
@@ -18,7 +18,7 @@ class UUIDHexText(TypeDecorator):
 
     def load_dialect_impl(self, dialect):
         if dialect.name == "mysql":
-            return dialect.type_descriptor(MySQLChar(32, charset="ascii", collation="ascii_bin"))
+            return dialect.type_descriptor(MYSQL_CHAR(32, charset="ascii", collation="ascii_bin"))
         return dialect.type_descriptor(CHAR(32))
 
     def process_bind_param(self, value, dialect):

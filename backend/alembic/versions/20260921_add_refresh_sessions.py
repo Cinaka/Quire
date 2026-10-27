@@ -3,9 +3,10 @@
 Revision ID: p2_refresh_sessions
 Revises: p2_token_version
 """
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import mysql
+
+from alembic import op
 
 revision = "p2_refresh_sessions"
 down_revision = "p2_token_version"

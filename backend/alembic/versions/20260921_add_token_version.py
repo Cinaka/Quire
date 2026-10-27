@@ -3,8 +3,9 @@
 Revision ID: p2_token_version
 Revises: 205a34a57552
 """
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "p2_token_version"
 down_revision = "205a34a57552"
@@ -13,7 +14,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("users", sa.Column("token_version", sa.Integer(), nullable=False, server_default="0"))
+    op.add_column(
+        "users",
+        sa.Column("token_version", sa.Integer(), nullable=False, server_default="0"),
+    )
 
 
 def downgrade() -> None:

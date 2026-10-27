@@ -5,8 +5,9 @@ Revises: p2_refresh_sessions
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import mysql
+
+from alembic import op
 
 revision = "p3_checkins"
 down_revision = "p2_refresh_sessions"

@@ -204,10 +204,19 @@ def test_mysql_storage_upgrade_and_downgrade_preserve_identity_and_watermarks():
     asyncio.run(run_rehearsal())
 
 
-async def run_empty_cutover_rehearsal():
+def load_empty_cutover_revision():
     import importlib.util
     from pathlib import Path
 
+    path = (Path(__file__).resolve().parents[1] / "alembic/versions"
+            / "20261026_uuid32_empty_database.py")
+    spec = importlib.util.spec_from_file_location("quire_empty_cutover_rehearsal", path)
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
+    return revision
+
+
+async def run_empty_cutover_rehearsal():
     from sqlalchemy import Column, MetaData, Table, select
 
     from app.db.uuid_hex import UUIDHexText
@@ -219,11 +228,7 @@ async def run_empty_cutover_rehearsal():
     if (url.drivername != "mysql+asyncmy"
             or not re.fullmatch(r"quire_uuid32_test_[a-z0-9_]+", url.database or "")):
         raise AssertionError("Refusing non-disposable MySQL database")
-    path = (Path(__file__).resolve().parents[1] / "alembic/versions"
-            / "20261026_uuid32_empty_database.py")
-    spec = importlib.util.spec_from_file_location("quire_empty_cutover_rehearsal", path)
-    revision = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(revision)
+    revision = await asyncio.to_thread(load_empty_cutover_revision)
     engine = create_async_engine(url, echo=False)
     try:
         async with engine.connect() as connection:

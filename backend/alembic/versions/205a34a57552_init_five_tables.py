@@ -5,17 +5,18 @@ Revises:
 Create Date: 2026-08-19 15:43:27.412883
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import mysql
 
+from alembic import op
+
 # revision identifiers, used by Alembic.
 revision: str = '205a34a57552'
-down_revision: Union[str, Sequence[str], None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -34,15 +35,32 @@ def upgrade() -> None:
     sa.Column('from_schedule_id', sa.BINARY(16), nullable=True),
     sa.Column('client_updated_at', mysql.DATETIME(fsp=3), nullable=True),
     sa.Column('deleted_at', mysql.DATETIME(fsp=3), nullable=True),
-    sa.Column('created_at', mysql.DATETIME(fsp=3), server_default=sa.text('CURRENT_TIMESTAMP(3)'), nullable=False),
-    sa.Column('updated_at', mysql.DATETIME(fsp=3), server_default=sa.text('CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)'), nullable=False),
+    sa.Column(
+        'created_at',
+        mysql.DATETIME(fsp=3),
+        server_default=sa.text('CURRENT_TIMESTAMP(3)'),
+        nullable=False,
+    ),
+    sa.Column(
+        'updated_at',
+        mysql.DATETIME(fsp=3),
+        server_default=sa.text('CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)'),
+        nullable=False,
+    ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('from_schedule_id', name='uk_from_schedule'),
     mysql_charset='utf8mb4',
     mysql_collate='utf8mb4_0900_ai_ci',
     mysql_engine='InnoDB'
     )
-    op.create_index('ft_content', 'diary_entries', ['title', 'content_text'], unique=False, mysql_prefix='FULLTEXT', mysql_with_parser='ngram')
+    op.create_index(
+        'ft_content',
+        'diary_entries',
+        ['title', 'content_text'],
+        unique=False,
+        mysql_prefix='FULLTEXT',
+        mysql_with_parser='ngram',
+    )
     op.create_index('idx_user_date', 'diary_entries', ['user_id', 'entry_date'], unique=False)
     op.create_index('idx_user_updated', 'diary_entries', ['user_id', 'updated_at'], unique=False)
     op.create_table('entry_tags',
@@ -64,7 +82,12 @@ def upgrade() -> None:
     sa.Column('height', sa.Integer(), nullable=True),
     sa.Column('size', sa.BigInteger(), nullable=True),
     sa.Column('sort_order', sa.Integer(), server_default=sa.text('0'), nullable=False),
-    sa.Column('created_at', mysql.DATETIME(fsp=3), server_default=sa.text('CURRENT_TIMESTAMP(3)'), nullable=False),
+    sa.Column(
+        'created_at',
+        mysql.DATETIME(fsp=3),
+        server_default=sa.text('CURRENT_TIMESTAMP(3)'),
+        nullable=False,
+    ),
     sa.PrimaryKeyConstraint('id'),
     mysql_charset='utf8mb4',
     mysql_collate='utf8mb4_0900_ai_ci',
@@ -76,7 +99,12 @@ def upgrade() -> None:
     sa.Column('user_id', sa.BINARY(16), nullable=False),
     sa.Column('name', sa.String(length=32), nullable=False),
     sa.Column('color', sa.String(length=16), nullable=True),
-    sa.Column('created_at', mysql.DATETIME(fsp=3), server_default=sa.text('CURRENT_TIMESTAMP(3)'), nullable=False),
+    sa.Column(
+        'created_at',
+        mysql.DATETIME(fsp=3),
+        server_default=sa.text('CURRENT_TIMESTAMP(3)'),
+        nullable=False,
+    ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('user_id', 'name', name='uk_user_name'),
     mysql_charset='utf8mb4',
@@ -91,8 +119,18 @@ def upgrade() -> None:
     sa.Column('nickname', sa.String(length=64), nullable=True),
     sa.Column('avatar', sa.String(length=512), nullable=True),
     sa.Column('timezone', sa.String(length=64), server_default='Asia/Shanghai', nullable=False),
-    sa.Column('created_at', mysql.DATETIME(fsp=3), server_default=sa.text('CURRENT_TIMESTAMP(3)'), nullable=False),
-    sa.Column('updated_at', mysql.DATETIME(fsp=3), server_default=sa.text('CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)'), nullable=False),
+    sa.Column(
+        'created_at',
+        mysql.DATETIME(fsp=3),
+        server_default=sa.text('CURRENT_TIMESTAMP(3)'),
+        nullable=False,
+    ),
+    sa.Column(
+        'updated_at',
+        mysql.DATETIME(fsp=3),
+        server_default=sa.text('CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)'),
+        nullable=False,
+    ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('email'),
     sa.UniqueConstraint('phone'),
@@ -114,6 +152,11 @@ def downgrade() -> None:
     op.drop_table('entry_tags')
     op.drop_index('idx_user_updated', table_name='diary_entries')
     op.drop_index('idx_user_date', table_name='diary_entries')
-    op.drop_index('ft_content', table_name='diary_entries', mysql_prefix='FULLTEXT', mysql_with_parser='ngram')
+    op.drop_index(
+        'ft_content',
+        table_name='diary_entries',
+        mysql_prefix='FULLTEXT',
+        mysql_with_parser='ngram',
+    )
     op.drop_table('diary_entries')
     # ### end Alembic commands ###
