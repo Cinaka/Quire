@@ -11,6 +11,7 @@ from app.api.v1.entries import EntryRequest, to_response, upsert_entry
 from app.core.media_storage import media_disk_paths, remove_media_paths
 from app.core.security import get_current_user
 from app.core.time import utcnow
+from app.core.uuid_hex import uuid_to_hex
 from app.db.session import get_db
 from app.models.diary_entry import DiaryEntry
 from app.models.entry_tag import EntryTag
@@ -18,6 +19,7 @@ from app.models.media import Media
 from app.models.tag import Tag
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
+from app.schemas.uuid_hex import UUIDHex
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 SUFFIX_MIME = {
@@ -30,19 +32,19 @@ SUFFIX_MIME = {
 
 
 class SyncEntry(EntryRequest):
-    id: uuid.UUID
+    id: UUIDHex
 
 
 class SyncTag(BaseModel):
-    id: uuid.UUID
+    id: UUIDHex
     name: str = Field(min_length=1, max_length=32)
     color: str | None = None
     created_at: datetime
 
 
 class SyncMedia(BaseModel):
-    id: uuid.UUID
-    entry_id: uuid.UUID | None
+    id: UUIDHex
+    entry_id: UUIDHex | None
     sort_order: int = 0
     width: int | None = None
     height: int | None = None
@@ -78,9 +80,9 @@ async def push_tag(db: AsyncSession, user: User, item: SyncTag) -> dict:
     )
     if duplicate is not None and duplicate.id != item.id:
         return {
-            "id": str(item.id),
+            "id": uuid_to_hex(item.id),
             "status": "error",
-            "message": f"duplicate_tag:{duplicate.id}",
+            "message": f"duplicate_tag:{uuid_to_hex(duplicate.id)}",
         }
     if existing is None:
         db.add(Tag(id=item.id, user_id=user.id, name=item.name, color=item.color))
@@ -92,7 +94,7 @@ async def push_tag(db: AsyncSession, user: User, item: SyncTag) -> dict:
             query = select(EntryTag.entry_id).where(EntryTag.tag_id == item.id)
             linked_ids = set((await db.scalars(query)).all())
             await touch_entries(db, user.id, linked_ids)
-    return {"id": str(item.id), "status": "applied"}
+    return {"id": uuid_to_hex(item.id), "status": "applied"}
 
 
 async def push_media(
@@ -109,7 +111,7 @@ async def push_media(
         if existing is not None:
             await db.delete(existing)
         await touch_entries(db, user.id, {old_entry_id} if old_entry_id else set())
-        return {"id": str(item.id), "status": "applied"}, paths
+        return {"id": uuid_to_hex(item.id), "status": "applied"}, paths
     if existing is None:
         existing = Media(
             id=item.id,
@@ -126,7 +128,7 @@ async def push_media(
     existing.size = item.size
     linked_ids = {value for value in (old_entry_id, item.entry_id) if value}
     await touch_entries(db, user.id, linked_ids)
-    return {"id": str(item.id), "status": "applied"}, []
+    return {"id": uuid_to_hex(item.id), "status": "applied"}, []
 
 
 @router.post("/push")
@@ -148,13 +150,13 @@ async def push(
             )
             entries.append(
                 {
-                    "id": str(item.id),
+                    "id": uuid_to_hex(item.id),
                     "status": "stale",
                     "server_client_updated_at": server_updated_at,
                 }
             )
         else:
-            entries.append({"id": str(item.id), "status": "applied"})
+            entries.append({"id": uuid_to_hex(item.id), "status": "applied"})
     for item in body.tags:
         tags.append(await push_tag(db, user, item))
     for item in body.media_meta:
@@ -176,7 +178,7 @@ async def push(
 @router.get("/changes")
 async def changes(
     since: datetime | None = None,
-    after_id: uuid.UUID | None = None,
+    after_id: UUIDHex | None = None,
     until: datetime | None = None,
     limit: int = Query(200, ge=1, le=500),
     user: User = Depends(get_current_user),
@@ -236,10 +238,10 @@ async def changes(
 
     last = entries[-1] if entries else None
     cursor_time = last.updated_at if has_more and last is not None else high_water
-    cursor_id = str(last.id) if has_more and last is not None else None
+    cursor_id = uuid_to_hex(last.id) if has_more and last is not None else None
     tag_items = [
         {
-            "id": row.id,
+            "id": uuid_to_hex(row.id),
             "name": row.name,
             "color": row.color,
             "created_at": row.created_at,
@@ -248,8 +250,8 @@ async def changes(
     ]
     media_items = [
         {
-            "id": row.id,
-            "entry_id": row.entry_id,
+            "id": uuid_to_hex(row.id),
+            "entry_id": uuid_to_hex(row.entry_id) if row.entry_id is not None else None,
             "sort_order": row.sort_order,
             "width": row.width,
             "height": row.height,

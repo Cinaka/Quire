@@ -76,7 +76,7 @@ def test_known_terminal_snapshot_is_repeatable_private_and_read_only():
         data = success(client.get(URL))
         assert data["read_only"] and data["reviewable"] and data["receipt_known"]
         assert data["reason"] == "terminal_review" and data["entry_state"] == "active"
-        assert data["entry"]["id"] == data["entry"]["from_schedule_id"] == str(ID)
+        assert data["entry"]["id"] == data["entry"]["from_schedule_id"] == ID.hex
         assert_review_private_fields(data)
         assert "created_at" in data["schedule"] and "created_at" in data["entry"]
         assert success(client.get(URL)) == data

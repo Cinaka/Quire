@@ -90,7 +90,7 @@ def test_conversion_creates_stable_text_entry_and_source_receipt_in_one_commit()
     with client_fixture([stored()]) as (client, db):
         data = converted(client.post(URL, json=request(content_text="伪造索引", sort_order=7)))
         assert data["created"] and data["entry_state"] == "active" and db.commits == 1
-        assert data["entry"]["id"] == data["entry"]["from_schedule_id"] == str(ID)
+        assert data["entry"]["id"] == data["entry"]["from_schedule_id"] == ID.hex
         assert data["entry"]["content"] == DOC and data["entry"]["content_text"] == "正文"
         assert data["entry"]["tag_ids"] == [] and data["entry"]["mood"] is None
         assert data["entry"]["sort_order"] == 7
@@ -133,7 +133,8 @@ def test_retry_preserves_later_diary_text_date_images_metadata_and_tags():
         db.session.commit()
         data = converted(client.post(URL, json=request()))
         assert data["entry"]["title"] == "后来编辑" and data["entry"]["entry_date"] == "2026-10-07"
-        assert data["entry"]["mood"] == "好" and data["entry"]["tag_ids"] == [tag_id]
+        assert data["entry"]["mood"] == "好"
+        assert data["entry"]["tag_ids"] == [tag_id.replace("-", "")]
         assert data["entry"]["content"]["doc"]["content"][0]["type"] == "image"
         assert data["first_entry_date"] == "2026-10-09" and db.commits == 1
 

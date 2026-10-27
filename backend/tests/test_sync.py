@@ -80,7 +80,7 @@ def test_push_media_unlink_defers_files_until_after_commit(tmp_path, monkeypatch
 
     result, paths = asyncio.run(push_media(db, user, media_payload(None)))
 
-    assert result == {"id": str(MEDIA_ID), "status": "applied"}
+    assert result == {"id": MEDIA_ID.hex, "status": "applied"}
     db.delete.assert_awaited_once_with(row)
     db.execute.assert_awaited_once()
     assert original.exists()

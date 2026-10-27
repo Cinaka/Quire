@@ -13,6 +13,7 @@ from app.models.diary_entry import DiaryEntry
 from app.models.entry_tag import EntryTag
 from app.models.user import User
 from app.schemas.envelope import Envelope, Page, ok, paged
+from app.schemas.uuid_hex import UUIDHex
 
 router = APIRouter(prefix="/entries", tags=["entries"])
 
@@ -25,14 +26,14 @@ class EntryRequest(BaseModel):
     content_text: str = ""
     mood: str | None = None
     weather: str | None = None
-    tag_ids: list[uuid.UUID] = Field(default_factory=list)
-    from_schedule_id: uuid.UUID | None = None
+    tag_ids: list[UUIDHex] = Field(default_factory=list)
+    from_schedule_id: UUIDHex | None = None
     client_updated_at: datetime
     deleted_at: datetime | None = None
 
 
 class EntryResponse(EntryRequest):
-    id: uuid.UUID
+    id: UUIDHex
     created_at: datetime
     updated_at: datetime
 
@@ -106,7 +107,7 @@ async def list_entries(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     keyword: str | None = None,
-    tag_id: uuid.UUID | None = None,
+    tag_id: UUIDHex | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
     only_deleted: bool = False,
@@ -154,7 +155,7 @@ async def list_entries(
 
 @router.get("/{entry_id}")
 async def get_entry(
-    entry_id: uuid.UUID,
+    entry_id: UUIDHex,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Envelope[EntryResponse]:
@@ -171,7 +172,7 @@ async def get_entry(
 
 @router.put("/{entry_id}")
 async def put_entry(
-    entry_id: uuid.UUID,
+    entry_id: UUIDHex,
     body: EntryRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -187,7 +188,7 @@ async def put_entry(
 
 @router.delete("/{entry_id}")
 async def delete_entry(
-    entry_id: uuid.UUID,
+    entry_id: UUIDHex,
     body: dict,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

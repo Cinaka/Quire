@@ -15,7 +15,8 @@
 - 已新增可执行 Alembic revision：`uuid32_empty_v1`，前置版本 `p4_convert_receipts`。历史 revision 没有改写。
 - 已更新 Alembic 类型渲染及只读预览；预览调用实际冻结 revision 的规划函数，而不是旧的三阶段数据转换规划器。
 - 已接入认证链路：注册/登录/me 的 UserResponse、设备 SessionResponse 的 ID 使用 UUIDHex 显式序列化；生产 access/refresh 创建器的 sub、jti 输出小写 hex32。前端登录、注册、设备会话列表和撤销操作同步适配。
-- **仍未完成：** 日记/标签/同步/日程/媒体等其余接口、前端业务 ID 生成、媒体地址与各处校验、浏览器本地数据及备份处理的最终协调切换。当前不能宣称完整 B 方案已交付，不应部署到正式环境或重新积累正式业务数据。
+- 已接入日记、标签及通用同步接口：显式 UUID 输入、响应、关联 ID、同步确认与分页游标统一输出 hex32；保留内部 UUID 对象。
+- **仍未完成：** 日程和媒体其余接口、前端业务 ID 生成及完整接收链路、媒体地址与各处校验、浏览器本地数据及备份处理的最终协调切换。当前不能宣称完整 B 方案已交付，不应部署到正式环境或重新积累正式业务数据。
 
 内部 UUID 对象在 `str(value)` 时依然显示标准带横线形式，这是 Python 的对象表示，不代表数据库又存回了横线。当前数据库绑定明确使用 `.hex`；认证链路已显式输出 hex32，其余接口仍待改造。
 
@@ -155,3 +156,30 @@ npm run build
 ```
 
 Node ExperimentalWarning 不代表测试失败。构建需检查实际项目依赖及 Vue/TypeScript，不能用 15 项边界测试替代。
+
+
+## 日记、标签及通用同步边界
+
+本批不新增 Alembic revision，不改动目标数据库；无需再次升级数据库。
+
+- 日记的 id、tag_ids、from_schedule_id，标签 id，同步批次及其确认的 id、entry_id，以及 changes 的 cursor_id 统一输出小写 hex32。
+- 路径、标签查询条件和同步游标使用严格 UUIDHex 输入；精确32位和标准36位文本均表示同一个 UUID，URN、花括号、空白包装等非法输入返回422，不自动猜测修复。
+- 冲突提示里的 duplicate_tag ID 和标签重复提示也使用 hex32。同步 applied/stale/error 语义、游标时间与高水位、幂等规则不变。
+- 日程转换及只读核对内嵌的 EntryResponse 随日记 DTO 输出 hex32；日程自身响应和媒体下载/资源证明仍待后续统一，因此本批不是完整前后端可部署版本。
+- 不改写普通标题、正文、标签名、URL、图片内容、历史回执或浏览器数据；不通过全局替换横线来处理 UUID。
+- 已同步日程转换/核对及媒体同步的相关断言，安全、冲突和状态检查保持原样。
+
+用户反馈上一批完整后端测试为688 passed、14 skipped、3 warnings、863 subtests passed。
+14项跳过由专用 Redis/MySQL 环境或 HTTP 契约开关未配置导致，不代表那些集成测试已经验证。
+
+本批沙箱实际执行8项隔离 DTO 检查：从真实生产文件提取 DTO 类定义，使用真实 Pydantic/UUIDHex 验证嵌套序列化、严格输入、null 和普通文本保持不变。不导入路由/ORM，因此不能代替 HTTP、鉴权或数据库验收。
+新增 test_uuid_business_wire.py 测试真实 ASGI 路由，数据库及部分 upsert 依赖为模拟；沙箱缺少 FastAPI/SQLAlchemy 等依赖，未执行该文件或完整 pytest。
+
+本地从 backend 执行：
+
+```bash
+python -m pytest -q tests/test_uuid_business_schema.py tests/test_uuid_business_wire.py tests/test_sync.py tests/test_entry_sync.py tests/test_schedule_convert.py tests/test_schedule_review.py
+python -m pytest -q -rs
+```
+
+仍应等待前端生成/校验/同步、浏览器存储及备份、日程与媒体 UUID 边界整体协调完成后，才进行前后端端到端和部署验收。不要在此中间版本启动含旧离线队列的浏览器自动同步。

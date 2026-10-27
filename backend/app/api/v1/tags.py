@@ -1,4 +1,3 @@
-import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,10 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ids import new_id
 from app.core.security import get_current_user
+from app.core.uuid_hex import uuid_to_hex
 from app.db.session import get_db
 from app.models.tag import Tag
 from app.models.user import User
 from app.schemas.envelope import Envelope, ok
+from app.schemas.uuid_hex import UUIDHex
 
 router = APIRouter(prefix="/tags", tags=["tags"])
 
@@ -24,7 +25,7 @@ class TagRequest(BaseModel):
 
 
 class TagResponse(TagRequest):
-    id: uuid.UUID
+    id: UUIDHex
     created_at: datetime
 
 
@@ -44,7 +45,7 @@ async def list_tags(
 
 @router.put("/{tag_id}")
 async def put_tag(
-    tag_id: uuid.UUID,
+    tag_id: UUIDHex,
     body: TagRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -55,7 +56,7 @@ async def put_tag(
     tag = await db.scalar(select(Tag).where(Tag.id == tag_id, Tag.user_id == user.id))
     duplicate = await db.scalar(select(Tag).where(Tag.user_id == user.id, Tag.name == name))
     if duplicate is not None and duplicate.id != tag_id:
-        raise HTTPException(status_code=409, detail=f"标签已存在: {duplicate.id}")
+        raise HTTPException(status_code=409, detail=f"标签已存在: {uuid_to_hex(duplicate.id)}")
     if tag is None:
         tag = Tag(id=tag_id or new_id(), user_id=user.id, name=name, color=body.color)
         db.add(tag)
