@@ -165,6 +165,8 @@ function heldEntry(entry: Entry, held: Awaited<ReturnType<typeof protectedConver
 async function pushAll(context: SyncContext): Promise<{ serverTime: string; complete: boolean; hadWork: boolean }> {
   let serverTime = ""
   let hadWork = false
+  // A protected duplicate alias must wait for a later sync, not spin in this run.
+  const deferredTagIds = new Set<string>()
   for (;;) {
     await assertSyncContext(context)
     const protectedRows = await protectedConversions()
@@ -175,7 +177,8 @@ async function pushAll(context: SyncContext): Promise<{ serverTime: string; comp
       db.media.where("dirty").equals(1).toArray(),
     ])
     const entries = allEntries.filter((item) => !blocked.entry.has(item.id) && !heldEntry(item, protectedRows)).slice(0, BATCH)
-    const tags = allTags.filter((item) => !blocked.tag.has(item.id) && !protectedRows.tagIds.has(item.id)).slice(0, BATCH)
+    const tags = allTags.filter((item) => !blocked.tag.has(item.id)
+      && !protectedRows.tagIds.has(item.id) && !deferredTagIds.has(item.id)).slice(0, BATCH)
     const mediaMeta = allMedia.filter((item) => !blocked.media.has(item.id) && !protectedRows.entryIds.has(item.entryId) && !protectedRows.mediaIds.has(item.id)).slice(0, BATCH)
     if (!entries.length && !tags.length && !mediaMeta.length) {
       return { serverTime, complete: true, hadWork }
@@ -229,6 +232,7 @@ async function pushAll(context: SyncContext): Promise<{ serverTime: string; comp
     const sentMedia = new Map(outboundMedia.map((item) => [item.id, item]))
     let reconciledDuplicate = false
     let superseded = false
+    let deferredByProtection = false
 
     await db.transaction("rw", db.entries, db.tags, db.media, db.schedules, db.meta, async () => {
       await assertSyncContext(context)
@@ -259,7 +263,12 @@ async function pushAll(context: SyncContext): Promise<{ serverTime: string; comp
         }
       }
       for (const item of result.tags) {
-        if (!sentTags.has(item.id) || protectedNow.tagIds.has(item.id)) continue
+        if (!sentTags.has(item.id)) continue
+        if (protectedNow.tagIds.has(item.id)) {
+          deferredTagIds.add(item.id)
+          deferredByProtection = true
+          continue // Keep dirty and do not count a protected ACK as a failure.
+        }
         const local = await db.tags.get(item.id)
         if (!sameTagRevision(local, sentTags.get(item.id))) {
           superseded = true
@@ -270,7 +279,11 @@ async function pushAll(context: SyncContext): Promise<{ serverTime: string; comp
           await clearError("tag", item.id)
         } else {
           const duplicate = await reconcileDuplicateTag(item)
-          if (duplicate === "deferred") continue // 等待资源取舍不是失败，不累计至永久暂停。
+          if (duplicate === "deferred") {
+            deferredTagIds.add(item.id)
+            deferredByProtection = true
+            continue // 等待资源取舍不是失败，不累计至永久暂停。
+          }
           if (duplicate) {
             reconciledDuplicate = true
             await clearError("tag", item.id)
@@ -296,7 +309,7 @@ async function pushAll(context: SyncContext): Promise<{ serverTime: string; comp
       }
     })
 
-    const progressed = superseded || reconciledDuplicate
+    const progressed = superseded || reconciledDuplicate || deferredByProtection
       || result.entries.some((item) => item.status === "applied" || item.status === "stale")
       || result.tags.some((item) => item.status === "applied")
       || result.mediaMeta.some((item) => item.status === "applied")

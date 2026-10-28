@@ -217,9 +217,9 @@ test("conversion export remains backup-v3 compatible and maps sources on a copie
   assert.equal(result.created, false); assert.equal(result.entry.id, row.id)
   assert.equal((await queue(restored)).length, 1)
 })
-test("P2 protection sees new conversion candidates and later-added diary image references", async () => {
+for (const mediaId of ["019a0300123470008000000000000003", "019a0300-1234-7000-8000-000000000003"])
+test(`P2 protection sees new conversion candidates and later-added diary image references (${mediaId.length})`, async () => {
   const h = harness(); await h.db.schedules.put(due()); await h.repo.convert(ID, request())
-  const mediaId = "photo-id"
   await h.entryRepo.update(ID, { content: { schemaVersion: 1, doc: { type: "doc", content: [{ type: "image", attrs: { src: `local://media/${mediaId}` } }] } } })
   const protectedRows = await h.load("db/scheduleStateRepo.ts").protectedConversions()
   assert.equal(protectedRows.entryIds.has(ID), true); assert.equal(protectedRows.mediaIds.has(mediaId), true)

@@ -11,6 +11,7 @@ async function fixture(options = {}) {
   const h = setup({ "@/api/mappers": mappers, "@/api/endpoints": {
     pushBatch: async body => {
       sent.push(structuredClone(body))
+      assert.ok(sent.length <= 32, "unexpected unbounded sync retry loop")
       if (options.onPush) return options.onPush(body, h)
       return { serverTime: AT, entries: body.entries.map(r => ({ id: r.id, status: "applied" })),
         tags: body.tags.map(r => ({ id: r.id, status: "applied" })),
@@ -85,13 +86,19 @@ for (const status of ["applied", "error"]) test(`in-flight ${status} acknowledgm
   await h.db.tags.put(tag("alias")); await h.sync.runSync()
   assert.equal((await h.db.tags.get("alias")).dirty, 1)
   assert.deepEqual((await h.db.entries.get(ID)).tagIds, ["alias"])
+  assert.equal(h.sent.length, 1)
+  assert.equal(await h.db.meta.get("syncErrors"), undefined)
 })
 test("duplicate canonical target protected: no alias deletion or dependent entry rewriting", async () => {
   const h = await fixture({ onPush: async () => ({ serverTime: AT, entries: [],
     tags: [{ id: "alias", status: "error", message: "duplicate_tag:held" }], mediaMeta: [] }) })
   await protect(h); await h.db.tags.put(tag("alias"))
   await h.db.entries.put(entry({ id: OTHER_ID, fromScheduleId: null, tagIds: ["alias"], dirty: 0 }))
-  for (let attempt = 0; attempt < 4; attempt++) await h.sync.runSync()
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await h.sync.runSync()
+    assert.equal(h.sent.length, attempt + 1) // One request per explicit run; no internal retry loop.
+  }
+  assert.equal((await h.db.tags.get("alias")).dirty, 1)
   assert.ok(await h.db.tags.get("alias"))
   assert.equal(await h.db.meta.get("syncErrors"), undefined)
   assert.deepEqual((await h.db.entries.get(OTHER_ID)).tagIds, ["alias"])
@@ -134,4 +141,38 @@ test("protection releases only after queue removal and confirmed clean source", 
   await h.db.schedules.update(ID, { dirty: 0, serverUpdatedAt: AT })
   await h.db.entries.update(ID, { dirty: 0 })
   await h.sync.runSync(); assert.equal((await h.db.tags.get("held")).dirty, 0)
+})
+
+// Deferral must not become a blanket "complete" that swallows unrelated failures.
+test("unprotected server error still rejects and retains a dirty tag", async () => {
+  const h = await fixture({ onPush: async () => ({ serverTime: AT, entries: [],
+    tags: [{ id: "free", status: "error", message: "temporary failure" }], mediaMeta: [] }) })
+  await h.db.tags.put(tag("free"))
+  await assert.rejects(h.sync.runSync(), /仍有内容未同步/)
+  assert.equal((await h.db.tags.get("free")).dirty, 1)
+  assert.equal(h.sent.length, 1)
+  assert.equal((await h.db.meta.get("syncErrors")).value[0].count, 1)
+})
+test("protected alias can wait while an unrelated tag is confirmed", async () => {
+  const h = await fixture({ onPush: async body => ({ serverTime: AT, entries: [],
+    tags: body.tags.map(r => r.id === "alias" ? { id: r.id, status: "error", message: "duplicate_tag:held" }
+      : { id: r.id, status: "applied" }), mediaMeta: [] }) })
+  await protect(h); await h.db.tags.put(tag("alias")); await h.db.tags.put(tag("free"))
+  await h.sync.runSync()
+  assert.equal((await h.db.tags.get("alias")).dirty, 1)
+  assert.equal((await h.db.tags.get("free")).dirty, 0)
+  assert.equal(h.sent.length, 1)
+  assert.equal(await h.db.meta.get("syncErrors"), undefined)
+})
+test("protected deferral does not hide an unrelated server error", async () => {
+  const h = await fixture({ onPush: async body => ({ serverTime: AT, entries: [],
+    tags: body.tags.map(r => ({ id: r.id, status: "error", message: r.id === "alias" ? "duplicate_tag:held" : "temporary failure" })),
+    mediaMeta: [] }) })
+  await protect(h); await h.db.tags.put(tag("alias")); await h.db.tags.put(tag("free"))
+  await assert.rejects(h.sync.runSync(), /仍有内容未同步/)
+  assert.equal((await h.db.tags.get("alias")).dirty, 1)
+  assert.equal((await h.db.tags.get("free")).dirty, 1)
+  const errors = (await h.db.meta.get("syncErrors")).value
+  assert.ok(errors.length > 0 && errors.every(r => r.id === "free"))
+  assert.ok(h.sent.length <= 2)
 })
