@@ -1,4 +1,5 @@
-import { LOCAL_MEDIA_PREFIX, toPlainText } from "@/shared/text"
+import { remapBackupMediaRefs } from "@/shared/backupMediaRefs"
+import { toPlainText } from "@/shared/text"
 import { remapScheduleBackup } from "@/shared/scheduleBackup"
 import {
   advanceScheduleDraftState, emptyScheduleDraftState, parseScheduleDraftState, remapScheduleDraft,
@@ -94,17 +95,6 @@ function detectImageMime(b64: string, fallback: string): string {
   return fallback || "application/octet-stream"
 }
 
-/** 正文里的图片引用是 local://media/{id}，改 id 就必须同步改正文。 */
-function remapMediaRefs(content: Entry["content"], map: Map<string, string>): Entry["content"] {
-  if (!content || map.size === 0) {
-    return content
-  }
-  let json = JSON.stringify(content)
-  for (const [from, to] of map) {
-    json = json.split(`${LOCAL_MEDIA_PREFIX}${from}`).join(`${LOCAL_MEDIA_PREFIX}${to}`)
-  }
-  return JSON.parse(json) as Entry["content"]
-}
 
 export const localBackupRepo = {
   /**
@@ -319,7 +309,7 @@ export const localBackupRepo = {
     const mapEntry = (e: Entry): Entry => {
       const fromScheduleId = e.fromScheduleId && scheduleIdMap.has(e.fromScheduleId)
         ? scheduleIdMap.get(e.fromScheduleId)! : conflict === "asCopy" ? null : e.fromScheduleId ?? null
-      const content = remapMediaRefs(e.content, mediaIdMap)
+      const content = remapBackupMediaRefs(e.content, mediaIdMap)
       return {
         ...e, id: fromScheduleId && scheduleIdMap.has(e.fromScheduleId!) ? fromScheduleId : entryIdMap.get(e.id) ?? e.id,
         fromScheduleId, content, contentText: toPlainText(content),

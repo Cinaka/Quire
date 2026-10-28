@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>UUID32 本地库隔离验证</title></head>
+<body>
+<h1>UUID32 本地库隔离验证</h1>
+<p>仅用于开发服务器。点击后使用随机 quire_uuid32_probe_* 临时库，结束后删除该临时库；不清空真实 quire 库、不登录、不请求业务接口。</p>
+<button id="run" type="button">运行原生 IndexedDB 验证</button>
+<pre id="result" aria-live="polite"></pre>
+<script type="module" src="/src/verification/uuid32Storage.browser.ts"></script>
+</body></html>

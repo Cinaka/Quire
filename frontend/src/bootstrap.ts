@@ -1,0 +1,121 @@
+import { createApp } from "vue"
+
+import { setUnauthorizedHandler } from "@/api/request"
+import { isLoggedIn, onRemoteLogout } from "@/api/session"
+import { runSync } from "@/api/sync"
+import { emitBackgroundSync } from "@/api/syncEvents"
+import { db } from "@/db/schema"
+import * as repo from "@/repo"
+import App from "./App.vue"
+import router from "./router"
+
+const app = createApp(App)
+app.use(router)
+app.mount("#app")
+
+setUnauthorizedHandler(() => {
+  // List remains a guest-readable fallback; the notebook token observer clears its port.
+  if (router.currentRoute.value.name !== "auth" && router.currentRoute.value.name !== "list") void router.push({ name: "auth" })
+})
+
+onRemoteLogout(() => {
+  // List remains a guest-readable fallback; the notebook token observer clears its port.
+  if (router.currentRoute.value.name !== "auth" && router.currentRoute.value.name !== "list") void router.push({ name: "auth" })
+})
+
+const MEDIA_MAINTENANCE_INTERVAL = 6 * 60 * 60_000
+let mediaMaintenanceRunning = false
+let lastMediaMaintenance = 0
+
+async function runMediaMaintenance(force = false): Promise<void> {
+  if (mediaMaintenanceRunning) return
+  if (!force && Date.now() - lastMediaMaintenance < MEDIA_MAINTENANCE_INTERVAL) return
+  mediaMaintenanceRunning = true
+  try {
+    const reconciled = await repo.mediaRepo.reconcileAll()
+    const purged = await repo.mediaRepo.purgeOrphans()
+    lastMediaMaintenance = Date.now()
+    if (import.meta.env.DEV && reconciled > 0) {
+      console.info(`[quire] 已校正 ${reconciled} 条图片关联`)
+    }
+    if (import.meta.env.DEV && purged > 0) {
+      console.info(`[quire] 已清理 ${purged} 张孤儿图片`)
+    }
+  } catch (error) {
+    console.warn("[quire] 图片对账 / 孤儿清理失败", error)
+  } finally {
+    mediaMaintenanceRunning = false
+  }
+}
+
+void runMediaMaintenance(true)
+
+let syncTimer: number | null = null
+let retryDelay = 15_000
+const MAX_RETRY_DELAY = 5 * 60_000
+
+function scheduleSync(delay = 5_000): void {
+  if (!isLoggedIn()) return
+  if (syncTimer !== null) window.clearTimeout(syncTimer)
+  syncTimer = window.setTimeout(() => {
+    syncTimer = null
+    void runBackgroundSync()
+  }, delay)
+}
+
+async function runBackgroundSync(): Promise<void> {
+  if (!isLoggedIn()) return
+  if (!navigator.onLine) {
+    emitBackgroundSync({ phase: "offline" })
+    return
+  }
+  emitBackgroundSync({ phase: "running" })
+  try {
+    await runSync()
+    retryDelay = 15_000
+    emitBackgroundSync({ phase: "success" })
+  } catch (error) {
+    const retryInSeconds = Math.round(retryDelay / 1000)
+    const message = (error as Error).message
+    emitBackgroundSync({ phase: "error", message, retryInSeconds })
+    console.warn(`[quire] 后台同步失败，将在 ${retryInSeconds} 秒后重试`, error)
+    scheduleSync(retryDelay)
+    retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY)
+  }
+}
+
+db.entries.hook("creating", () => scheduleSync())
+db.entries.hook("updating", () => scheduleSync())
+db.entries.hook("deleting", () => scheduleSync())
+db.tags.hook("creating", () => scheduleSync())
+db.tags.hook("updating", () => scheduleSync())
+db.tags.hook("deleting", () => scheduleSync())
+db.media.hook("creating", () => scheduleSync())
+db.media.hook("updating", () => scheduleSync())
+db.media.hook("deleting", () => scheduleSync())
+
+if (isLoggedIn()) scheduleSync(0)
+window.addEventListener("offline", () => emitBackgroundSync({ phase: "offline" }))
+window.addEventListener("online", () => {
+  retryDelay = 15_000
+  scheduleSync(0)
+})
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    scheduleSync(0)
+    void runMediaMaintenance()
+  }
+})
+window.setInterval(() => {
+  if (document.visibilityState === "visible") {
+    scheduleSync(0)
+    void runMediaMaintenance()
+  }
+}, 5 * 60_000)
+
+if (import.meta.env.DEV) {
+  Object.assign(window, { $repo: repo, $runSync: runSync })
+  void import("@/shared/almanac").then((module) => {
+    Object.assign(window, { $almanac: module.getAlmanac })
+  })
+}

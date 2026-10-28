@@ -1,4 +1,4 @@
-import { localBackupRepo } from "@/db/backupRepo"
+import { uuid32BackupRepo } from "@/db/uuid32BackupRepo"
 import { localFirstMediaRepo } from "@/db/cloudMediaRepo"
 import { localDraftRepo } from "@/db/draftRepo"
 import { readEntryNewDestination } from "@/db/entryNewDestinationRepo"
@@ -20,7 +20,7 @@ export type {
 export const entryRepo: IEntryRepo = localEntryRepo
 export const mediaRepo = localFirstMediaRepo
 export const tagRepo: ITagRepo = localTagRepo
-export const backupRepo = localBackupRepo
+export const backupRepo = uuid32BackupRepo
 export const statsRepo = localStatsRepo
 export const syncRepo = localSyncRepo
 export const draftRepo = localDraftRepo

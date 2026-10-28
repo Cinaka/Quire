@@ -20,7 +20,8 @@
     "check:p5:integration": "npm run test:p3 && npm run test:p4 && npm run check:p5:browser",
     "test:p6": "node scripts/test-print.cjs",
     "check:p6": "npm run test:p6 && npm run build",
-    "check:p6:integration": "node scripts/test-print.cjs --integration"
+    "check:p6:integration": "node scripts/test-print.cjs --integration",
+    "test:uuid32": "node --experimental-vm-modules --test tests/uuid-hex.test.cjs tests/uuid-business.test.cjs tests/security-media.test.cjs tests/uuid-storage-cutover.test.cjs tests/uuid-backup-restore.test.cjs"
   },
   "dependencies": {
     "@tiptap/extension-image": "^2.27.2",

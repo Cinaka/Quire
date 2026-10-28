@@ -45,6 +45,16 @@
         导入时同名标签自动归并；同一简以<b>较新的一份</b>为准，本机更新则保留本机。
       </p>
 
+      <label class="note">
+        导入方式
+        <select v-model="importStrategy" :disabled="busy">
+          <option value="preferNewer">同一身份保留较新记录</option>
+          <option value="keepLocal">同一身份保留本机记录</option>
+          <option value="asCopy">作为新副本导入（旧UUID备份须选此项）</option>
+        </select>
+      </label>
+      <p class="note">旧32/36位表示不直接混入新库。旧格式备份只能作为新副本恢复，生成全新UUID32，不重放原身份或历史回执。</p>
+
       <label class="line-btn as-label">
         <span>{{ importing ? "正在导入……" : "导入备份" }}</span>
         <input type="file" accept="application/json,.json" :disabled="busy" @change="onPick" />
@@ -68,7 +78,7 @@ import { useRouter } from "vue-router"
 import { saveBlob } from "@/capabilities/download"
 import { useStorageUsage } from "@/composables/useStorageUsage"
 import { backupRepo } from "@/repo"
-import { backupFileName } from "@/shared/backup"
+import { backupFileName, type ImportConflict } from "@/shared/backup"
 import { formatBytes } from "@/shared/bytes"
 
 const router = useRouter()
@@ -77,6 +87,7 @@ const { stats, usage, quota, ratio, nearLimit, refresh } = useStorageUsage()
 
 const exporting = ref(false)
 const importing = ref(false)
+const importStrategy = ref<ImportConflict>("preferNewer")
 const exportLabel = ref("正在编册……")
 const message = ref("")
 const failed = ref(false)
@@ -135,7 +146,8 @@ async function onPick(ev: Event): Promise<void> {
       throw new Error("文件不是合法的 JSON，可能已损坏")
     }
 
-    const r = await backupRepo.importAll(raw, "preferNewer")
+    if (importStrategy.value === "asCopy" && !window.confirm("将创建新身份副本，而非继续原数据或重放原回执。确定导入？")) return
+    const r = await backupRepo.importAll(raw, importStrategy.value)
     const parts = [`新增 ${r.entriesAdded} 简`, `更新 ${r.entriesUpdated} 简`]
     if (r.entriesSkipped) parts.push(`跳过 ${r.entriesSkipped} 简`)
     if (r.entriesTooNew) parts.push(`${r.entriesTooNew} 简正文版本过新，未导入`)

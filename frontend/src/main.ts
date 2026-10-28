@@ -1,123 +1,29 @@
 import "@/styles/index.css"
+import { prepareUuid32Storage } from "@/db/uuid32Storage"
 
-import { createApp } from "vue"
-
-import { setUnauthorizedHandler } from "@/api/request"
-import { isLoggedIn, onRemoteLogout } from "@/api/session"
-import { runSync } from "@/api/sync"
-import { emitBackgroundSync } from "@/api/syncEvents"
-import { db } from "@/db/schema"
-import * as repo from "@/repo"
-import App from "./App.vue"
-import router from "./router"
-
-const app = createApp(App)
-app.use(router)
-app.mount("#app")
-
-setUnauthorizedHandler(() => {
-  // List remains a guest-readable fallback; the notebook token observer clears its port.
-  if (router.currentRoute.value.name !== "auth" && router.currentRoute.value.name !== "list") void router.push({ name: "auth" })
-})
-
-onRemoteLogout(() => {
-  // List remains a guest-readable fallback; the notebook token observer clears its port.
-  if (router.currentRoute.value.name !== "auth" && router.currentRoute.value.name !== "list") void router.push({ name: "auth" })
-})
-
-const MEDIA_MAINTENANCE_INTERVAL = 6 * 60 * 60_000
-let mediaMaintenanceRunning = false
-let lastMediaMaintenance = 0
-
-async function runMediaMaintenance(force = false): Promise<void> {
-  if (mediaMaintenanceRunning) return
-  if (!force && Date.now() - lastMediaMaintenance < MEDIA_MAINTENANCE_INTERVAL) return
-  mediaMaintenanceRunning = true
+async function start(): Promise<void> {
+  const root = document.getElementById("app")
+  if (root) root.textContent = "正在检查本地库。若升级等待其他连接，请关闭其他青简标签页及旧版页面；此时不会启动后台同步。"
   try {
-    const reconciled = await repo.mediaRepo.reconcileAll()
-    const purged = await repo.mediaRepo.purgeOrphans()
-    lastMediaMaintenance = Date.now()
-    if (import.meta.env.DEV && reconciled > 0) {
-      console.info(`[quire] 已校正 ${reconciled} 条图片关联`)
-    }
-    if (import.meta.env.DEV && purged > 0) {
-      console.info(`[quire] 已清理 ${purged} 张孤儿图片`)
-    }
+    const ready = await prepareUuid32Storage(() => window.confirm(
+      "UUID32 本地切换：请先关闭其他青简标签页及旧版页面。继续将永久清空此站点浏览器中的测试日记、图片、标签、日程、草稿、离线队列和同步状态，并退出本机登录。不会删除服务器数据。确定以全新本地库开始吗？取消不会清空或启动自动同步。",
+    ))
+    if (!ready) { stopped("已取消切换，未清空本地数据。请勿打开旧版页面继续同步。"); return }
+    // Importing the old entry only AFTER reset prevents hooks/router/background work racing it.
+    try { await import("./bootstrap") }
+    catch { stopped("应用加载失败，请关闭此页面并重新打开；不要退回旧版继续写入。") }
   } catch (error) {
-    console.warn("[quire] 图片对账 / 孤儿清理失败", error)
-  } finally {
-    mediaMaintenanceRunning = false
+    stopped(`初始化失败，应用及后台同步尚未启动：${error instanceof Error ? error.message : "无法访问本地数据库"}`)
   }
 }
-
-void runMediaMaintenance(true)
-
-let syncTimer: number | null = null
-let retryDelay = 15_000
-const MAX_RETRY_DELAY = 5 * 60_000
-
-function scheduleSync(delay = 5_000): void {
-  if (!isLoggedIn()) return
-  if (syncTimer !== null) window.clearTimeout(syncTimer)
-  syncTimer = window.setTimeout(() => {
-    syncTimer = null
-    void runBackgroundSync()
-  }, delay)
+function stopped(message: string): void {
+  const root = document.getElementById("app")
+  if (!root) return
+  root.replaceChildren()
+  const text = document.createElement("p"), retry = document.createElement("button")
+  text.textContent = message
+  retry.textContent = "重新检查"
+  retry.onclick = () => window.location.reload()
+  root.append(text, retry)
 }
-
-async function runBackgroundSync(): Promise<void> {
-  if (!isLoggedIn()) return
-  if (!navigator.onLine) {
-    emitBackgroundSync({ phase: "offline" })
-    return
-  }
-  emitBackgroundSync({ phase: "running" })
-  try {
-    await runSync()
-    retryDelay = 15_000
-    emitBackgroundSync({ phase: "success" })
-  } catch (error) {
-    const retryInSeconds = Math.round(retryDelay / 1000)
-    const message = (error as Error).message
-    emitBackgroundSync({ phase: "error", message, retryInSeconds })
-    console.warn(`[quire] 后台同步失败，将在 ${retryInSeconds} 秒后重试`, error)
-    scheduleSync(retryDelay)
-    retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY)
-  }
-}
-
-db.entries.hook("creating", () => scheduleSync())
-db.entries.hook("updating", () => scheduleSync())
-db.entries.hook("deleting", () => scheduleSync())
-db.tags.hook("creating", () => scheduleSync())
-db.tags.hook("updating", () => scheduleSync())
-db.tags.hook("deleting", () => scheduleSync())
-db.media.hook("creating", () => scheduleSync())
-db.media.hook("updating", () => scheduleSync())
-db.media.hook("deleting", () => scheduleSync())
-
-if (isLoggedIn()) scheduleSync(0)
-window.addEventListener("offline", () => emitBackgroundSync({ phase: "offline" }))
-window.addEventListener("online", () => {
-  retryDelay = 15_000
-  scheduleSync(0)
-})
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
-    scheduleSync(0)
-    void runMediaMaintenance()
-  }
-})
-window.setInterval(() => {
-  if (document.visibilityState === "visible") {
-    scheduleSync(0)
-    void runMediaMaintenance()
-  }
-}, 5 * 60_000)
-
-if (import.meta.env.DEV) {
-  Object.assign(window, { $repo: repo, $runSync: runSync })
-  void import("@/shared/almanac").then((module) => {
-    Object.assign(window, { $almanac: module.getAlmanac })
-  })
-}
+void start()

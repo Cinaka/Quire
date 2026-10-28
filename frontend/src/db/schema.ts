@@ -13,6 +13,7 @@ export class QuireDb extends Dexie {
   tags!: EntityTable<Tag, "id">
   media!: EntityTable<MediaItem, "id">
   meta!: EntityTable<MetaRow, "key">
+  localFormat!: EntityTable<MetaRow, "key">
 
   constructor(name = "quire") {
     super(name)
@@ -53,6 +54,12 @@ export class QuireDb extends Dexie {
       media: "id, entryId, createdAt, dirty, remoteUrl",
       meta: "key",
       schedules: "id, remindDate, status, updatedAt, dirty, isDeleted, [isDeleted+status+remindDate]",
+    })
+
+    // Version bump evicts v3 connections; old builds cannot reopen and refill cleared queues.
+    // This schema upgrade never clears data. Only the confirmed startup gate may do that.
+    this.version(4).stores({
+      localFormat: "key",
     })
   }
 }
